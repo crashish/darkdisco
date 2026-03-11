@@ -1,0 +1,105 @@
+import type {
+  Client, Institution, WatchTerm, Finding, Source, DashboardStats,
+  Severity, FindingStatus, SourceType,
+} from './types';
+
+const now = new Date();
+const daysAgo = (n: number) => new Date(now.getTime() - n * 86400000).toISOString();
+const hoursAgo = (n: number) => new Date(now.getTime() - n * 3600000).toISOString();
+const minsAgo = (n: number) => new Date(now.getTime() - n * 60000).toISOString();
+
+export const mockClients: Client[] = [
+  { id: 1, name: 'Heartland Bancshares', created_at: daysAgo(120) },
+  { id: 2, name: 'Prairie Financial Group', created_at: daysAgo(90) },
+  { id: 3, name: 'Coastal CU Holdings', created_at: daysAgo(60) },
+];
+
+export const mockInstitutions: Institution[] = [
+  { id: 1, client_id: 1, client_name: 'Heartland Bancshares', name: 'First Community Bank', city: 'Springfield', state: 'IL', charter_number: 'CB-44012', created_at: daysAgo(120) },
+  { id: 2, client_id: 1, client_name: 'Heartland Bancshares', name: 'Heartland Savings & Loan', city: 'Decatur', state: 'IL', charter_number: 'SL-22198', created_at: daysAgo(115) },
+  { id: 3, client_id: 2, client_name: 'Prairie Financial Group', name: 'Prairie State Credit Union', city: 'Des Moines', state: 'IA', charter_number: 'CU-88341', created_at: daysAgo(90) },
+  { id: 4, client_id: 2, client_name: 'Prairie Financial Group', name: 'Midwest Heritage Bank', city: 'Omaha', state: 'NE', charter_number: 'CB-55203', created_at: daysAgo(85) },
+  { id: 5, client_id: 3, client_name: 'Coastal CU Holdings', name: 'Harbor Federal Credit Union', city: 'Charleston', state: 'SC', charter_number: 'CU-71009', created_at: daysAgo(60) },
+  { id: 6, client_id: 3, client_name: 'Coastal CU Holdings', name: 'Tideline Community CU', city: 'Savannah', state: 'GA', charter_number: 'CU-71055', created_at: daysAgo(55) },
+];
+
+export const mockWatchTerms: WatchTerm[] = [
+  { id: 1, institution_id: 1, term_type: 'name', value: 'First Community Bank', created_at: daysAgo(120) },
+  { id: 2, institution_id: 1, term_type: 'domain', value: 'firstcommunitybank.com', created_at: daysAgo(120) },
+  { id: 3, institution_id: 1, term_type: 'bin', value: '414720', created_at: daysAgo(110) },
+  { id: 4, institution_id: 1, term_type: 'routing_number', value: '071902843', created_at: daysAgo(120) },
+  { id: 5, institution_id: 2, term_type: 'name', value: 'Heartland Savings', created_at: daysAgo(115) },
+  { id: 6, institution_id: 2, term_type: 'domain', value: 'heartlandsavings.com', created_at: daysAgo(115) },
+  { id: 7, institution_id: 3, term_type: 'name', value: 'Prairie State Credit Union', created_at: daysAgo(90) },
+  { id: 8, institution_id: 3, term_type: 'domain', value: 'prairiestatescu.org', created_at: daysAgo(90) },
+  { id: 9, institution_id: 3, term_type: 'bin', value: '523841', created_at: daysAgo(85) },
+  { id: 10, institution_id: 4, term_type: 'name', value: 'Midwest Heritage Bank', created_at: daysAgo(85) },
+  { id: 11, institution_id: 4, term_type: 'routing_number', value: '104000016', created_at: daysAgo(85) },
+  { id: 12, institution_id: 5, term_type: 'name', value: 'Harbor Federal Credit Union', created_at: daysAgo(60) },
+  { id: 13, institution_id: 5, term_type: 'domain', value: 'harborfcu.org', created_at: daysAgo(60) },
+  { id: 14, institution_id: 6, term_type: 'name', value: 'Tideline Community', created_at: daysAgo(55) },
+  { id: 15, institution_id: 6, term_type: 'domain', value: 'tidelinecu.org', created_at: daysAgo(55) },
+];
+
+const severities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
+const statuses: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
+const sourceTypes: SourceType[] = ['tor_forum', 'paste_site', 'telegram', 'breach_db', 'ransomware_blog'];
+
+const findingTemplates: { title: string; snippet: string; severity: Severity; source_type: SourceType }[] = [
+  { title: 'Employee credential dump on dark forum', snippet: 'Found 23 email:password pairs matching @firstcommunitybank.com in a paste uploaded to DarkLeaks forum. Credentials appear to be from a third-party breach. Recommend immediate password reset.', severity: 'critical', source_type: 'tor_forum' },
+  { title: 'BIN 414720 offered in carding marketplace', snippet: 'Threat actor "cr3d1tgh0st" listing 150+ cards with BIN 414720 at $15/card on DarkMarket. Batch appears fresh (< 7 days). Geographic cluster suggests POS compromise in IL region.', severity: 'critical', source_type: 'tor_forum' },
+  { title: 'Phishing kit targeting institution login page', snippet: 'Discovered phishing kit on paste site replicating firstcommunitybank.com/login. Kit includes SMS OTP bypass module. Hosted at 185.xx.xx.xx with Cloudflare fronting.', severity: 'high', source_type: 'paste_site' },
+  { title: 'Routing number mentioned in ACH fraud discussion', snippet: 'Routing number 071902843 referenced in Telegram channel focused on ACH/wire fraud. Discussion around testing small-amount transfers. 14 channel members engaged.', severity: 'high', source_type: 'telegram' },
+  { title: 'Institution name in ransomware victim list', snippet: 'Midwest Heritage Bank appeared on LockBit 3.0 affiliate blog as potential target. No data leak yet - appears to be in reconnaissance/targeting phase. Listed alongside 8 other regional banks.', severity: 'critical', source_type: 'ransomware_blog' },
+  { title: 'Domain typosquat registration detected', snippet: 'New domain harborfcu-secure.org registered via Namecheap with privacy protection. SSL cert issued by Let\'s Encrypt. Domain resolves to known bulletproof hosting provider.', severity: 'high', source_type: 'paste_site' },
+  { title: 'Customer PII in breach database', snippet: 'Breach database "FinLeaks_2024" contains 340 records with Prairie State Credit Union member data including names, SSN fragments, and account types. Data appears 6-8 months old.', severity: 'critical', source_type: 'breach_db' },
+  { title: 'ATM skimmer discussion mentioning region', snippet: 'Forum thread discussing ATM skimmer placement opportunities in Des Moines/Omaha corridor. Mentions "credit union ATMs with older NCR hardware" as preferred targets.', severity: 'medium', source_type: 'tor_forum' },
+  { title: 'Mobile banking app reverse engineering', snippet: 'Threat actor sharing decompiled APK analysis of a white-label mobile banking app used by several community banks. Identified hardcoded API endpoints and weak cert pinning.', severity: 'medium', source_type: 'telegram' },
+  { title: 'Social engineering playbook for CU employees', snippet: 'Detailed social engineering script targeting credit union call centers. Includes pretext scenarios for account takeover, wire transfer authorization, and password reset procedures.', severity: 'medium', source_type: 'tor_forum' },
+  { title: 'Bulk email list with institution domains', snippet: 'Marketing-style email list containing 89 addresses @heartlandsavings.com found in spam/phishing operator data dump. Mix of employee and generic department addresses.', severity: 'low', source_type: 'breach_db' },
+  { title: 'Mention in general banking threat discussion', snippet: 'Tideline Community CU mentioned in passing during a general discussion about southeastern US community banks. No specific targeting indicators. Monitoring for escalation.', severity: 'info', source_type: 'telegram' },
+  { title: 'Credential stuffing target list', snippet: 'Online banking portals for 45 community banks including prairiestatescu.org found in credential stuffing tool configuration file shared on dark web forum.', severity: 'high', source_type: 'tor_forum' },
+  { title: 'Wire transfer fraud ring targeting small banks', snippet: 'FBI flash alert cross-referenced: organized group targeting banks with assets < $1B in midwest region. TTPs match activity observed against Heartland Savings & Loan.', severity: 'high', source_type: 'telegram' },
+  { title: 'Expired SSL certificate monitoring', snippet: 'Domain tidelinecu.org SSL certificate approaching expiration flagged in automated scan. Not a direct threat but creates phishing opportunity if not renewed.', severity: 'info', source_type: 'paste_site' },
+];
+
+export const mockFindings: Finding[] = findingTemplates.map((t, i) => ({
+  id: i + 1,
+  institution_id: (i % 6) + 1,
+  institution_name: mockInstitutions[i % 6].name,
+  source_type: t.source_type,
+  severity: t.severity,
+  status: i < 4 ? 'new' : i < 7 ? 'reviewing' : i < 10 ? 'confirmed' : i < 13 ? 'resolved' : 'dismissed' as FindingStatus,
+  title: t.title,
+  snippet: t.snippet,
+  source_url: i % 3 === 0 ? undefined : `https://darkweb.example/${i}`,
+  discovered_at: hoursAgo(i * 3 + Math.random() * 10),
+  updated_at: hoursAgo(i * 2),
+}));
+
+export const mockSources: Source[] = [
+  { id: 1, name: 'DarkLeaks Forum Monitor', source_type: 'tor_forum', health: 'healthy', last_poll: minsAgo(3), finding_count: 847, avg_poll_seconds: 300 },
+  { id: 2, name: 'PasteBin/GhostBin Scraper', source_type: 'paste_site', health: 'healthy', last_poll: minsAgo(1), finding_count: 1243, avg_poll_seconds: 60 },
+  { id: 3, name: 'Telegram Channel Ingest', source_type: 'telegram', health: 'degraded', last_poll: minsAgo(45), finding_count: 562, avg_poll_seconds: 120 },
+  { id: 4, name: 'Breach Database Correlator', source_type: 'breach_db', health: 'healthy', last_poll: minsAgo(12), finding_count: 2105, avg_poll_seconds: 600 },
+  { id: 5, name: 'Ransomware Blog Tracker', source_type: 'ransomware_blog', health: 'healthy', last_poll: minsAgo(8), finding_count: 189, avg_poll_seconds: 900 },
+  { id: 6, name: 'DarkMarket Carding Monitor', source_type: 'tor_forum', health: 'offline', last_poll: hoursAgo(6), finding_count: 331, avg_poll_seconds: 300 },
+];
+
+export const mockDashboardStats: DashboardStats = {
+  total_findings: mockFindings.length,
+  findings_by_severity: {
+    critical: mockFindings.filter(f => f.severity === 'critical').length,
+    high: mockFindings.filter(f => f.severity === 'high').length,
+    medium: mockFindings.filter(f => f.severity === 'medium').length,
+    low: mockFindings.filter(f => f.severity === 'low').length,
+    info: mockFindings.filter(f => f.severity === 'info').length,
+  },
+  new_today: mockFindings.filter(f => f.status === 'new').length,
+  monitored_institutions: mockInstitutions.length,
+  active_sources: mockSources.filter(s => s.health !== 'offline').length,
+  findings_trend: Array.from({ length: 14 }, (_, i) => ({
+    date: daysAgo(13 - i).split('T')[0],
+    count: Math.floor(Math.random() * 8) + 1,
+  })),
+};
