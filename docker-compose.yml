@@ -62,6 +62,7 @@ services:
       DARKDISCO_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/2
       DARKDISCO_TOR_SOCKS_PROXY: socks5h://tor:9050
       DARKDISCO_S3_ENDPOINT: http://minio:9000
+      DARKDISCO_TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,11 +83,14 @@ services:
       DARKDISCO_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/2
       DARKDISCO_TOR_SOCKS_PROXY: socks5h://tor:9050
       DARKDISCO_S3_ENDPOINT: http://minio:9000
+      DARKDISCO_TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      tor:
+        condition: service_started
 
   beat:
     build:
