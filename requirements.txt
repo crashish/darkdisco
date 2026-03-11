@@ -5,6 +5,7 @@ uvicorn[standard]>=0.27
 # Database
 sqlalchemy[asyncio]>=2.0
 asyncpg>=0.29
+psycopg2-binary>=2.9  # Sync driver for Celery workers
 alembic>=1.13
 
 # Task queue
