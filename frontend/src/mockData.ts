@@ -1,6 +1,7 @@
 import type {
   Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats,
   Severity, FindingStatus, SourceType, MatchedTerm, StatusHistoryEntry, EnrichmentData,
+  RawMention,
 } from './types';
 
 const now = new Date();
@@ -141,6 +142,33 @@ function buildEnrichment(severity: string, i: number): EnrichmentData {
   };
 }
 
+function buildMetadata(sourceType: SourceType, i: number): Record<string, unknown> | null {
+  if (sourceType === 'telegram') {
+    return {
+      channel_name: i % 2 === 0 ? 'DarkMarket Signals' : 'FinFraud Discussion',
+      channel_id: -100100 + i,
+      message_id: 14200 + i * 37,
+      message_date: hoursAgo(i * 3 + 1),
+      sender_name: i % 3 === 0 ? 'cr3d1tgh0st' : i % 3 === 1 ? 'darkvendor_42' : null,
+      forwarded_from: i % 4 === 0 ? { channel: 'Underground Leaks', message_id: 8800 + i } : null,
+      has_media: i % 5 === 0,
+      media_type: i % 5 === 0 ? 'document' : null,
+      media_filename: i % 5 === 0 ? 'dump_2024.csv' : null,
+      reply_to_message_id: i % 6 === 0 ? 14100 + i : null,
+    };
+  }
+  if (sourceType === 'tor_forum') {
+    return {
+      forum_name: 'DarkLeaks Forum',
+      thread_title: 'Fresh dumps - regional banks',
+      post_author: 'threatactor_' + (i + 1),
+      post_date: hoursAgo(i * 3 + 2),
+      thread_url: `http://darkleak.onion/thread/${1000 + i}`,
+    };
+  }
+  return null;
+}
+
 export const mockFindingDetails: FindingDetail[] = mockFindings.map((f, i) => ({
   ...f,
   raw_content: findingTemplates[i].summary + '\n\n[Raw scraped content from source. May contain formatting artifacts, markup, and surrounding context from the original post.]',
@@ -152,4 +180,38 @@ export const mockFindingDetails: FindingDetail[] = mockFindings.map((f, i) => ({
   created_at: f.discovered_at,
   reviewed_by: i < 10 ? 'analyst@example.com' : null,
   reviewed_at: i < 10 ? hoursAgo(i + 1) : null,
+  source_name: mockSources[i % mockSources.length].name,
+  metadata: buildMetadata(f.source_type, i),
+}));
+
+const mentionContents = [
+  'Selling fresh CC batch from midwest region. 200+ cards. BINs include 4147xx, 5238xx. PM for bulk pricing. Wickr: ghostcc',
+  'New database leak: FinanceCorpHQ 2024. Contains employee records, internal memos, and customer SSN fragments. 2.3GB total. Available on our private tracker.',
+  'Looking for someone experienced in wire transfer procedures at community banks. Need help with ACH verification process. Serious inquiries only.',
+  'Phishing kit v4.2 updated - now supports 2FA bypass for online banking portals. Works on most white-label platforms. Includes SMS intercept module.',
+  'Anyone have intel on credit unions in the southeast? Looking for ones with older security infrastructure. Willing to trade info.',
+  'Leaked internal IT audit report from a regional bank. Shows unpatched systems, default credentials on network devices. Very juicy.',
+  'New stealer log dump - 45K entries from US banking customers. Includes saved passwords, cookies, and autofill data. Sorted by state.',
+  'Ransomware negotiation chat log leaked. Shows bank paid $2.3M in BTC. Contains internal communications and incident response timeline.',
+  'Telegram bot selling real-time BIN lookups. $5/query or $200/month unlimited. Claims data is sourced from POS terminals.',
+  'Discussion about ATM jackpotting techniques for NCR and Diebold Nixdorf machines. Includes firmware modification guides.',
+  'Credential pair list for online banking: 1,200 email:password combos. Mix of @gmail, @yahoo, @outlook. Claimed >40% hit rate.',
+  'Dark web marketplace listing: cloned debit cards with PINs. Ships worldwide. Escrow available. 95% positive feedback.',
+];
+
+export const mockRawMentions: RawMention[] = mentionContents.map((content, i) => ({
+  id: `m-${String(i + 1).padStart(3, '0')}`,
+  source_id: mockSources[i % mockSources.length].id,
+  source_name: mockSources[i % mockSources.length].name,
+  source_type: mockSources[i % mockSources.length].source_type,
+  content,
+  content_hash: `sha256_${i.toString(16).padStart(8, '0')}`,
+  source_url: i % 3 === 0 ? undefined : `https://darkweb.example/raw/${i}`,
+  metadata: i % mockSources.length === 2
+    ? { channel_name: 'Underground Markets', message_id: 9900 + i, message_date: hoursAgo(i * 2 + 1), sender_name: i % 2 === 0 ? 'anonvendor' : null }
+    : i % mockSources.length === 0
+    ? { forum_name: 'DarkLeaks Forum', thread_title: 'General trading', post_author: 'user_' + i }
+    : undefined,
+  collected_at: hoursAgo(i * 2 + Math.random() * 5),
+  promoted_to_finding_id: i < 2 ? `f-${String(i + 1).padStart(3, '0')}` : null,
 }));

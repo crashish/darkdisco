@@ -52,6 +52,8 @@ export interface FindingDetail extends Finding {
   created_at: string;
   reviewed_by: string | null;
   reviewed_at: string | null;
+  source_name?: string;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface MatchedTerm {
@@ -72,6 +74,19 @@ export interface StatusHistoryEntry {
   changed_at: string;
   changed_by?: string;
   notes?: string;
+}
+
+export interface RawMention {
+  id: string;
+  source_id: string;
+  source_name?: string;
+  source_type?: SourceType;
+  content: string;
+  content_hash?: string;
+  source_url?: string;
+  metadata?: Record<string, unknown>;
+  collected_at: string;
+  promoted_to_finding_id?: string | null;
 }
 
 export interface Source {

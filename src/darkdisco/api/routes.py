@@ -43,6 +43,8 @@ from darkdisco.api.schemas import (
     NotificationMarkRead,
     NotificationOut,
     PipelineStatus,
+    RawMentionOut,
+    RawMentionPromote,
     SeverityCount,
     SourceCreate,
     SourceOut,
@@ -62,6 +64,7 @@ from darkdisco.common.models import (
     FindingStatus,
     Institution,
     Notification,
+    RawMention,
     Severity,
     Source,
     SourceType,
@@ -836,6 +839,104 @@ async def source_findings_trend(
     result = await db.execute(stmt)
     rows = result.all()
     return [{"date": str(r.date), "count": r.count} for r in rows]
+
+
+# ---- Raw Mentions ----------------------------------------------------------
+
+@protected.get("/mentions", response_model=list[RawMentionOut])
+async def list_mentions(
+    source_id: str | None = None,
+    source_type: str | None = None,
+    promoted: bool | None = None,
+    q: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_session),
+):
+    """Browse raw collected mentions. Filter by source, promotion status, or search content."""
+    stmt = (
+        select(RawMention)
+        .options(selectinload(RawMention.source))
+        .order_by(RawMention.collected_at.desc())
+    )
+    if source_id is not None:
+        stmt = stmt.where(RawMention.source_id == source_id)
+    if source_type is not None:
+        stmt = stmt.join(Source).where(Source.source_type == source_type)
+    if promoted is not None:
+        if promoted:
+            stmt = stmt.where(RawMention.promoted_to_finding_id.isnot(None))
+        else:
+            stmt = stmt.where(RawMention.promoted_to_finding_id.is_(None))
+    if q:
+        stmt = stmt.where(RawMention.content.ilike(f"%{q}%"))
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+@protected.get("/mentions/{mention_id}", response_model=RawMentionOut)
+async def get_mention(
+    mention_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    result = await db.execute(
+        select(RawMention)
+        .options(selectinload(RawMention.source))
+        .where(RawMention.id == mention_id)
+    )
+    mention = result.scalar_one_or_none()
+    if not mention:
+        raise HTTPException(404, "Mention not found")
+    return mention
+
+
+@protected.post("/mentions/{mention_id}/promote", response_model=FindingOut)
+async def promote_mention(
+    mention_id: str,
+    body: RawMentionPromote,
+    db: AsyncSession = Depends(get_session),
+):
+    """Promote a raw mention to a finding for analyst workflow."""
+    result = await db.execute(
+        select(RawMention)
+        .options(selectinload(RawMention.source))
+        .where(RawMention.id == mention_id)
+    )
+    mention = result.scalar_one_or_none()
+    if not mention:
+        raise HTTPException(404, "Mention not found")
+    if mention.promoted_to_finding_id:
+        raise HTTPException(409, "Mention already promoted to a finding")
+
+    parent = await db.get(Institution, body.institution_id)
+    if not parent:
+        raise HTTPException(400, "Institution not found")
+
+    finding = Finding(
+        institution_id=body.institution_id,
+        source_id=mention.source_id,
+        severity=body.severity,
+        title=body.title,
+        summary=body.summary,
+        raw_content=mention.content,
+        content_hash=mention.content_hash,
+        source_url=mention.source_url,
+        tags=body.tags,
+        metadata_=mention.metadata_,
+    )
+    db.add(finding)
+    await db.flush()
+
+    mention.promoted_to_finding_id = finding.id
+    await db.commit()
+
+    result = await db.execute(
+        select(Finding)
+        .options(selectinload(Finding.institution), selectinload(Finding.source))
+        .where(Finding.id == finding.id)
+    )
+    return result.scalar_one()
 
 
 # ---- Findings --------------------------------------------------------------

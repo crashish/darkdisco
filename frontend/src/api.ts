@@ -1,7 +1,7 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
-  mockSources, mockDashboardStats,
+  mockSources, mockDashboardStats, mockRawMentions,
 } from './mockData';
 
 const BASE = '/api';
@@ -149,5 +149,42 @@ export async function addDiscordChannel(sourceId: string, guildId: string, chann
 export async function removeDiscordChannel(sourceId: string, guildId: string, channelId: string): Promise<{ guild_id: string; removed_channel: string }> {
   return apiFetch(`/sources/${sourceId}/discord-channels/${guildId}/${channelId}`, { guild_id: guildId, removed_channel: channelId }, {
     method: 'DELETE',
+  });
+}
+
+export async function fetchMentions(params?: {
+  source_id?: string;
+  source_type?: string;
+  promoted?: boolean;
+  q?: string;
+}): Promise<RawMention[]> {
+  const qs = new URLSearchParams();
+  if (params?.source_id) qs.set('source_id', params.source_id);
+  if (params?.source_type) qs.set('source_type', params.source_type);
+  if (params?.promoted !== undefined) qs.set('promoted', String(params.promoted));
+  if (params?.q) qs.set('q', params.q);
+  const q = qs.toString();
+
+  let fallback = [...mockRawMentions];
+  if (params?.source_id) fallback = fallback.filter(m => m.source_id === params.source_id);
+  if (params?.promoted !== undefined) {
+    fallback = params.promoted
+      ? fallback.filter(m => m.promoted_to_finding_id != null)
+      : fallback.filter(m => !m.promoted_to_finding_id);
+  }
+
+  return apiFetch(`/mentions${q ? '?' + q : ''}`, fallback);
+}
+
+export async function promoteMention(mentionId: string, body: {
+  institution_id: string;
+  title: string;
+  severity?: string;
+  summary?: string;
+  tags?: string[];
+}): Promise<Finding> {
+  return apiFetch(`/mentions/${mentionId}/promote`, mockFindings[0], {
+    method: 'POST',
+    body: JSON.stringify(body),
   });
 }

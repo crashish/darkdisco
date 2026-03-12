@@ -7,6 +7,7 @@ import FindingDetail from './pages/FindingDetail';
 import Institutions from './pages/Institutions';
 import Sources from './pages/Sources';
 import SourceDetail from './pages/SourceDetail';
+import Mentions from './pages/Mentions';
 import Login from './pages/Login';
 import type { ReactNode } from 'react';
 
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/findings" element={<Findings />} />
           <Route path="/findings/:id" element={<FindingDetail />} />
           <Route path="/institutions" element={<Institutions />} />
+          <Route path="/mentions" element={<Mentions />} />
           <Route path="/sources" element={<Sources />} />
           <Route path="/sources/:id" element={<SourceDetail />} />
         </Route>

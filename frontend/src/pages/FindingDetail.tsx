@@ -5,7 +5,7 @@ import { colors, card, font, statusColor } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import type { FindingDetail as FindingDetailType, FindingStatus } from '../types';
-import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allStatuses: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
@@ -140,18 +140,132 @@ export default function FindingDetail() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 16, alignItems: 'start' }}>
         {/* Left column */}
         <div>
-          {/* Raw Content */}
+          {/* Message Context (for Telegram and other rich sources) */}
+          {finding.metadata && Object.keys(finding.metadata).length > 0 && (() => {
+            const meta = finding.metadata as Record<string, string | number | boolean | null | Record<string, string>>;
+            return (
+            <div style={sectionStyle}>
+              <div style={sectionTitle}><MessageSquare size={14} /> Message Context</div>
+              <div style={{
+                background: colors.bgSurface, borderRadius: 6,
+                border: `1px solid ${colors.border}`, overflow: 'hidden',
+              }}>
+                {/* Channel / Forum header */}
+                <div style={{
+                  padding: '10px 16px', borderBottom: `1px solid ${colors.border}`,
+                  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                }}>
+                  {meta.channel_name && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: colors.text, fontWeight: 600 }}>
+                      <Hash size={12} color={colors.accent} />
+                      {String(meta.channel_name)}
+                    </span>
+                  )}
+                  {meta.forum_name && (
+                    <span style={{ fontSize: 12, color: colors.text, fontWeight: 600 }}>
+                      {String(meta.forum_name)}
+                    </span>
+                  )}
+                  {finding.source_name && (
+                    <span style={{ fontSize: 11, color: colors.textMuted }}>
+                      via {finding.source_name}
+                    </span>
+                  )}
+                  {meta.message_date && (
+                    <span style={{ fontSize: 11, color: colors.textMuted, marginLeft: 'auto' }}>
+                      {new Date(String(meta.message_date)).toLocaleString()}
+                    </span>
+                  )}
+                  {meta.post_date && (
+                    <span style={{ fontSize: 11, color: colors.textMuted, marginLeft: 'auto' }}>
+                      {new Date(String(meta.post_date)).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+
+                {/* Sender / Author info */}
+                {(meta.sender_name || meta.post_author) && (
+                  <div style={{ padding: '8px 16px', borderBottom: `1px solid ${colors.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <User size={12} color={colors.textMuted} />
+                    <span style={{ fontSize: 12, color: colors.accent, fontFamily: font.mono }}>
+                      {String(meta.sender_name || meta.post_author)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Forwarded-from info */}
+                {meta.forwarded_from && (
+                  <div style={{
+                    padding: '8px 16px', borderBottom: `1px solid ${colors.border}`,
+                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: colors.textMuted,
+                  }}>
+                    <Forward size={12} />
+                    {'Forwarded from: '}<span style={{ color: colors.text }}>
+                      {String((meta.forwarded_from as Record<string, string>).channel || 'Unknown channel')}
+                    </span>
+                  </div>
+                )}
+
+                {/* Reply-to info */}
+                {meta.reply_to_message_id && (
+                  <div style={{
+                    padding: '8px 16px', borderBottom: `1px solid ${colors.border}`,
+                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: colors.textMuted,
+                  }}>
+                    <Reply size={12} />
+                    {'Reply to message #'}{String(meta.reply_to_message_id)}
+                  </div>
+                )}
+
+                {/* Media attachment info */}
+                {meta.has_media && (
+                  <div style={{
+                    padding: '8px 16px', borderBottom: `1px solid ${colors.border}`,
+                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 11,
+                  }}>
+                    <Paperclip size={12} color={colors.textMuted} />
+                    <span style={{ color: colors.textMuted }}>Attachment:</span>
+                    <span style={{ color: colors.text, fontFamily: font.mono }}>
+                      {String(meta.media_filename || meta.media_type || 'file')}
+                    </span>
+                  </div>
+                )}
+
+                {/* Thread info for forums */}
+                {meta.thread_title && (
+                  <div style={{ padding: '8px 16px', borderBottom: `1px solid ${colors.border}`, fontSize: 11, color: colors.textMuted }}>
+                    {'Thread: '}<span style={{ color: colors.text }}>{String(meta.thread_title)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            );
+          })()}
+
+          {/* Full Content */}
           {finding.raw_content && (
             <div style={sectionStyle}>
-              <div style={sectionTitle}><FileText size={14} /> Raw Content</div>
+              <div style={sectionTitle}><FileText size={14} /> Full Content</div>
               <pre style={{
                 fontFamily: font.mono, fontSize: 12, lineHeight: 1.6,
                 color: colors.textDim, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                 background: colors.bgSurface, padding: 16, borderRadius: 6,
-                border: `1px solid ${colors.border}`, margin: 0, maxHeight: 400, overflow: 'auto',
+                border: `1px solid ${colors.border}`, margin: 0, maxHeight: 600, overflow: 'auto',
               }}>
                 {finding.raw_content}
               </pre>
+              {finding.source_url && (
+                <div style={{ marginTop: 8 }}>
+                  <a
+                    href={finding.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: colors.accent, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <ExternalLink size={12} /> View original source
+                  </a>
+                </div>
+              )}
             </div>
           )}
 

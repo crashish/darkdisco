@@ -226,6 +226,7 @@ class FindingOut(BaseModel):
     assigned_to: str | None = None
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
+    metadata_: dict | None = Field(None, alias="metadata")
     discovered_at: datetime
     created_at: datetime
     updated_at: datetime
@@ -238,6 +239,33 @@ class FindingOut(BaseModel):
 class FindingStatusTransition(BaseModel):
     status: FindingStatus
     notes: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Raw Mentions
+# ---------------------------------------------------------------------------
+
+class RawMentionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_id: str
+    source_name: str | None = None
+    source_type: str | None = None
+    content: str
+    content_hash: str | None = None
+    source_url: str | None = None
+    metadata_: dict | None = Field(None, alias="metadata")
+    collected_at: datetime
+    promoted_to_finding_id: str | None = None
+
+
+class RawMentionPromote(BaseModel):
+    institution_id: str
+    title: str
+    severity: Severity = Severity.medium
+    summary: str | None = None
+    tags: list | None = None
 
 
 # ---------------------------------------------------------------------------

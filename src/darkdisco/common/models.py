@@ -220,6 +220,40 @@ class Finding(Base):
     )
 
 
+class RawMention(Base):
+    """A raw collected mention that hasn't been matched to any watchterm yet.
+
+    Stores ingested data from source connectors before/without watchterm matching,
+    allowing analysts to manually review and optionally promote to findings.
+    """
+
+    __tablename__ = "raw_mentions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id"), index=True, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True)  # SHA-256 dedup
+    source_url: Mapped[str | None] = mapped_column(Text)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)  # source-specific context
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    promoted_to_finding_id: Mapped[str | None] = mapped_column(ForeignKey("findings.id"))
+
+    source: Mapped[Source] = relationship()
+
+    @property
+    def source_name(self) -> str | None:
+        return self.source.name if self.source else None
+
+    @property
+    def source_type(self) -> str | None:
+        return self.source.source_type.value if self.source else None
+
+    __table_args__ = (
+        Index("ix_raw_mentions_source_collected", "source_id", "collected_at"),
+        Index("ix_raw_mentions_promoted", "promoted_to_finding_id"),
+    )
+
+
 class FindingAttachment(Base):
     """File or screenshot attached to a finding."""
 
