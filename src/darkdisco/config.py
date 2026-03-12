@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     trapline_api_url: str = ""  # e.g. https://trapline.example.com
     trapline_api_key: str = ""
     trapline_webhook_secret: str = ""  # HMAC-SHA256 secret for verifying inbound webhooks
+    trapline_sync_interval: int = 3600  # seconds
 
     # OCR (image text extraction)
     ocr_enabled: bool = True

@@ -66,6 +66,7 @@ class SourceType(str, enum.Enum):
     ct_monitor = "ct_monitor"
     urlscan = "urlscan"
     phishtank = "phishtank"
+    trapline = "trapline"
     other = "other"
 
 

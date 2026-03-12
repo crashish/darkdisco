@@ -47,7 +47,7 @@ app.conf.update(
         },
         "sync-trapline-watchlist": {
             "task": "darkdisco.pipeline.worker.sync_trapline_watchlist",
-            "schedule": 3600.0,  # 1 hour
+            "schedule": float(settings.trapline_sync_interval),
         },
         "process-channel-discoveries": {
             "task": "darkdisco.pipeline.worker.process_channel_discoveries",
@@ -98,6 +98,7 @@ _CONNECTOR_MAP = {
     "ct_monitor": "darkdisco.discovery.connectors.ct_monitor:CTMonitorConnector",
     "urlscan": "darkdisco.discovery.connectors.urlscan:URLScanConnector",
     "phishtank": "darkdisco.discovery.connectors.phishtank:PhishTankConnector",
+    "trapline": "darkdisco.discovery.connectors.trapline:TraplineConnector",
 }
 
 
