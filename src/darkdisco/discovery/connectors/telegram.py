@@ -1,12 +1,19 @@
-"""Telegram connector — monitors channels and groups for mentions.
+"""Telegram connector — monitors channels via Telethon (user account, MTProto).
 
-Uses the Telegram Bot API directly via aiohttp. The bot must be added to
-each target channel/group with read permissions. Messages are fetched via
-getUpdates with offset tracking to avoid duplicates.
+Uses a regular Telegram user account to passively read messages from joined
+channels and groups.  Far more capable than the Bot API: can join via invite
+links, read channel history, and monitor private channels.
+
+Setup:
+    1. Get api_id + api_hash from https://my.telegram.org
+    2. Run `python -m darkdisco.discovery.connectors.telegram` once interactively
+       to authenticate and create the session file.
+    3. Set DARKDISCO_TELEGRAM_API_ID, DARKDISCO_TELEGRAM_API_HASH in .env
 
 Config (source.config JSONB):
-    channels: list[str]  — channel/group usernames or IDs to monitor
-    last_update_id: int  — internal bookmark (auto-managed)
+    channels: list[str]  — channel usernames, invite links, or numeric IDs
+    last_message_ids: dict[str, int]  — per-channel high-water marks (auto-managed)
+    history_limit: int  — max messages to fetch per channel per poll (default 100)
 """
 
 from __future__ import annotations
@@ -14,321 +21,293 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-import aiohttp
+from telethon import TelegramClient
+from telethon.errors import (
+    ChannelPrivateError,
+    FloodWaitError,
+    InviteHashExpiredError,
+    UserAlreadyParticipantError,
+)
+from telethon.tl.functions.messages import ImportChatInviteRequest
+from telethon.tl.types import Channel, Chat, Message, User
 
 from darkdisco.config import settings
 from darkdisco.discovery.connectors.base import BaseConnector, RawMention
 
 logger = logging.getLogger(__name__)
 
-TELEGRAM_API = "https://api.telegram.org"
-# Telegram Bot API rate limit: ~30 requests/sec globally, 1 req/sec per chat
-RATE_LIMIT_DELAY = 0.5  # seconds between getUpdates calls
-MAX_UPDATES_PER_POLL = 100  # Telegram max per getUpdates call
-# Retry config for transient failures
-MAX_RETRIES = 3
-RETRY_BACKOFF = 2  # exponential base in seconds
+HISTORY_LIMIT_DEFAULT = 100
+INTER_CHANNEL_DELAY = 1.0  # seconds between channel reads
 
 
 class TelegramConnector(BaseConnector):
-    """Monitors Telegram channels/groups for keyword matches.
-
-    Uses Telegram Bot API to read messages from channels the bot has been
-    added to. Channels are configured per source in the config JSONB field.
-
-    Expected config:
-        {
-            "channels": ["channel_username", "-100123456789", ...],
-            "last_update_id": 0   # auto-managed offset bookmark
-        }
-    """
+    """Monitors Telegram channels/groups via a user account (Telethon/MTProto)."""
 
     name = "telegram"
     source_type = "telegram"
 
     def __init__(self, config: dict | None = None):
         super().__init__(config)
-        self._bot_token: str = settings.telegram_bot_token
-        self._session: aiohttp.ClientSession | None = None
-
-    @property
-    def _base_url(self) -> str:
-        return f"{TELEGRAM_API}/bot{self._bot_token}"
+        self._client: TelegramClient | None = None
 
     @property
     def _channels(self) -> list[str]:
         return self.config.get("channels", [])
 
     @property
-    def _last_update_id(self) -> int:
-        return self.config.get("last_update_id", 0)
+    def _last_message_ids(self) -> dict[str, int]:
+        return self.config.setdefault("last_message_ids", {})
 
-    @_last_update_id.setter
-    def _last_update_id(self, value: int) -> None:
-        self.config["last_update_id"] = value
+    @property
+    def _history_limit(self) -> int:
+        return self.config.get("history_limit", HISTORY_LIMIT_DEFAULT)
 
     async def setup(self) -> None:
-        if not self._bot_token:
+        if not settings.telegram_api_id or not settings.telegram_api_hash:
             raise RuntimeError(
-                "DARKDISCO_TELEGRAM_BOT_TOKEN not configured — "
-                "cannot initialize Telegram connector"
+                "DARKDISCO_TELEGRAM_API_ID and DARKDISCO_TELEGRAM_API_HASH "
+                "must be configured"
             )
-        self._session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30),
+
+        session_path = str(
+            Path(settings.telegram_session_name).expanduser()
         )
+        self._client = TelegramClient(
+            session_path,
+            settings.telegram_api_id,
+            settings.telegram_api_hash,
+        )
+        await self._client.connect()
+
+        if not await self._client.is_user_authorized():
+            raise RuntimeError(
+                "Telegram session not authorized. Run the interactive login "
+                "first: python -m darkdisco.discovery.connectors.telegram"
+            )
 
     async def teardown(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        if self._client and self._client.is_connected():
+            await self._client.disconnect()
+            self._client = None
 
     async def poll(self, since: datetime | None = None) -> list[RawMention]:
-        """Fetch new messages from monitored Telegram channels/groups.
-
-        Uses getUpdates with offset to track position. Only returns messages
-        from channels listed in self.config["channels"].
-        """
-        if not self._bot_token:
-            logger.warning("Telegram bot token not configured, skipping poll")
-            return []
-
         if not self._channels:
             logger.warning("No channels configured for Telegram connector")
             return []
 
-        if self._session is None:
+        if self._client is None:
             await self.setup()
 
-        # Build a set of allowed channel identifiers for filtering
-        allowed = _normalize_channel_set(self._channels)
+        all_mentions: list[RawMention] = []
 
-        mentions: list[RawMention] = []
-        offset = self._last_update_id + 1 if self._last_update_id else 0
-
-        while True:
-            updates = await self._get_updates(offset=offset)
-            if not updates:
+        for channel_ref in self._channels:
+            try:
+                mentions = await self._poll_channel(channel_ref, since)
+                all_mentions.extend(mentions)
+                logger.info(
+                    "Telegram channel %s: %d mentions",
+                    channel_ref, len(mentions),
+                )
+            except FloodWaitError as e:
+                logger.warning(
+                    "Telegram flood wait %ds for %s, stopping poll",
+                    e.seconds, channel_ref,
+                )
                 break
+            except ChannelPrivateError:
+                logger.warning(
+                    "Cannot access channel %s (private/banned)", channel_ref
+                )
+            except Exception:
+                logger.exception("Failed to poll channel %s", channel_ref)
 
-            for update in updates:
-                update_id = update["update_id"]
-                # Always advance the offset
-                if update_id >= offset:
-                    offset = update_id + 1
-
-                msg = _extract_message(update)
-                if msg is None:
-                    continue
-
-                # Filter to only monitored channels
-                chat = msg.get("chat", {})
-                if not _chat_matches(chat, allowed):
-                    continue
-
-                mention = _message_to_mention(msg, chat)
-                if mention is not None:
-                    # Apply time filter if requested
-                    if since and mention.discovered_at < since:
-                        continue
-                    mentions.append(mention)
-
-            # Persist the high-water mark
-            self._last_update_id = offset - 1
-
-            # Respect rate limits between pages
-            await asyncio.sleep(RATE_LIMIT_DELAY)
-
-            # If we got fewer than the max, we've consumed all pending updates
-            if len(updates) < MAX_UPDATES_PER_POLL:
-                break
+            await asyncio.sleep(INTER_CHANNEL_DELAY)
 
         logger.info(
-            "Telegram poll complete: %d mentions from %d channels",
-            len(mentions),
-            len(self._channels),
+            "Telegram poll complete: %d total mentions from %d channels",
+            len(all_mentions), len(self._channels),
         )
-        return mentions
+        return all_mentions
 
     async def health_check(self) -> dict:
-        """Verify bot token is valid by calling getMe."""
-        if not self._bot_token:
-            return {"healthy": False, "message": "Bot token not configured"}
-
-        if self._session is None:
-            await self.setup()
+        if self._client is None:
+            try:
+                await self.setup()
+            except Exception as exc:
+                return {"healthy": False, "message": str(exc)[:200]}
 
         try:
-            data = await self._api_call("getMe")
-            bot_name = data.get("username", "unknown")
+            me = await self._client.get_me()
+            username = me.username or me.phone
             return {
                 "healthy": True,
-                "message": f"Connected as @{bot_name}",
-                "bot_username": bot_name,
+                "message": f"Connected as @{username}",
                 "channels_configured": len(self._channels),
             }
         except Exception as exc:
-            return {"healthy": False, "message": str(exc)}
+            return {"healthy": False, "message": str(exc)[:200]}
+
+    async def join_channel(self, channel_ref: str) -> bool:
+        """Attempt to join a channel by username or invite link.
+
+        Call this manually or from a management script to onboard new channels.
+        """
+        if self._client is None:
+            await self.setup()
+
+        try:
+            if _is_invite_link(channel_ref):
+                invite_hash = _extract_invite_hash(channel_ref)
+                await self._client(ImportChatInviteRequest(invite_hash))
+            else:
+                entity = await self._client.get_entity(channel_ref)
+                await self._client.get_messages(entity, limit=1)
+            logger.info("Joined channel: %s", channel_ref)
+            return True
+        except UserAlreadyParticipantError:
+            logger.info("Already in channel: %s", channel_ref)
+            return True
+        except InviteHashExpiredError:
+            logger.warning("Invite link expired: %s", channel_ref)
+            return False
+        except Exception:
+            logger.exception("Failed to join channel: %s", channel_ref)
+            return False
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Internal
     # ------------------------------------------------------------------
 
-    async def _api_call(self, method: str, **params: Any) -> Any:
-        """Call a Telegram Bot API method with retry logic."""
-        url = f"{self._base_url}/{method}"
-        last_exc: Exception | None = None
+    async def _poll_channel(
+        self, channel_ref: str, since: datetime | None,
+    ) -> list[RawMention]:
+        entity = await self._client.get_entity(channel_ref)
+        channel_key = _channel_key(channel_ref, entity)
 
-        for attempt in range(MAX_RETRIES):
-            try:
-                async with self._session.get(url, params=params) as resp:  # type: ignore[union-attr]
-                    if resp.status == 429:
-                        # Rate limited — honor Retry-After header
-                        retry_after = int(resp.headers.get("Retry-After", 5))
-                        logger.warning(
-                            "Telegram rate limited, retrying in %ds", retry_after
-                        )
-                        await asyncio.sleep(retry_after)
-                        continue
+        # Get high-water mark for incremental reads
+        min_id = self._last_message_ids.get(channel_key, 0)
+        new_high_water = min_id
 
-                    body = await resp.json()
+        mentions: list[RawMention] = []
 
-                    if not body.get("ok"):
-                        error_code = body.get("error_code", resp.status)
-                        description = body.get("description", "Unknown error")
-                        raise TelegramAPIError(error_code, description)
+        async for message in self._client.iter_messages(
+            entity,
+            limit=self._history_limit,
+            min_id=min_id,
+        ):
+            if not isinstance(message, Message):
+                continue
 
-                    return body.get("result")
+            # Track highest message ID seen
+            if message.id > new_high_water:
+                new_high_water = message.id
 
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                last_exc = exc
-                wait = RETRY_BACKOFF ** (attempt + 1)
-                logger.warning(
-                    "Telegram API %s failed (attempt %d/%d): %s — retrying in %ds",
-                    method, attempt + 1, MAX_RETRIES, exc, wait,
-                )
-                await asyncio.sleep(wait)
+            # Time filter
+            if since and message.date and message.date < since:
+                continue
 
-        raise TelegramAPIError(
-            0, f"Failed after {MAX_RETRIES} retries: {last_exc}"
-        )
+            mention = _message_to_mention(message, entity, channel_ref)
+            if mention is not None:
+                mentions.append(mention)
 
-    async def _get_updates(self, offset: int = 0) -> list[dict]:
-        """Fetch pending updates from the Bot API."""
-        params: dict[str, Any] = {
-            "limit": MAX_UPDATES_PER_POLL,
-            "timeout": 0,  # non-blocking (short poll)
-            "allowed_updates": '["message","channel_post"]',
-        }
-        if offset:
-            params["offset"] = offset
+        # Update bookmark
+        if new_high_water > min_id:
+            self._last_message_ids[channel_key] = new_high_water
 
-        return await self._api_call("getUpdates", **params)
-
-
-class TelegramAPIError(Exception):
-    """Raised when the Telegram Bot API returns an error."""
-
-    def __init__(self, code: int, description: str):
-        self.code = code
-        self.description = description
-        super().__init__(f"Telegram API error {code}: {description}")
+        return mentions
 
 
 # ------------------------------------------------------------------
-# Pure helpers (no side effects — easy to test)
+# Pure helpers
 # ------------------------------------------------------------------
 
 
-def _normalize_channel_set(channels: list[str]) -> set[str]:
-    """Build a set of normalized channel identifiers for matching.
-
-    Accepts usernames (with or without @) and numeric chat IDs.
-    """
-    normalized: set[str] = set()
-    for ch in channels:
-        ch = ch.strip()
-        if not ch:
-            continue
-        # Strip leading @ for username matching
-        if ch.startswith("@"):
-            ch = ch[1:]
-        normalized.add(ch.lower())
-    return normalized
+def _channel_key(ref: str, entity) -> str:
+    """Stable key for a channel — prefer numeric ID."""
+    if hasattr(entity, "id"):
+        return str(entity.id)
+    return ref.lower().strip("@").strip("/")
 
 
-def _chat_matches(chat: dict, allowed: set[str]) -> bool:
-    """Check if a chat dict matches one of the allowed channels."""
-    # Match by username
-    username = chat.get("username", "")
-    if username and username.lower() in allowed:
-        return True
-    # Match by numeric ID (as string)
-    chat_id = str(chat.get("id", ""))
-    if chat_id in allowed:
-        return True
-    # Match by title (for groups without usernames)
-    title = chat.get("title", "")
-    if title and title.lower() in allowed:
-        return True
-    return False
+def _is_invite_link(ref: str) -> bool:
+    return "+/" in ref or "joinchat/" in ref or ref.startswith("+")
 
 
-def _extract_message(update: dict) -> dict | None:
-    """Extract the message payload from an update.
+def _extract_invite_hash(ref: str) -> str:
+    """Extract the hash portion from a t.me invite link."""
+    ref = ref.strip()
+    for prefix in ("https://t.me/+", "https://t.me/joinchat/", "t.me/+", "t.me/joinchat/", "+"):
+        if ref.startswith(prefix):
+            return ref[len(prefix):]
+    return ref
 
-    Telegram sends channel messages as 'channel_post' and group messages
-    as 'message'. We handle both.
-    """
-    return update.get("channel_post") or update.get("message")
 
+def _message_to_mention(
+    msg: Message, entity, channel_ref: str,
+) -> RawMention | None:
+    """Convert a Telethon Message to a RawMention."""
+    text = msg.text or ""
+    if msg.message and not text:
+        text = msg.message
 
-def _message_to_mention(msg: dict, chat: dict) -> RawMention | None:
-    """Convert a Telegram message dict to a RawMention."""
-    # Extract text content — may be in text or caption (for media)
-    text = msg.get("text", "") or msg.get("caption", "")
     if not text:
-        # Skip messages with no text content (stickers, etc.)
         return None
 
-    # Build author string
-    sender = msg.get("from", {})
-    author_parts = [
-        sender.get("first_name", ""),
-        sender.get("last_name", ""),
-    ]
-    author = " ".join(p for p in author_parts if p).strip() or None
-    if not author and sender.get("username"):
-        author = f"@{sender['username']}"
+    # Channel/chat title
+    title = ""
+    if hasattr(entity, "title"):
+        title = entity.title or ""
 
-    # Channel title as the "title" field
-    title = chat.get("title", "")
+    # Author
+    author = None
+    if msg.sender:
+        if isinstance(msg.sender, User):
+            parts = [msg.sender.first_name or "", msg.sender.last_name or ""]
+            author = " ".join(p for p in parts if p).strip()
+            if not author and msg.sender.username:
+                author = f"@{msg.sender.username}"
+        elif hasattr(msg.sender, "title"):
+            author = msg.sender.title
 
-    # Timestamps
-    msg_date = msg.get("date", 0)
-    discovered = (
-        datetime.fromtimestamp(msg_date, tz=timezone.utc) if msg_date
-        else datetime.now(tz=timezone.utc)
-    )
+    # Timestamp
+    discovered = msg.date or datetime.now(tz=timezone.utc)
+    if discovered.tzinfo is None:
+        discovered = discovered.replace(tzinfo=timezone.utc)
 
-    # Build metadata with file/media info
-    metadata = _extract_media_metadata(msg)
-    metadata["message_id"] = msg.get("message_id")
-    metadata["chat_id"] = chat.get("id")
-    metadata["chat_type"] = chat.get("type")
-    if sender.get("username"):
-        metadata["sender_username"] = sender["username"]
-
-    # Source URL: link to specific message if possible
-    chat_username = chat.get("username")
-    msg_id = msg.get("message_id")
+    # Source URL
     source_url = None
-    if chat_username and msg_id:
-        source_url = f"https://t.me/{chat_username}/{msg_id}"
+    if hasattr(entity, "username") and entity.username:
+        source_url = f"https://t.me/{entity.username}/{msg.id}"
+    elif hasattr(entity, "id"):
+        source_url = f"https://t.me/c/{entity.id}/{msg.id}"
+
+    # Metadata
+    metadata: dict[str, Any] = {
+        "message_id": msg.id,
+        "chat_id": entity.id if hasattr(entity, "id") else None,
+        "channel_ref": channel_ref,
+    }
+
+    if msg.forward:
+        if hasattr(msg.forward, "chat") and msg.forward.chat:
+            metadata["forwarded_from"] = getattr(
+                msg.forward.chat, "title", None
+            ) or getattr(msg.forward.chat, "username", None)
+
+    if msg.media:
+        metadata["has_media"] = True
+        media_type = type(msg.media).__name__
+        metadata["media_type"] = media_type
+
+    if msg.file:
+        metadata["file_name"] = msg.file.name
+        metadata["file_size"] = msg.file.size
 
     return RawMention(
-        source_name="telegram",
+        source_name=f"telegram:{title or channel_ref}",
         source_url=source_url,
         title=title,
         content=text,
@@ -338,38 +317,25 @@ def _message_to_mention(msg: dict, chat: dict) -> RawMention | None:
     )
 
 
-def _extract_media_metadata(msg: dict) -> dict:
-    """Extract metadata about attached media (documents, photos, etc.)."""
-    meta: dict[str, Any] = {}
+# ------------------------------------------------------------------
+# Interactive session setup — run once to authenticate
+# ------------------------------------------------------------------
 
-    if "document" in msg:
-        doc = msg["document"]
-        meta["has_document"] = True
-        meta["document_file_name"] = doc.get("file_name")
-        meta["document_mime_type"] = doc.get("mime_type")
-        meta["document_file_size"] = doc.get("file_size")
+if __name__ == "__main__":
+    import sys
 
-    if "photo" in msg:
-        # photo is an array of PhotoSize; take the largest
-        photos = msg["photo"]
-        if photos:
-            largest = max(photos, key=lambda p: p.get("file_size", 0))
-            meta["has_photo"] = True
-            meta["photo_file_id"] = largest.get("file_id")
-            meta["photo_width"] = largest.get("width")
-            meta["photo_height"] = largest.get("height")
+    async def _interactive_login():
+        if not settings.telegram_api_id or not settings.telegram_api_hash:
+            print("Error: Set DARKDISCO_TELEGRAM_API_ID and DARKDISCO_TELEGRAM_API_HASH first")
+            sys.exit(1)
 
-    if "video" in msg:
-        video = msg["video"]
-        meta["has_video"] = True
-        meta["video_duration"] = video.get("duration")
-        meta["video_file_size"] = video.get("file_size")
+        session_path = str(Path(settings.telegram_session_name).expanduser())
+        client = TelegramClient(session_path, settings.telegram_api_id, settings.telegram_api_hash)
 
-    if "sticker" in msg:
-        meta["has_sticker"] = True
+        await client.start()
+        me = await client.get_me()
+        print(f"Authenticated as: {me.first_name} (@{me.username})")
+        print(f"Session saved to: {session_path}.session")
+        await client.disconnect()
 
-    if "forward_from_chat" in msg:
-        fwd = msg["forward_from_chat"]
-        meta["forwarded_from"] = fwd.get("title") or fwd.get("username")
-
-    return meta
+    asyncio.run(_interactive_login())

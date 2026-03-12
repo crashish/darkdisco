@@ -28,20 +28,53 @@ from darkdisco.config import settings
 # ---------------------------------------------------------------------------
 
 SOURCES = [
+    # ---- Telegram: Stealer log clouds (highest priority) ----
     {
-        "name": "Telegram Channel Monitor",
+        "name": "Telegram Stealer Logs",
         "source_type": SourceType.telegram,
         "url": None,
         "connector_class": "darkdisco.discovery.connectors.telegram:TelegramConnector",
         "poll_interval_seconds": 300,
         "config": {
             "channels": [
-                # Placeholder — replace with actual monitored channels
-                # These should be channel usernames or chat IDs
+                # Stealer log clouds (confirmed ONLINE per deepdarkCTI Feb 2026)
+                "+E9biBdpOv35iMmEy",      # SNATCH LOGS CLOUD
+                "+VbZVKqzgUURlMjdi",       # Everlasting Cloud
+                "BHF_CLOUD",               # BHF Cloud
+                "Skyl1neCloud",            # Skyline Cloud
+                "PegasusCloud",            # Pegasus Cloud
+                "+IqEnwfj7CLU1Yjcy",       # Omega Cloud
+                "Creditunionbanksstore",   # Credit union/bank logs (directly relevant)
+                "cvv190_cloud",            # CVV190 Cloud
+                "ManticoreCloud",          # Manticore
+                "Trident_Cloud",           # Trident Cloud
+                "BurnCloudLogs",           # Burn Cloud
+                "darknescloud",            # Darkness Cloud
+                "universecloudtxt",        # Universe Cloud
+                "realcloud0",              # RealCloud
+                "Sl1ddifree",              # Sl1ddi Cloud (free logs)
             ],
-            "last_update_id": 0,
+            "last_message_ids": {},
+            "history_limit": 100,
         },
     },
+    # ---- Telegram: Threat intel aggregators (defensive) ----
+    {
+        "name": "Telegram Threat Intel",
+        "source_type": SourceType.telegram,
+        "url": None,
+        "connector_class": "darkdisco.discovery.connectors.telegram:TelegramConnector",
+        "poll_interval_seconds": 600,
+        "config": {
+            "channels": [
+                "vxunderground",           # Malware/threat research
+                "TheDarkWebInformer",      # Breach/leak/ransomware alerts
+            ],
+            "last_message_ids": {},
+            "history_limit": 50,
+        },
+    },
+    # ---- Forums ----
     {
         "name": "BreachForums Monitor",
         "source_type": SourceType.forum,
@@ -52,7 +85,7 @@ SOURCES = [
             "forums": [
                 {
                     "name": "BreachForums",
-                    "base_url": "https://breachforums.st",  # clearnet mirror
+                    "base_url": "https://breachforums.bf",
                     "recent_path": "/Forum-Databases",
                     "selector_profile": "mybb",
                     "last_seen_id": "",
@@ -62,7 +95,7 @@ SOURCES = [
         },
     },
     {
-        "name": "XSS.is Forum Monitor",
+        "name": "Exploit.in Forum Monitor",
         "source_type": SourceType.forum,
         "url": None,
         "connector_class": "darkdisco.discovery.connectors.forum:ForumConnector",
@@ -70,9 +103,9 @@ SOURCES = [
         "config": {
             "forums": [
                 {
-                    "name": "XSS.is",
-                    "base_url": "https://xss.is",
-                    "recent_path": "/forums/",
+                    "name": "Exploit.in",
+                    "base_url": "https://exploit.in",
+                    "recent_path": "/",
                     "selector_profile": "xenforo",
                     "last_seen_id": "",
                 },

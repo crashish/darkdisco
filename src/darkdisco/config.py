@@ -33,7 +33,10 @@ class Settings(BaseSettings):
     dehashed_email: str = ""
     intelx_api_key: str = ""
     hibp_api_key: str = ""
-    telegram_bot_token: str = ""
+    telegram_bot_token: str = ""  # Legacy — kept for compat
+    telegram_api_id: int = 0
+    telegram_api_hash: str = ""
+    telegram_session_name: str = "darkdisco_monitor"
 
     # S3/MinIO for attachment storage
     s3_endpoint: str = "http://localhost:9000"
