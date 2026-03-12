@@ -10,7 +10,7 @@ import type { Source, TelegramChannel, Finding, FindingTrend } from '../types';
 import {
   ArrowLeft, Plus, Trash2, MessageSquare, Hash, Wifi, WifiOff,
   AlertTriangle, Loader, Play, Settings, Activity, BarChart3, Save, Check,
-  Code, Eye, EyeOff,
+  Code, Eye, EyeOff, X,
 } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
@@ -89,6 +89,8 @@ export default function SourceDetail() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [trend, setTrend] = useState<FindingTrend[]>([]);
   const [showRawConfig, setShowRawConfig] = useState(false);
+  const [togglingEnabled, setTogglingEnabled] = useState(false);
+  const [errorDismissed, setErrorDismissed] = useState(false);
 
   const isTelegram = source?.source_type === 'telegram';
 
@@ -172,6 +174,19 @@ export default function SourceDetail() {
       setError(e instanceof Error ? e.message : 'Failed to trigger poll');
     } finally {
       setPolling(false);
+    }
+  };
+
+  const handleToggleEnabled = async () => {
+    if (!id || !source || togglingEnabled) return;
+    setTogglingEnabled(true);
+    try {
+      const updated = await updateSource(id, { enabled: !source.enabled });
+      setSource(prev => prev ? { ...prev, ...updated } : prev);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to toggle source');
+    } finally {
+      setTogglingEnabled(false);
     }
   };
 
@@ -282,7 +297,7 @@ export default function SourceDetail() {
         <ArrowLeft size={14} /> Sources
       </button>
 
-      {/* Header with poll button */}
+      {/* Header with toggle and poll button */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <div>
@@ -296,19 +311,91 @@ export default function SourceDetail() {
             {source.health}
           </span>
         </div>
-        <button
-          onClick={handlePoll}
-          disabled={polling || source.health === 'offline'}
-          style={{
-            ...btnPrimary,
-            opacity: polling ? 0.6 : 1,
-            background: pollSuccess ? colors.healthy : colors.accent,
-          }}
-        >
-          {polling ? <Loader size={14} /> : pollSuccess ? <Check size={14} /> : <Play size={14} />}
-          {polling ? 'Polling...' : pollSuccess ? 'Dispatched' : 'Poll Now'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* Enable/disable toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: source.enabled ? colors.healthy : colors.textMuted, fontWeight: 500 }}>
+              {source.enabled ? 'Enabled' : 'Disabled'}
+            </span>
+            <button
+              onClick={handleToggleEnabled}
+              disabled={togglingEnabled}
+              title={source.enabled ? 'Disable source' : 'Enable source'}
+              style={{
+                position: 'relative',
+                width: 44,
+                height: 24,
+                borderRadius: 12,
+                border: 'none',
+                background: source.enabled ? colors.healthy : colors.border,
+                cursor: togglingEnabled ? 'wait' : 'pointer',
+                transition: 'background 0.2s',
+                padding: 0,
+                opacity: togglingEnabled ? 0.6 : 1,
+              }}
+            >
+              <div style={{
+                position: 'absolute',
+                top: 3,
+                left: source.enabled ? 23 : 3,
+                width: 18,
+                height: 18,
+                borderRadius: '50%',
+                background: '#fff',
+                transition: 'left 0.2s',
+              }} />
+            </button>
+          </div>
+          <button
+            onClick={handlePoll}
+            disabled={polling || !source.enabled}
+            style={{
+              ...btnPrimary,
+              opacity: (polling || !source.enabled) ? 0.6 : 1,
+              background: pollSuccess ? colors.healthy : colors.accent,
+            }}
+          >
+            {polling ? <Loader size={14} /> : pollSuccess ? <Check size={14} /> : <Play size={14} />}
+            {polling ? 'Polling...' : pollSuccess ? 'Dispatched' : 'Poll Now'}
+          </button>
+        </div>
       </div>
+
+      {/* Degraded/error status banner */}
+      {source.last_error && !errorDismissed && (
+        <div style={{
+          ...card,
+          background: source.health === 'degraded' ? colors.degradedBg : colors.criticalBg,
+          borderColor: source.health === 'degraded' ? 'rgba(234, 179, 8, 0.3)' : 'rgba(239, 68, 68, 0.3)',
+          marginBottom: 16,
+          padding: '14px 20px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <AlertTriangle size={16} color={source.health === 'degraded' ? colors.degraded : colors.critical} />
+                <span style={{ fontSize: 14, fontWeight: 600, color: source.health === 'degraded' ? colors.degraded : colors.critical }}>
+                  Source {source.health === 'degraded' ? 'Degraded' : 'Error'}
+                </span>
+              </div>
+              <div style={{ fontSize: 13, color: colors.text, fontFamily: font.mono, marginBottom: 10, lineHeight: 1.5 }}>
+                {source.last_error}
+              </div>
+              <div style={{ display: 'flex', gap: 20, fontSize: 12, color: colors.textMuted }}>
+                <span>Last polled: {source.last_polled_at ? new Date(source.last_polled_at).toLocaleString() : 'Never'}</span>
+                <span>Poll interval: {Math.floor(source.poll_interval_seconds / 60)}m</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setErrorDismissed(true)}
+              style={{ background: 'none', border: 'none', color: colors.textMuted, cursor: 'pointer', padding: 4, flexShrink: 0 }}
+              title="Dismiss"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Error banner */}
       {error && (
@@ -330,9 +417,10 @@ export default function SourceDetail() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 20 }}>
           <InfoField label="Source ID" value={source.id} mono />
           <InfoField label="Type" value={sourceLabels[source.source_type] || source.source_type} />
-          <InfoField label="Last Poll" value={source.last_poll ? new Date(source.last_poll).toLocaleString() : 'Never'} />
+          <InfoField label="Status" value={source.enabled ? 'Enabled' : 'Disabled'} color={source.enabled ? colors.healthy : colors.textMuted} />
+          <InfoField label="Last Poll" value={source.last_polled_at ? new Date(source.last_polled_at).toLocaleString() : 'Never'} />
           <InfoField label="Findings" value={String(source.finding_count)} />
-          <InfoField label="Poll Interval" value={`${Math.floor(source.avg_poll_seconds / 60)}m`} />
+          <InfoField label="Poll Interval" value={`${Math.floor(source.poll_interval_seconds / 60)}m`} />
         </div>
       </div>
 
@@ -838,13 +926,13 @@ function ConfigField({
   return null;
 }
 
-function InfoField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function InfoField({ label, value, mono, color }: { label: string; value: string; mono?: boolean; color?: string }) {
   return (
     <div>
       <div style={{ fontSize: 10, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>
         {label}
       </div>
-      <div style={{ fontSize: 13, fontWeight: 500, fontFamily: mono ? font.mono : undefined, color: colors.text }}>
+      <div style={{ fontSize: 13, fontWeight: 500, fontFamily: mono ? font.mono : undefined, color: color || colors.text }}>
         {value}
       </div>
     </div>

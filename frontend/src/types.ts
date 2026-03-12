@@ -79,9 +79,13 @@ export interface Source {
   name: string;
   source_type: SourceType;
   health: SourceHealth;
+  enabled: boolean;
   last_poll: string;
   finding_count: number;
   avg_poll_seconds: number;
+  poll_interval_seconds: number;
+  last_polled_at: string | null;
+  last_error: string | null;
   config?: Record<string, unknown>;
 }
 

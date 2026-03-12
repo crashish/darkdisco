@@ -82,8 +82,9 @@ export async function fetchWatchTerms(institutionId: string): Promise<WatchTerm[
   return apiFetch(`/watch-terms?institution_id=${institutionId}`, fallback);
 }
 
-export async function fetchSources(): Promise<Source[]> {
-  return apiFetch('/sources', mockSources);
+export async function fetchSources(enabled?: boolean): Promise<Source[]> {
+  const qs = enabled !== undefined ? `?enabled=${enabled}` : '';
+  return apiFetch(`/sources${qs}`, mockSources);
 }
 
 export async function fetchSource(id: string): Promise<Source> {

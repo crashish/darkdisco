@@ -488,7 +488,31 @@ async def get_source(
     source = await db.get(Source, source_id)
     if not source:
         raise HTTPException(404, "Source not found")
-    return source
+
+    # Compute health consistently with list endpoint
+    count_q = select(func.count(Finding.id)).where(Finding.source_id == source_id)
+    finding_count = (await db.execute(count_q)).scalar() or 0
+
+    now = datetime.now(timezone.utc)
+    health = "offline"
+    if source.enabled and source.last_polled_at:
+        age_min = (now - source.last_polled_at).total_seconds() / 60
+        if source.last_error:
+            health = "degraded"
+        elif age_min < 30:
+            health = "healthy"
+        else:
+            health = "degraded"
+    elif source.enabled:
+        health = "offline"
+
+    return SourceOut(
+        **{c.key: getattr(source, c.key) for c in Source.__table__.columns},
+        health=health,
+        finding_count=finding_count,
+        avg_poll_seconds=source.poll_interval_seconds,
+        last_poll=source.last_polled_at,
+    )
 
 
 @protected.put("/sources/{source_id}", response_model=SourceOut)
@@ -504,7 +528,31 @@ async def update_source(
         setattr(source, key, val)
     await db.commit()
     await db.refresh(source)
-    return source
+
+    # Compute health consistently with list endpoint
+    count_q = select(func.count(Finding.id)).where(Finding.source_id == source_id)
+    finding_count = (await db.execute(count_q)).scalar() or 0
+
+    now = datetime.now(timezone.utc)
+    health = "offline"
+    if source.enabled and source.last_polled_at:
+        age_min = (now - source.last_polled_at).total_seconds() / 60
+        if source.last_error:
+            health = "degraded"
+        elif age_min < 30:
+            health = "healthy"
+        else:
+            health = "degraded"
+    elif source.enabled:
+        health = "offline"
+
+    return SourceOut(
+        **{c.key: getattr(source, c.key) for c in Source.__table__.columns},
+        health=health,
+        finding_count=finding_count,
+        avg_poll_seconds=source.poll_interval_seconds,
+        last_poll=source.last_polled_at,
+    )
 
 
 @protected.delete("/sources/{source_id}", status_code=204)

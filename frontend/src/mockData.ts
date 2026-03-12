@@ -80,12 +80,12 @@ export const mockFindings: Finding[] = findingTemplates.map((t, i) => ({
 }));
 
 export const mockSources: Source[] = [
-  { id: 's-001', name: 'DarkLeaks Forum Monitor', source_type: 'tor_forum', health: 'healthy', last_poll: minsAgo(3), finding_count: 847, avg_poll_seconds: 300 },
-  { id: 's-002', name: 'PasteBin/GhostBin Scraper', source_type: 'paste_site', health: 'healthy', last_poll: minsAgo(1), finding_count: 1243, avg_poll_seconds: 60 },
-  { id: 's-003', name: 'Telegram Channel Ingest', source_type: 'telegram', health: 'degraded', last_poll: minsAgo(45), finding_count: 562, avg_poll_seconds: 120 },
-  { id: 's-004', name: 'Breach Database Correlator', source_type: 'breach_db', health: 'healthy', last_poll: minsAgo(12), finding_count: 2105, avg_poll_seconds: 600 },
-  { id: 's-005', name: 'Ransomware Blog Tracker', source_type: 'ransomware_blog', health: 'healthy', last_poll: minsAgo(8), finding_count: 189, avg_poll_seconds: 900 },
-  { id: 's-006', name: 'DarkMarket Carding Monitor', source_type: 'tor_forum', health: 'offline', last_poll: hoursAgo(6), finding_count: 331, avg_poll_seconds: 300 },
+  { id: 's-001', name: 'DarkLeaks Forum Monitor', source_type: 'tor_forum', health: 'healthy', enabled: true, last_poll: minsAgo(3), finding_count: 847, avg_poll_seconds: 300, poll_interval_seconds: 300, last_polled_at: minsAgo(3), last_error: null },
+  { id: 's-002', name: 'PasteBin/GhostBin Scraper', source_type: 'paste_site', health: 'healthy', enabled: true, last_poll: minsAgo(1), finding_count: 1243, avg_poll_seconds: 60, poll_interval_seconds: 60, last_polled_at: minsAgo(1), last_error: null },
+  { id: 's-003', name: 'Telegram Channel Ingest', source_type: 'telegram', health: 'degraded', enabled: true, last_poll: minsAgo(45), finding_count: 562, avg_poll_seconds: 120, poll_interval_seconds: 120, last_polled_at: minsAgo(45), last_error: 'Connection timeout: Telegram API rate limited after 50 requests' },
+  { id: 's-004', name: 'Breach Database Correlator', source_type: 'breach_db', health: 'healthy', enabled: true, last_poll: minsAgo(12), finding_count: 2105, avg_poll_seconds: 600, poll_interval_seconds: 600, last_polled_at: minsAgo(12), last_error: null },
+  { id: 's-005', name: 'Ransomware Blog Tracker', source_type: 'ransomware_blog', health: 'healthy', enabled: true, last_poll: minsAgo(8), finding_count: 189, avg_poll_seconds: 900, poll_interval_seconds: 900, last_polled_at: minsAgo(8), last_error: null },
+  { id: 's-006', name: 'DarkMarket Carding Monitor', source_type: 'tor_forum', health: 'offline', enabled: false, last_poll: hoursAgo(6), finding_count: 331, avg_poll_seconds: 300, poll_interval_seconds: 300, last_polled_at: hoursAgo(6), last_error: null },
 ];
 
 export const mockDashboardStats: DashboardStats = {
