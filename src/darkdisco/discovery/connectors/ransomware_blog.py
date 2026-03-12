@@ -277,7 +277,10 @@ class RansomwareBlogConnector(BaseConnector):
     async def setup(self) -> None:
         """Create aiohttp session with Tor SOCKS proxy."""
         proxy_url = self.config.get("tor_proxy", settings.tor_socks_proxy)
-        connector = ProxyConnector.from_url(proxy_url)
+        # aiohttp_socks doesn't support socks5h scheme; use socks5 with rdns=True
+        if proxy_url and proxy_url.startswith("socks5h://"):
+            proxy_url = "socks5://" + proxy_url[len("socks5h://"):]
+        connector = ProxyConnector.from_url(proxy_url, rdns=True)
         self._session = aiohttp.ClientSession(
             connector=connector,
             timeout=_TOR_TIMEOUT,

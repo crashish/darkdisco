@@ -166,7 +166,11 @@ def poll_source(self, source_id: str):
         logger.info("Polled source %s: %d mentions", source.name, len(mentions))
 
         if mentions:
+            # Process file attachments before serialization
+            mentions = _process_file_mentions(mentions)
+
             # Serialize mentions for the matching task
+            # (file_data bytes are removed — text content extracted above)
             serialized = [
                 {
                     "source_name": m.source_name,
@@ -175,7 +179,10 @@ def poll_source(self, source_id: str):
                     "content": m.content,
                     "author": m.author,
                     "discovered_at": m.discovered_at.isoformat() if m.discovered_at else None,
-                    "metadata": m.metadata,
+                    "metadata": {
+                        k: v for k, v in m.metadata.items()
+                        if k != "file_data"  # raw bytes not JSON-serializable
+                    },
                 }
                 for m in mentions
             ]
@@ -193,6 +200,95 @@ async def _poll_async(connector, since):
         return await connector.poll(since=since)
     finally:
         await connector.teardown()
+
+
+def _process_file_mentions(mentions: list) -> list:
+    """Process file attachments in mentions: extract archives, analyze contents.
+
+    For each mention with file_data in metadata:
+    1. If it's an archive (ZIP/RAR), extract and analyze contents
+    2. Append extracted text to the mention content for matching
+    3. Upload original + extracted files to S3
+    4. Store file analysis metadata
+    """
+    from darkdisco.pipeline.files import (
+        analyze_extracted_files,
+        extract_archive,
+        extract_passwords,
+        is_archive,
+        upload_to_s3,
+    )
+
+    for mention in mentions:
+        file_data = mention.metadata.get("file_data")
+        if not file_data or not isinstance(file_data, bytes):
+            continue
+
+        filename = mention.metadata.get("file_name") or "unknown"
+        file_sha256 = hashlib.sha256(file_data).hexdigest()
+
+        # Upload original file to S3
+        s3_key = f"files/{file_sha256[:8]}/{filename}"
+        if upload_to_s3(s3_key, file_data):
+            mention.metadata["s3_key"] = s3_key
+        mention.metadata["file_sha256"] = file_sha256
+
+        if is_archive(filename):
+            # Extract passwords from the message text
+            passwords = extract_passwords(mention.content or "")
+            mention.metadata["extracted_passwords"] = passwords
+
+            try:
+                extracted = extract_archive(file_data, filename, passwords)
+            except Exception:
+                logger.exception("Archive extraction failed for %s", filename)
+                extracted = []
+
+            if extracted:
+                analysis = analyze_extracted_files(extracted)
+                mention.metadata["file_analysis"] = analysis.to_dict()
+
+                # Append extracted text to mention content for matching
+                if analysis.text_content:
+                    separator = "\n\n--- Extracted from archive ---\n\n"
+                    mention.content = (mention.content or "") + separator + analysis.text_content
+
+                # Upload extracted files to S3
+                for ef in extracted:
+                    ef_s3_key = f"files/{file_sha256[:8]}/extracted/{ef.sha256[:8]}/{ef.filename}"
+                    upload_to_s3(ef_s3_key, ef.content)
+
+                logger.info(
+                    "Extracted %d files from %s (%d text, %d credential indicators)",
+                    len(extracted), filename,
+                    sum(1 for f in extracted if f.is_text),
+                    len(analysis.credential_indicators),
+                )
+
+                # If credentials found, boost severity hint in metadata
+                if analysis.credential_indicators:
+                    mention.metadata["has_credentials"] = True
+                    mention.metadata["credential_count"] = len(analysis.credential_indicators)
+        else:
+            # Non-archive file — if it's a text file, include content
+            if filename.lower().endswith((".txt", ".csv", ".log", ".json", ".sql")):
+                try:
+                    for enc in ("utf-8", "latin-1", "cp1251"):
+                        try:
+                            text = file_data.decode(enc)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    else:
+                        text = file_data.decode("utf-8", errors="replace")
+
+                    if text:
+                        separator = f"\n\n--- File: {filename} ---\n\n"
+                        mention.content = (mention.content or "") + separator + text[:200_000]
+                except Exception:
+                    pass
+
+    return mentions
 
 
 @app.task(name="darkdisco.pipeline.worker.run_matching")
