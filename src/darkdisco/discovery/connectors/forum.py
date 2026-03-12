@@ -82,7 +82,9 @@ class ForumConnector(BaseConnector):
         return self.config.get("max_pages", 3)
 
     async def setup(self) -> None:
-        connector = ProxyConnector.from_url(settings.tor_socks_proxy)
+        # Normalize socks5h:// → socks5:// with rdns=True for .onion resolution
+        proxy_url = settings.tor_socks_proxy.replace("socks5h://", "socks5://")
+        connector = ProxyConnector.from_url(proxy_url, rdns=True)
         self._session = aiohttp.ClientSession(
             connector=connector,
             timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),

@@ -75,10 +75,17 @@ class TelegramConnector(BaseConnector):
         session_path = str(
             Path(settings.telegram_session_name).expanduser()
         )
+
+        # Route Telegram traffic through Tor SOCKS proxy if configured
+        proxy = None
+        if settings.tor_socks_proxy and self.config.get("use_tor", False):
+            proxy = _parse_socks_proxy(settings.tor_socks_proxy)
+
         self._client = TelegramClient(
             session_path,
             settings.telegram_api_id,
             settings.telegram_api_hash,
+            proxy=proxy,
         )
         await self._client.connect()
 
@@ -223,6 +230,35 @@ class TelegramConnector(BaseConnector):
 # ------------------------------------------------------------------
 # Pure helpers
 # ------------------------------------------------------------------
+
+
+def _parse_socks_proxy(url: str) -> tuple | None:
+    """Parse a SOCKS proxy URL into Telethon's proxy tuple format.
+
+    Telethon expects: (socks_type, host, port)
+    Input: socks5h://host:port or socks5://host:port
+    """
+    import socks  # PySocks, bundled with Telethon
+
+    url = url.strip()
+    if not url:
+        return None
+
+    # Strip scheme
+    for scheme in ("socks5h://", "socks5://", "socks4://"):
+        if url.startswith(scheme):
+            url = url[len(scheme):]
+            break
+
+    # Parse host:port
+    if ":" in url:
+        host, port_str = url.rsplit(":", 1)
+        port = int(port_str)
+    else:
+        host = url
+        port = 9050
+
+    return (socks.SOCKS5, host, port)
 
 
 def _channel_key(ref: str, entity) -> str:
