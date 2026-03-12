@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Search, Building2, Radio, Disc3 } from 'lucide-react';
+import { LayoutDashboard, Search, Building2, Radio, Disc3, LogOut } from 'lucide-react';
+import { useAuth } from '../AuthContext';
 import { colors, font } from '../theme';
 import type { CSSProperties } from 'react';
 
@@ -66,6 +67,8 @@ const linkActive: CSSProperties = {
 };
 
 export default function Sidebar() {
+  const { logout } = useAuth();
+
   return (
     <aside style={sidebarStyle}>
       <div style={brandStyle}>
@@ -97,7 +100,31 @@ export default function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <div style={{ padding: '16px 20px', borderTop: `1px solid ${colors.border}`, fontSize: 11, color: colors.textMuted }}>
+      <div style={{ padding: '12px 8px', borderTop: `1px solid ${colors.border}` }}>
+        <button
+          onClick={logout}
+          style={{
+            ...linkBase,
+            width: '100%',
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            fontFamily: font.sans,
+          }}
+          onMouseEnter={e => {
+            (e.currentTarget as HTMLElement).style.background = colors.bgHover;
+            (e.currentTarget as HTMLElement).style.color = colors.text;
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLElement).style.background = 'transparent';
+            (e.currentTarget as HTMLElement).style.color = colors.textDim;
+          }}
+        >
+          <LogOut size={18} />
+          Logout
+        </button>
+      </div>
+      <div style={{ padding: '8px 20px 16px', fontSize: 11, color: colors.textMuted }}>
         DarkDisco v0.1.0
       </div>
     </aside>

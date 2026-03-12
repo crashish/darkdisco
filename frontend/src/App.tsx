@@ -1,4 +1,5 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './AuthContext';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Findings from './pages/Findings';
@@ -6,18 +7,29 @@ import FindingDetail from './pages/FindingDetail';
 import Institutions from './pages/Institutions';
 import Sources from './pages/Sources';
 import SourceDetail from './pages/SourceDetail';
+import Login from './pages/Login';
+import type { ReactNode } from 'react';
+
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { token } = useAuth();
+  if (!token) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
 
 export default function App() {
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/findings" element={<Findings />} />
-        <Route path="/findings/:id" element={<FindingDetail />} />
-        <Route path="/institutions" element={<Institutions />} />
-        <Route path="/sources" element={<Sources />} />
-        <Route path="/sources/:id" element={<SourceDetail />} />
-      </Route>
-    </Routes>
+    <AuthProvider>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route element={<RequireAuth><Layout /></RequireAuth>}>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/findings" element={<Findings />} />
+          <Route path="/findings/:id" element={<FindingDetail />} />
+          <Route path="/institutions" element={<Institutions />} />
+          <Route path="/sources" element={<Sources />} />
+          <Route path="/sources/:id" element={<SourceDetail />} />
+        </Route>
+      </Routes>
+    </AuthProvider>
   );
 }

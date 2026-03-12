@@ -7,10 +7,18 @@ import {
 const BASE = '/api';
 
 async function apiFetch<T>(url: string, fallback: T, init?: RequestInit): Promise<T> {
+  const token = localStorage.getItem('dd_token');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...init,
   });
+  if (res.status === 401) {
+    localStorage.removeItem('dd_token');
+    window.dispatchEvent(new CustomEvent('auth:logout', { detail: 'unauthorized' }));
+    throw new Error('Unauthorized');
+  }
   if (!res.ok) throw new Error(`${res.status}`);
   return await res.json() as T;
 }
