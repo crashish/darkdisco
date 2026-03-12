@@ -90,6 +90,17 @@ export interface TelegramChannel {
   last_message_id: number | null;
 }
 
+export interface PollTriggerResult {
+  status: string;
+  task_id: string;
+  source_id: string;
+}
+
+export interface FindingTrend {
+  date: string;
+  count: number;
+}
+
 export interface DashboardStats {
   total_findings: number;
   findings_by_severity: Record<Severity, number>;

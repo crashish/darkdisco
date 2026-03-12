@@ -511,6 +511,76 @@ async def remove_channel(
     return ChannelRemoveOut(removed=channel)
 
 
+# ---- Source Poll Trigger & Findings ----------------------------------------
+
+@protected.post("/sources/{source_id}/poll")
+async def trigger_poll(
+    source_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """Manually trigger a poll for a source."""
+    source = await db.get(Source, source_id)
+    if not source:
+        raise HTTPException(404, "Source not found")
+    if not source.enabled:
+        raise HTTPException(400, "Source is disabled")
+
+    from darkdisco.pipeline.worker import poll_source
+
+    task = poll_source.delay(source_id)
+    return {"status": "dispatched", "task_id": task.id, "source_id": source_id}
+
+
+@protected.get("/sources/{source_id}/findings", response_model=list[FindingOut])
+async def list_source_findings(
+    source_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_session),
+):
+    """List findings for a specific source."""
+    source = await db.get(Source, source_id)
+    if not source:
+        raise HTTPException(404, "Source not found")
+
+    stmt = (
+        select(Finding)
+        .options(selectinload(Finding.institution), selectinload(Finding.source))
+        .where(Finding.source_id == source_id)
+        .order_by(Finding.discovered_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+@protected.get("/sources/{source_id}/findings/trend")
+async def source_findings_trend(
+    source_id: str,
+    days: int = Query(14, ge=1, le=90),
+    db: AsyncSession = Depends(get_session),
+):
+    """Get daily finding counts for a source over the last N days."""
+    source = await db.get(Source, source_id)
+    if not source:
+        raise HTTPException(404, "Source not found")
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = (
+        select(
+            func.date(Finding.discovered_at).label("date"),
+            func.count(Finding.id).label("count"),
+        )
+        .where(Finding.source_id == source_id, Finding.discovered_at >= since)
+        .group_by(func.date(Finding.discovered_at))
+        .order_by(func.date(Finding.discovered_at))
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+    return [{"date": str(r.date), "count": r.count} for r in rows]
+
+
 # ---- Findings --------------------------------------------------------------
 
 @protected.get("/findings", response_model=list[FindingOut])

@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, PollTriggerResult, FindingTrend } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats,
@@ -103,4 +103,30 @@ export async function removeChannel(sourceId: string, channel: string): Promise<
   return apiFetch(`/sources/${sourceId}/channels/${encodeURIComponent(channel)}`, { removed: channel }, {
     method: 'DELETE',
   });
+}
+
+export async function updateSource(sourceId: string, body: Record<string, unknown>): Promise<Source> {
+  const fallback = mockSources.find(s => s.id === sourceId) || mockSources[0];
+  return apiFetch(`/sources/${sourceId}`, fallback, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function triggerPoll(sourceId: string): Promise<PollTriggerResult> {
+  return apiFetch(`/sources/${sourceId}/poll`, { status: 'dispatched', task_id: 'mock', source_id: sourceId }, {
+    method: 'POST',
+  });
+}
+
+export async function fetchSourceFindings(sourceId: string): Promise<Finding[]> {
+  return apiFetch(`/sources/${sourceId}/findings`, mockFindings.slice(0, 5));
+}
+
+export async function fetchSourceFindingsTrend(sourceId: string, days: number = 14): Promise<FindingTrend[]> {
+  const mockTrend = Array.from({ length: days }, (_, i) => ({
+    date: new Date(Date.now() - (days - 1 - i) * 86400000).toISOString().split('T')[0],
+    count: Math.floor(Math.random() * 6) + 1,
+  }));
+  return apiFetch(`/sources/${sourceId}/findings/trend?days=${days}`, mockTrend);
 }
