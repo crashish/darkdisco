@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from darkdisco.api.auth import (
+    create_access_token,
+    get_current_user,
+    verify_password,
+)
 from darkdisco.api.schemas import (
     ClientCreate,
     ClientOut,
@@ -25,6 +30,8 @@ from darkdisco.api.schemas import (
     SourceOut,
     SourceUpdate,
     StatusCount,
+    TokenRequest,
+    TokenResponse,
     WatchTermCreate,
     WatchTermOut,
     WatchTermUpdate,
@@ -37,10 +44,15 @@ from darkdisco.common.models import (
     Institution,
     Severity,
     Source,
+    User,
     WatchTerm,
 )
 
+# Public routes (no auth required)
 router = APIRouter()
+
+# Protected routes (JWT required on all endpoints)
+protected = APIRouter(dependencies=[Depends(get_current_user)])
 
 # Valid status transitions: from_status -> set of allowed to_statuses
 _VALID_TRANSITIONS: dict[FindingStatus, set[FindingStatus]] = {
@@ -63,9 +75,26 @@ async def health():
     return {"status": "ok"}
 
 
+# ---- Auth ------------------------------------------------------------------
+
+@router.post("/auth/login", response_model=TokenResponse)
+async def login(
+    body: TokenRequest,
+    db: AsyncSession = Depends(get_session),
+):
+    result = await db.execute(select(User).where(User.username == body.username))
+    user = result.scalar_one_or_none()
+    if not user or user.disabled or not verify_password(body.password, user.hashed_password):
+        raise HTTPException(401, "Invalid credentials")
+    token = create_access_token(user.username, user.role.value)
+    user.last_login = datetime.now(timezone.utc)
+    await db.commit()
+    return TokenResponse(access_token=token)
+
+
 # ---- Clients ---------------------------------------------------------------
 
-@router.get("/clients", response_model=list[ClientOut])
+@protected.get("/clients", response_model=list[ClientOut])
 async def list_clients(
     active: bool | None = None,
     db: AsyncSession = Depends(get_session),
@@ -77,7 +106,7 @@ async def list_clients(
     return result.scalars().all()
 
 
-@router.post("/clients", response_model=ClientOut, status_code=201)
+@protected.post("/clients", response_model=ClientOut, status_code=201)
 async def create_client(
     body: ClientCreate,
     db: AsyncSession = Depends(get_session),
@@ -89,7 +118,7 @@ async def create_client(
     return client
 
 
-@router.get("/clients/{client_id}", response_model=ClientOut)
+@protected.get("/clients/{client_id}", response_model=ClientOut)
 async def get_client(
     client_id: str,
     db: AsyncSession = Depends(get_session),
@@ -100,7 +129,7 @@ async def get_client(
     return client
 
 
-@router.put("/clients/{client_id}", response_model=ClientOut)
+@protected.put("/clients/{client_id}", response_model=ClientOut)
 async def update_client(
     client_id: str,
     body: ClientUpdate,
@@ -116,7 +145,7 @@ async def update_client(
     return client
 
 
-@router.delete("/clients/{client_id}", status_code=204)
+@protected.delete("/clients/{client_id}", status_code=204)
 async def delete_client(
     client_id: str,
     db: AsyncSession = Depends(get_session),
@@ -130,7 +159,7 @@ async def delete_client(
 
 # ---- Institutions ----------------------------------------------------------
 
-@router.get("/institutions", response_model=list[InstitutionOut])
+@protected.get("/institutions", response_model=list[InstitutionOut])
 async def list_institutions(
     client_id: str | None = None,
     active: bool | None = None,
@@ -145,7 +174,7 @@ async def list_institutions(
     return result.scalars().all()
 
 
-@router.post("/institutions", response_model=InstitutionOut, status_code=201)
+@protected.post("/institutions", response_model=InstitutionOut, status_code=201)
 async def create_institution(
     body: InstitutionCreate,
     db: AsyncSession = Depends(get_session),
@@ -161,7 +190,7 @@ async def create_institution(
     return inst
 
 
-@router.get("/institutions/{institution_id}", response_model=InstitutionOut)
+@protected.get("/institutions/{institution_id}", response_model=InstitutionOut)
 async def get_institution(
     institution_id: str,
     db: AsyncSession = Depends(get_session),
@@ -172,7 +201,7 @@ async def get_institution(
     return inst
 
 
-@router.put("/institutions/{institution_id}", response_model=InstitutionOut)
+@protected.put("/institutions/{institution_id}", response_model=InstitutionOut)
 async def update_institution(
     institution_id: str,
     body: InstitutionUpdate,
@@ -188,7 +217,7 @@ async def update_institution(
     return inst
 
 
-@router.delete("/institutions/{institution_id}", status_code=204)
+@protected.delete("/institutions/{institution_id}", status_code=204)
 async def delete_institution(
     institution_id: str,
     db: AsyncSession = Depends(get_session),
@@ -202,7 +231,7 @@ async def delete_institution(
 
 # ---- Watch Terms -----------------------------------------------------------
 
-@router.get("/watch-terms", response_model=list[WatchTermOut])
+@protected.get("/watch-terms", response_model=list[WatchTermOut])
 async def list_watch_terms(
     institution_id: str | None = None,
     enabled: bool | None = None,
@@ -217,7 +246,7 @@ async def list_watch_terms(
     return result.scalars().all()
 
 
-@router.post("/watch-terms", response_model=WatchTermOut, status_code=201)
+@protected.post("/watch-terms", response_model=WatchTermOut, status_code=201)
 async def create_watch_term(
     body: WatchTermCreate,
     db: AsyncSession = Depends(get_session),
@@ -232,7 +261,7 @@ async def create_watch_term(
     return wt
 
 
-@router.get("/watch-terms/{term_id}", response_model=WatchTermOut)
+@protected.get("/watch-terms/{term_id}", response_model=WatchTermOut)
 async def get_watch_term(
     term_id: str,
     db: AsyncSession = Depends(get_session),
@@ -243,7 +272,7 @@ async def get_watch_term(
     return wt
 
 
-@router.put("/watch-terms/{term_id}", response_model=WatchTermOut)
+@protected.put("/watch-terms/{term_id}", response_model=WatchTermOut)
 async def update_watch_term(
     term_id: str,
     body: WatchTermUpdate,
@@ -259,7 +288,7 @@ async def update_watch_term(
     return wt
 
 
-@router.delete("/watch-terms/{term_id}", status_code=204)
+@protected.delete("/watch-terms/{term_id}", status_code=204)
 async def delete_watch_term(
     term_id: str,
     db: AsyncSession = Depends(get_session),
@@ -273,7 +302,7 @@ async def delete_watch_term(
 
 # ---- Sources ---------------------------------------------------------------
 
-@router.get("/sources", response_model=list[SourceOut])
+@protected.get("/sources", response_model=list[SourceOut])
 async def list_sources(
     enabled: bool | None = None,
     source_type: str | None = None,
@@ -288,7 +317,7 @@ async def list_sources(
     return result.scalars().all()
 
 
-@router.post("/sources", response_model=SourceOut, status_code=201)
+@protected.post("/sources", response_model=SourceOut, status_code=201)
 async def create_source(
     body: SourceCreate,
     db: AsyncSession = Depends(get_session),
@@ -300,7 +329,7 @@ async def create_source(
     return source
 
 
-@router.get("/sources/{source_id}", response_model=SourceOut)
+@protected.get("/sources/{source_id}", response_model=SourceOut)
 async def get_source(
     source_id: str,
     db: AsyncSession = Depends(get_session),
@@ -311,7 +340,7 @@ async def get_source(
     return source
 
 
-@router.put("/sources/{source_id}", response_model=SourceOut)
+@protected.put("/sources/{source_id}", response_model=SourceOut)
 async def update_source(
     source_id: str,
     body: SourceUpdate,
@@ -327,7 +356,7 @@ async def update_source(
     return source
 
 
-@router.delete("/sources/{source_id}", status_code=204)
+@protected.delete("/sources/{source_id}", status_code=204)
 async def delete_source(
     source_id: str,
     db: AsyncSession = Depends(get_session),
@@ -341,7 +370,7 @@ async def delete_source(
 
 # ---- Findings --------------------------------------------------------------
 
-@router.get("/findings", response_model=list[FindingOut])
+@protected.get("/findings", response_model=list[FindingOut])
 async def list_findings(
     institution_id: str | None = None,
     severity: Severity | None = None,
@@ -368,7 +397,7 @@ async def list_findings(
     return result.scalars().all()
 
 
-@router.post("/findings", response_model=FindingOut, status_code=201)
+@protected.post("/findings", response_model=FindingOut, status_code=201)
 async def create_finding(
     body: FindingCreate,
     db: AsyncSession = Depends(get_session),
@@ -383,7 +412,7 @@ async def create_finding(
     return finding
 
 
-@router.get("/findings/search", response_model=list[FindingOut])
+@protected.get("/findings/search", response_model=list[FindingOut])
 async def search_findings(
     q: str = Query(..., min_length=1),
     page: int = Query(1, ge=1),
@@ -409,7 +438,7 @@ async def search_findings(
     return result.scalars().all()
 
 
-@router.get("/findings/{finding_id}", response_model=FindingOut)
+@protected.get("/findings/{finding_id}", response_model=FindingOut)
 async def get_finding(
     finding_id: str,
     db: AsyncSession = Depends(get_session),
@@ -420,7 +449,7 @@ async def get_finding(
     return finding
 
 
-@router.put("/findings/{finding_id}", response_model=FindingOut)
+@protected.put("/findings/{finding_id}", response_model=FindingOut)
 async def update_finding(
     finding_id: str,
     body: FindingUpdate,
@@ -440,7 +469,7 @@ async def update_finding(
     return finding
 
 
-@router.post("/findings/{finding_id}/transition", response_model=FindingOut)
+@protected.post("/findings/{finding_id}/transition", response_model=FindingOut)
 async def transition_finding_status(
     finding_id: str,
     body: FindingStatusTransition,
@@ -461,7 +490,7 @@ async def transition_finding_status(
     return finding
 
 
-@router.delete("/findings/{finding_id}", status_code=204)
+@protected.delete("/findings/{finding_id}", status_code=204)
 async def delete_finding(
     finding_id: str,
     db: AsyncSession = Depends(get_session),
@@ -485,7 +514,7 @@ def _check_transition(current: FindingStatus, target: FindingStatus) -> None:
 
 # ---- Dashboard Stats -------------------------------------------------------
 
-@router.get("/dashboard/stats", response_model=DashboardStats)
+@protected.get("/dashboard/stats", response_model=DashboardStats)
 async def dashboard_stats(
     institution_id: str | None = None,
     db: AsyncSession = Depends(get_session),
@@ -532,3 +561,7 @@ async def dashboard_stats(
         by_status=by_status,
         recent_findings=recent_rows,
     )
+
+
+# Include protected routes into the public router so they share the same prefix
+router.include_router(protected)
