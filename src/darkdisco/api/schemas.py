@@ -165,6 +165,11 @@ class SourceOut(BaseModel):
     last_error: str | None = None
     config: dict | None = None
     created_at: datetime
+    # Computed fields for frontend
+    health: str = "offline"
+    finding_count: int = 0
+    avg_poll_seconds: int = 0
+    last_poll: datetime | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +229,10 @@ class FindingOut(BaseModel):
     discovered_at: datetime
     created_at: datetime
     updated_at: datetime
+    # Computed from joins
+    institution_name: str | None = None
+    source_type: str | None = None
+    source_name: str | None = None
 
 
 class FindingStatusTransition(BaseModel):
@@ -247,6 +256,11 @@ class StatusCount(BaseModel):
 
 class DashboardStats(BaseModel):
     total_findings: int
+    findings_by_severity: dict[str, int]
+    new_today: int
+    monitored_institutions: int
+    active_sources: int
+    findings_trend: list[dict]
     by_severity: list[SeverityCount]
     by_status: list[StatusCount]
     recent_findings: list[FindingOut]

@@ -1,3 +1,5 @@
+name: darkdisco
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -6,7 +8,7 @@ services:
       POSTGRES_USER: darkdisco
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-darkdisco}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,7 +21,7 @@ services:
     image: redis:7-alpine
     command: redis-server --requirepass ${REDIS_PASSWORD:-darkdisco-redis} --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-darkdisco-redis}", "ping"]
       interval: 5s
@@ -29,8 +31,8 @@ services:
   tor:
     image: dperson/torproxy:latest
     ports:
-      - "9050:9050"
-      - "9051:9051"
+      - "9052:9050"
+      - "9053:9051"
     environment:
       PASSWORD: ${TOR_PASSWORD:-darkdisco-tor}
 
@@ -41,8 +43,8 @@ services:
       MINIO_ROOT_USER: darkdisco
       MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-darkdisco-secret}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
     volumes:
       - miniodata:/data
 
@@ -52,15 +54,15 @@ services:
       dockerfile: docker/Dockerfile
     command: uvicorn darkdisco.api.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src
     ports:
-      - "8000:8000"
+      - "8100:8000"
     volumes:
       - ./src:/app/src
       - sessiondata:/app/data
     environment:
       DARKDISCO_DATABASE_URL: postgresql+asyncpg://darkdisco:${POSTGRES_PASSWORD:-darkdisco}@postgres:5432/darkdisco
-      DARKDISCO_REDIS_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/0
-      DARKDISCO_CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/1
-      DARKDISCO_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/2
+      DARKDISCO_REDIS_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/5
+      DARKDISCO_CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/6
+      DARKDISCO_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/7
       DARKDISCO_TOR_SOCKS_PROXY: socks5h://tor:9050
       DARKDISCO_S3_ENDPOINT: http://minio:9000
       DARKDISCO_TELEGRAM_API_ID: ${TELEGRAM_API_ID:-0}
@@ -82,9 +84,9 @@ services:
       - sessiondata:/app/data
     environment:
       DARKDISCO_DATABASE_URL: postgresql+asyncpg://darkdisco:${POSTGRES_PASSWORD:-darkdisco}@postgres:5432/darkdisco
-      DARKDISCO_REDIS_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/0
-      DARKDISCO_CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/1
-      DARKDISCO_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/2
+      DARKDISCO_REDIS_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/5
+      DARKDISCO_CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/6
+      DARKDISCO_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/7
       DARKDISCO_TOR_SOCKS_PROXY: socks5h://tor:9050
       DARKDISCO_S3_ENDPOINT: http://minio:9000
       DARKDISCO_TELEGRAM_API_ID: ${TELEGRAM_API_ID:-0}
@@ -107,9 +109,9 @@ services:
       - ./src:/app/src
     environment:
       DARKDISCO_DATABASE_URL: postgresql+asyncpg://darkdisco:${POSTGRES_PASSWORD:-darkdisco}@postgres:5432/darkdisco
-      DARKDISCO_REDIS_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/0
-      DARKDISCO_CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/1
-      DARKDISCO_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/2
+      DARKDISCO_REDIS_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/5
+      DARKDISCO_CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/6
+      DARKDISCO_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-darkdisco-redis}@redis:6379/7
     depends_on:
       redis:
         condition: service_healthy
@@ -119,7 +121,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "5173:80"
+      - "5174:80"
     depends_on:
       - api
 

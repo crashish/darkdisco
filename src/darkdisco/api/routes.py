@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
@@ -326,7 +326,38 @@ async def list_sources(
     if source_type is not None:
         stmt = stmt.where(Source.source_type == source_type)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    sources = result.scalars().all()
+
+    # Compute finding counts
+    count_q = (
+        select(Finding.source_id, func.count(Finding.id))
+        .group_by(Finding.source_id)
+    )
+    count_rows = {r[0]: r[1] for r in (await db.execute(count_q)).all()}
+
+    now = datetime.now(timezone.utc)
+    out = []
+    for s in sources:
+        health = "offline"
+        if s.enabled and s.last_polled_at:
+            age_min = (now - s.last_polled_at).total_seconds() / 60
+            if s.last_error:
+                health = "degraded"
+            elif age_min < 30:
+                health = "healthy"
+            else:
+                health = "degraded"
+        elif s.enabled:
+            health = "offline"
+
+        out.append(SourceOut(
+            **{c.key: getattr(s, c.key) for c in Source.__table__.columns},
+            health=health,
+            finding_count=count_rows.get(s.id, 0),
+            avg_poll_seconds=s.poll_interval_seconds,
+            last_poll=s.last_polled_at,
+        ))
+    return out
 
 
 @protected.post("/sources", response_model=SourceOut, status_code=201)
@@ -694,8 +725,47 @@ async def dashboard_stats(
     )
     recent_rows = (await db.execute(recent_q)).scalars().all()
 
+    # findings_by_severity as a dict keyed by severity name
+    sev_dict: dict[str, int] = {s: 0 for s in ("critical", "high", "medium", "low", "info")}
+    for sc in by_severity:
+        sev_dict[sc.severity] = sc.count
+
+    # New today
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    new_today_q = select(func.count(Finding.id)).where(Finding.discovered_at >= today_start)
+    if institution_id:
+        new_today_q = new_today_q.where(Finding.institution_id == institution_id)
+    new_today = (await db.execute(new_today_q)).scalar() or 0
+
+    # Monitored institutions
+    inst_q = select(func.count(Institution.id))
+    monitored_institutions = (await db.execute(inst_q)).scalar() or 0
+
+    # Active sources
+    src_q = select(func.count(Source.id)).where(Source.enabled.is_(True))
+    active_sources = (await db.execute(src_q)).scalar() or 0
+
+    # Findings trend (last 14 days)
+    trend = []
+    for i in range(13, -1, -1):
+        day = today_start - timedelta(days=i)
+        day_end = day + timedelta(days=1)
+        day_q = select(func.count(Finding.id)).where(
+            Finding.discovered_at >= day,
+            Finding.discovered_at < day_end,
+        )
+        if institution_id:
+            day_q = day_q.where(Finding.institution_id == institution_id)
+        cnt = (await db.execute(day_q)).scalar() or 0
+        trend.append({"date": day.strftime("%Y-%m-%d"), "count": cnt})
+
     return DashboardStats(
         total_findings=total,
+        findings_by_severity=sev_dict,
+        new_today=new_today,
+        monitored_institutions=monitored_institutions,
+        active_sources=active_sources,
+        findings_trend=trend,
         by_severity=by_severity,
         by_status=by_status,
         recent_findings=recent_rows,
