@@ -201,3 +201,5 @@
 {"actor":"darkdisco/polecats/nitro","comment":null,"created_at":"2026-03-12T22:52:18Z","event_type":"closed","id":201,"issue_id":"da-d6s","new_value":"Closed","old_value":""}
 {"actor":"darkdisco/refinery","comment":null,"created_at":"2026-03-12T22:53:09Z","event_type":"closed","id":202,"issue_id":"da-2pt","new_value":"Merged in da-wisp-74wu","old_value":""}
 {"actor":"darkdisco/refinery","comment":null,"created_at":"2026-03-12T22:54:03Z","event_type":"closed","id":203,"issue_id":"da-d6s","new_value":"Merged in da-wisp-vyxh","old_value":""}
+{"actor":"darkdisco/polecats/rust","comment":null,"created_at":"2026-03-12T22:58:35Z","event_type":"closed","id":204,"issue_id":"da-dni","new_value":"Closed","old_value":""}
+{"actor":"darkdisco/refinery","comment":null,"created_at":"2026-03-12T22:59:12Z","event_type":"closed","id":205,"issue_id":"da-dni","new_value":"Merged in da-wisp-02hf","old_value":""}
