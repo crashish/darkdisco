@@ -502,11 +502,11 @@ class TestLegacyPathFixes:
     """Verify the seed script fixes old connector_class paths."""
 
     @pytest.mark.asyncio
-    async def test_legacy_paths_get_fixed(self, db_session):
-        """Sources with old-style connector paths should be corrected."""
+    async def test_legacy_paths_get_deleted(self, db_session):
+        """Sources with orphaned darkdisco.connectors.* paths should be deleted."""
         from scripts.seed_sources import _fix_legacy_paths
 
-        # Create a source with a legacy path
+        # Create a source with an orphaned legacy path
         src = Source(
             id=str(uuid4()),
             name="Legacy Forum Source",
@@ -517,9 +517,12 @@ class TestLegacyPathFixes:
         )
         db_session.add(src)
         await db_session.commit()
+        src_id = src.id
 
         await _fix_legacy_paths(db_session)
         await db_session.commit()
-        await db_session.refresh(src)
 
-        assert src.connector_class == "darkdisco.discovery.connectors.forum:ForumConnector"
+        result = await db_session.execute(
+            select(Source).where(Source.id == src_id)
+        )
+        assert result.scalars().first() is None

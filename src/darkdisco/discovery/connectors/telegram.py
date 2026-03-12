@@ -72,9 +72,12 @@ class TelegramConnector(BaseConnector):
                 "must be configured"
             )
 
-        session_path = str(
-            Path(settings.telegram_session_name).expanduser()
+        # Allow per-source session name to avoid SQLite lock conflicts
+        # when multiple Telegram sources poll concurrently.
+        session_name = self.config.get(
+            "session_name", settings.telegram_session_name
         )
+        session_path = str(Path(session_name).expanduser())
 
         # Route Telegram traffic through Tor SOCKS proxy if configured
         proxy = None

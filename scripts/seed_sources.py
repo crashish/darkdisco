@@ -69,6 +69,9 @@ SOURCES = [
             ],
             "last_message_ids": {},
             "history_limit": 50,
+            # Separate session file to avoid SQLite lock conflicts with
+            # "Telegram Stealer Logs" which uses the default session.
+            "session_name": "darkdisco_threat_intel",
         },
     },
     # ---- Forums ----
@@ -226,30 +229,20 @@ async def _upsert_source(
     return src.id
 
 
-# Map old incorrect paths to correct ones
-_PATH_FIXES = {
-    "darkdisco.connectors.tor_forum.TorForumConnector": "darkdisco.discovery.connectors.forum:ForumConnector",
-    "darkdisco.connectors.paste_site.PasteSiteConnector": "darkdisco.discovery.connectors.paste_site:PasteSiteConnector",
-    "darkdisco.connectors.telegram.TelegramConnector": "darkdisco.discovery.connectors.telegram:TelegramConnector",
-    "darkdisco.connectors.breach_db.DehashedConnector": "darkdisco.discovery.connectors.breach_db:BreachDBConnector",
-    "darkdisco.connectors.breach_db.HIBPConnector": "darkdisco.discovery.connectors.breach_db:BreachDBConnector",
-    "darkdisco.connectors.ransomware_blog.RansomwareBlogConnector": "darkdisco.discovery.connectors.ransomware_blog:RansomwareBlogConnector",
-    "darkdisco.connectors.stealer_log.StealerLogConnector": "darkdisco.discovery.connectors.stealer_log:StealerLogConnector",
-}
-
-
 async def _fix_legacy_paths(session: AsyncSession) -> None:
-    """Fix connector_class paths seeded by the old seed_institutions.py."""
+    """Delete sources with orphaned ``darkdisco.connectors.*`` paths.
+
+    These reference a module that was never shipped. The correct sources
+    (under ``darkdisco.discovery.connectors.*``) are created by the SOURCES
+    list above.
+    """
     result = await session.execute(select(Source))
     for src in result.scalars().all():
-        if src.connector_class in _PATH_FIXES:
-            new_path = _PATH_FIXES[src.connector_class]
-            if new_path:
-                print(f"  [fixed] {src.name}: {src.connector_class} → {new_path}")
-                src.connector_class = new_path
-            else:
-                print(f"  [disabled] {src.name}: no connector available, disabling")
-                src.enabled = False
+        if src.connector_class and src.connector_class.startswith(
+            "darkdisco.connectors."
+        ):
+            print(f"  [deleted] {src.name}: orphaned path {src.connector_class}")
+            await session.delete(src)
 
 
 if __name__ == "__main__":
