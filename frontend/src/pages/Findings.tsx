@@ -39,14 +39,14 @@ export default function Findings() {
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
   const [instFilter, setInstFilter] = useState(searchParams.get('institution_id') || '');
   const [dateFilter, setDateFilter] = useState(searchParams.get('date') || '');
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [statusMenuId, setStatusMenuId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     const params: Record<string, string | number> = {};
     if (sevFilter) params.severity = sevFilter;
     if (statusFilter) params.status = statusFilter;
-    if (instFilter) params.institution_id = Number(instFilter);
+    if (instFilter) params.institution_id = instFilter;
     if (dateFilter) {
       params.date_from = `${dateFilter}T00:00:00`;
       params.date_to = `${dateFilter}T23:59:59`;
@@ -60,12 +60,12 @@ export default function Findings() {
   const filtered = search
     ? findings.filter(f =>
         f.title.toLowerCase().includes(search.toLowerCase()) ||
-        f.snippet.toLowerCase().includes(search.toLowerCase()) ||
+        f.summary.toLowerCase().includes(search.toLowerCase()) ||
         (f.institution_name || '').toLowerCase().includes(search.toLowerCase())
       )
     : findings;
 
-  const handleStatusChange = async (id: number, status: FindingStatus) => {
+  const handleStatusChange = async (id: string, status: FindingStatus) => {
     await updateFindingStatus(id, status);
     setStatusMenuId(null);
     setFindings(prev => prev.map(f => f.id === id ? { ...f, status } : f));
@@ -178,7 +178,7 @@ export default function Findings() {
                   <tr key={`${f.id}-detail`} style={{ background: colors.bgSurface }}>
                     <td colSpan={6} style={{ padding: '16px 24px' }}>
                       <div style={{ fontSize: 13, lineHeight: 1.6, color: colors.textDim, maxWidth: 800 }}>
-                        {f.snippet}
+                        {f.summary}
                       </div>
                       {f.source_url && (
                         <div style={{ marginTop: 10 }}>

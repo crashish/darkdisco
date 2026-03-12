@@ -4,14 +4,14 @@ export type SourceType = 'tor_forum' | 'paste_site' | 'telegram' | 'breach_db' |
 export type SourceHealth = 'healthy' | 'degraded' | 'offline';
 
 export interface Client {
-  id: number;
+  id: string;
   name: string;
   created_at: string;
 }
 
 export interface Institution {
-  id: number;
-  client_id: number;
+  id: string;
+  client_id: string;
   client_name?: string;
   name: string;
   city: string;
@@ -21,29 +21,29 @@ export interface Institution {
 }
 
 export interface WatchTerm {
-  id: number;
-  institution_id: number;
+  id: string;
+  institution_id: string;
   term_type: 'name' | 'domain' | 'bin' | 'routing_number';
   value: string;
   created_at: string;
 }
 
 export interface Finding {
-  id: number;
-  institution_id: number;
+  id: string;
+  institution_id: string;
   institution_name?: string;
   source_type: SourceType;
   severity: Severity;
   status: FindingStatus;
   title: string;
-  snippet: string;
+  summary: string;
   source_url?: string;
   discovered_at: string;
   updated_at: string;
 }
 
 export interface Source {
-  id: number;
+  id: string;
   name: string;
   source_type: SourceType;
   health: SourceHealth;

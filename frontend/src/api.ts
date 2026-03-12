@@ -28,7 +28,7 @@ export async function fetchClients(): Promise<Client[]> {
   return apiFetch('/clients', mockClients);
 }
 
-export async function fetchInstitutions(clientId?: number): Promise<Institution[]> {
+export async function fetchInstitutions(clientId?: string): Promise<Institution[]> {
   const qs = clientId ? `?client_id=${clientId}` : '';
   const fallback = clientId
     ? mockInstitutions.filter(i => i.client_id === clientId)
@@ -37,14 +37,14 @@ export async function fetchInstitutions(clientId?: number): Promise<Institution[
 }
 
 export async function fetchFindings(params?: {
-  institution_id?: number;
+  institution_id?: string;
   severity?: string;
   status?: string;
   date_from?: string;
   date_to?: string;
 }): Promise<Finding[]> {
   const qs = new URLSearchParams();
-  if (params?.institution_id) qs.set('institution_id', String(params.institution_id));
+  if (params?.institution_id) qs.set('institution_id', params.institution_id);
   if (params?.severity) qs.set('severity', params.severity);
   if (params?.status) qs.set('status', params.status);
   if (params?.date_from) qs.set('date_from', params.date_from);
@@ -61,7 +61,7 @@ export async function fetchFindings(params?: {
   return apiFetch(`/findings${q ? '?' + q : ''}`, fallback);
 }
 
-export async function updateFindingStatus(id: number, status: FindingStatus): Promise<Finding> {
+export async function updateFindingStatus(id: string, status: FindingStatus): Promise<Finding> {
   const fallback = { ...mockFindings.find(f => f.id === id)!, status };
   return apiFetch(`/findings/${id}/status`, fallback, {
     method: 'PUT',
@@ -69,7 +69,7 @@ export async function updateFindingStatus(id: number, status: FindingStatus): Pr
   });
 }
 
-export async function fetchWatchTerms(institutionId: number): Promise<WatchTerm[]> {
+export async function fetchWatchTerms(institutionId: string): Promise<WatchTerm[]> {
   const fallback = mockWatchTerms.filter(w => w.institution_id === institutionId);
   return apiFetch(`/watch-terms?institution_id=${institutionId}`, fallback);
 }

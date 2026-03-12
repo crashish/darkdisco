@@ -17,7 +17,7 @@ const termIcons: Record<string, typeof Tag> = {
 export default function Institutions() {
   const [clients, setClients] = useState<Client[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
-  const [expandedInst, setExpandedInst] = useState<number | null>(null);
+  const [expandedInst, setExpandedInst] = useState<string | null>(null);
   const [instFindings, setInstFindings] = useState<Finding[]>([]);
   const [instTerms, setInstTerms] = useState<WatchTerm[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -27,7 +27,7 @@ export default function Institutions() {
     fetchInstitutions().then(setInstitutions);
   }, []);
 
-  const toggleInst = async (id: number) => {
+  const toggleInst = async (id: string) => {
     if (expandedInst === id) {
       setExpandedInst(null);
       return;
