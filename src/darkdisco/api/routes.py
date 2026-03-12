@@ -26,6 +26,9 @@ from darkdisco.api.schemas import (
     ClientUpdate,
     DashboardStats,
     DomainMatchResult,
+    DryRunMatch,
+    DryRunRequest,
+    DryRunResult,
     FindingCreate,
     FindingOut,
     FindingStatusTransition,
@@ -36,6 +39,7 @@ from darkdisco.api.schemas import (
     InstitutionUpdate,
     NotificationMarkRead,
     NotificationOut,
+    PipelineStatus,
     SeverityCount,
     SourceCreate,
     SourceOut,
@@ -1064,6 +1068,141 @@ async def delete_alert_rule(
         raise HTTPException(404, "Alert rule not found")
     await db.delete(rule)
     await db.commit()
+
+
+# ---- Pipeline Diagnostics --------------------------------------------------
+
+@protected.get("/pipeline/status", response_model=PipelineStatus)
+async def pipeline_status(
+    db: AsyncSession = Depends(get_session),
+):
+    """Show pipeline health: sources, watch terms, matching coverage."""
+    now = datetime.now(timezone.utc)
+    cutoff_24h = now - timedelta(hours=24)
+
+    # Sources overview
+    all_sources = (await db.execute(select(Source))).scalars().all()
+    enabled_count = sum(1 for s in all_sources if s.enabled)
+
+    source_details = []
+    for s in all_sources:
+        health = "offline"
+        if s.enabled and s.last_polled_at:
+            age_min = (now - s.last_polled_at).total_seconds() / 60
+            if s.last_error:
+                health = "degraded"
+            elif age_min < 30:
+                health = "healthy"
+            else:
+                health = "stale"
+        elif s.enabled:
+            health = "never_polled"
+
+        source_details.append({
+            "id": s.id,
+            "name": s.name,
+            "type": s.source_type.value,
+            "enabled": s.enabled,
+            "health": health,
+            "last_polled": s.last_polled_at.isoformat() if s.last_polled_at else None,
+            "last_error": s.last_error,
+            "poll_interval_seconds": s.poll_interval_seconds,
+        })
+
+    # Watch term coverage
+    terms = (await db.execute(
+        select(WatchTerm).where(WatchTerm.enabled.is_(True))
+    )).scalars().all()
+    term_coverage: dict[str, int] = {}
+    for t in terms:
+        ttype = t.term_type.value
+        term_coverage[ttype] = term_coverage.get(ttype, 0) + 1
+
+    # Finding counts
+    total_findings = (await db.execute(
+        select(func.count(Finding.id))
+    )).scalar() or 0
+    recent_findings = (await db.execute(
+        select(func.count(Finding.id)).where(Finding.discovered_at >= cutoff_24h)
+    )).scalar() or 0
+
+    return PipelineStatus(
+        enabled_sources=enabled_count,
+        total_sources=len(all_sources),
+        active_watch_terms=len(terms),
+        total_findings=total_findings,
+        recent_findings_24h=recent_findings,
+        sources=source_details,
+        watch_term_coverage=term_coverage,
+    )
+
+
+@protected.post("/pipeline/dry-run", response_model=DryRunResult)
+async def pipeline_dry_run(
+    body: DryRunRequest,
+    db: AsyncSession = Depends(get_session),
+):
+    """Test matching against sample content without creating findings.
+
+    Useful for verifying watch terms match expected content.
+    """
+    from darkdisco.discovery.connectors.base import RawMention
+    from darkdisco.discovery.matcher import match_mention
+    from darkdisco.enrichment.false_positive import check_false_positive
+
+    # Load active watch terms
+    terms = (await db.execute(
+        select(WatchTerm).where(WatchTerm.enabled.is_(True))
+    )).scalars().all()
+
+    mention = RawMention(
+        source_name=body.source_name,
+        title=body.title,
+        content=body.content,
+        metadata={},
+    )
+
+    match_results = match_mention(mention, list(terms))
+
+    # Build response with institution names
+    dry_matches = []
+    for result in match_results:
+        inst = await db.get(Institution, result.institution_id)
+        dry_matches.append(DryRunMatch(
+            institution_id=result.institution_id,
+            institution_name=inst.name if inst else None,
+            matched_terms=result.matched_terms,
+            severity_hint=result.severity_hint,
+        ))
+
+    # Run FP analysis on first match (if any)
+    fp_analysis = None
+    would_create = len(dry_matches) > 0
+    if dry_matches:
+        candidate = {
+            "title": body.title,
+            "raw_content": body.content,
+            "matched_terms": dry_matches[0].matched_terms,
+            "metadata": {},
+        }
+        fp_result = check_false_positive(candidate)
+        fp_analysis = {
+            "fp_score": fp_result.fp_score,
+            "is_likely_fp": fp_result.is_likely_fp,
+            "recommendation": fp_result.recommendation,
+            "signals": [
+                {"rule": s.rule, "description": s.description, "weight": s.weight}
+                for s in fp_result.signals
+            ],
+        }
+        if fp_result.recommendation == "auto_dismiss":
+            would_create = False
+
+    return DryRunResult(
+        matches=dry_matches,
+        fp_analysis=fp_analysis,
+        would_create_finding=would_create,
+    )
 
 
 # ---- Notifications ---------------------------------------------------------

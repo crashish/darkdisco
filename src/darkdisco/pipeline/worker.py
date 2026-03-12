@@ -313,11 +313,24 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
         ).scalars().all()
 
         if not watch_terms:
-            logger.info("No active watch terms, skipping matching")
+            logger.warning("No active watch terms configured — matching skipped. "
+                           "Add watch terms via the API to start producing findings.")
             return {"findings_created": 0}
+
+        # Log watch term coverage for debugging
+        term_types = {}
+        for wt in watch_terms:
+            ttype = wt.term_type.value if hasattr(wt.term_type, 'value') else str(wt.term_type)
+            term_types[ttype] = term_types.get(ttype, 0) + 1
+        logger.info(
+            "Matching %d mentions against %d watch terms (%s)",
+            len(raw_mentions), len(watch_terms),
+            ", ".join(f"{k}:{v}" for k, v in sorted(term_types.items())),
+        )
 
         findings_created = 0
         findings_suppressed = 0
+        mentions_matched = 0
 
         for raw in raw_mentions:
             mention = RawMention(
@@ -346,6 +359,27 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
 
             # Match against watch terms
             match_results = match_mention(mention, watch_terms)
+
+            if match_results:
+                mentions_matched += 1
+                logger.info(
+                    "Mention matched: source=%s title=%s matched_institutions=%d terms=%s",
+                    mention.source_name,
+                    (mention.title or "")[:80],
+                    len(match_results),
+                    ", ".join(
+                        f"{t['term_type']}:{t['value']}"
+                        for r in match_results
+                        for t in r.matched_terms
+                    ),
+                )
+            else:
+                logger.debug(
+                    "Mention unmatched: source=%s title=%s content_len=%d",
+                    mention.source_name,
+                    (mention.title or "")[:80],
+                    len(mention.content or ""),
+                )
 
             for result in match_results:
                 # Build candidate finding data for enrichment
@@ -401,9 +435,10 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
         session.commit()
 
         logger.info(
-            "Matching complete for source %s: %d mentions → %d findings (%d suppressed)",
+            "Matching complete for source %s: %d mentions → %d matched → %d findings (%d suppressed)",
             source.name if source else source_id,
             len(raw_mentions),
+            mentions_matched,
             findings_created,
             findings_suppressed,
         )

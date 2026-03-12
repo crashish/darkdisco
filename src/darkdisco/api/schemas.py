@@ -402,3 +402,36 @@ class InstitutionDomainExport(BaseModel):
     primary_domain: str | None = None
     additional_domains: list[str]
     bin_ranges: list | None = None
+
+
+# ---------------------------------------------------------------------------
+# Pipeline diagnostics
+# ---------------------------------------------------------------------------
+
+class PipelineStatus(BaseModel):
+    enabled_sources: int
+    total_sources: int
+    active_watch_terms: int
+    total_findings: int
+    recent_findings_24h: int
+    sources: list[dict]
+    watch_term_coverage: dict[str, int]
+
+
+class DryRunRequest(BaseModel):
+    content: str
+    title: str = ""
+    source_name: str = "dry-run"
+
+
+class DryRunMatch(BaseModel):
+    institution_id: str
+    institution_name: str | None = None
+    matched_terms: list[dict]
+    severity_hint: str
+
+
+class DryRunResult(BaseModel):
+    matches: list[DryRunMatch]
+    fp_analysis: dict | None = None
+    would_create_finding: bool

@@ -35,6 +35,7 @@ def match_mention(mention: RawMention, watch_terms: list[WatchTerm]) -> list[Mat
 
     results = []
     searchable = f"{mention.title}\n{mention.content}".lower()
+    raw_text = f"{mention.title}\n{mention.content}"
 
     for inst_id, terms in by_institution.items():
         matched = []
@@ -46,7 +47,7 @@ def match_mention(mention: RawMention, watch_terms: list[WatchTerm]) -> list[Mat
             if term.term_type == WatchTermType.regex:
                 try:
                     flags = 0 if term.case_sensitive else re.IGNORECASE
-                    if re.search(value, f"{mention.title}\n{mention.content}", flags):
+                    if re.search(value, raw_text, flags):
                         matched.append(_term_dict(term))
                 except re.error:
                     logger.warning("Invalid regex in watch term %s: %s", term.id, value)
@@ -54,8 +55,22 @@ def match_mention(mention: RawMention, watch_terms: list[WatchTerm]) -> list[Mat
                 # BIN ranges are 6-8 digit prefixes
                 if re.search(rf"\b{re.escape(value)}\d{{2,10}}\b", searchable):
                     matched.append(_term_dict(term))
+            elif term.term_type == WatchTermType.domain:
+                # Domain matching: look for the domain as a distinct token,
+                # not as a substring of unrelated words.
+                # Matches: "chase.com", "www.chase.com", "https://chase.com/path"
+                # Avoids: "purchased" matching "chase" inside it
+                escaped = re.escape(value)
+                if re.search(rf"(?:^|[\s//@.:])({escaped})(?:$|[\s/,;:)\]>]|/)", searchable):
+                    matched.append(_term_dict(term))
+            elif term.term_type == WatchTermType.institution_name:
+                # Institution name: word-boundary match to avoid partial matches
+                # e.g. "First National Bank" should not match "unfirst"
+                escaped = re.escape(value)
+                if re.search(rf"\b{escaped}\b", searchable):
+                    matched.append(_term_dict(term))
             else:
-                # All other types: substring match
+                # keyword, executive_name, routing_number: substring match
                 if value in searchable:
                     matched.append(_term_dict(term))
 

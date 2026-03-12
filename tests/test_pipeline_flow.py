@@ -328,10 +328,11 @@ class TestFalsePositiveFiltering:
         assert any(s.rule == "low_content" for s in result.signals)
 
     def test_common_word_match_flagged(self):
+        # Only keyword type triggers common_word_match, not institution_name
         finding = {
             "title": "Forum post about first",
             "raw_content": "first thing to do when you get hacked is change your passwords immediately",
-            "matched_terms": [{"term_type": "institution_name", "value": "first"}],
+            "matched_terms": [{"term_type": "keyword", "value": "first"}],
         }
         result = check_false_positive(finding)
         assert any(s.rule == "common_word_match" for s in result.signals)

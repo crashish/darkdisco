@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 # Score threshold: findings above this are considered likely false positives
-FP_THRESHOLD = 0.70
+# Raised from 0.70 to 0.80 — the original threshold was too aggressive and
+# suppressed legitimate findings before the system produced any real results.
+FP_THRESHOLD = 0.80
 
 
 @dataclass
@@ -36,34 +38,39 @@ class FPResult:
 
 
 def _check_generic_mention(_content: str, matched_terms: list[dict]) -> FPSignal | None:
-    """Flag mentions that match only on very generic terms."""
+    """Flag mentions that match only on very generic terms.
+
+    Only flags keyword-type matches, NOT institution_name — institution names
+    are the primary matching mechanism and shouldn't be penalized.
+    """
     if not matched_terms:
         return None
 
-    generic_types = {"keyword", "institution_name"}
+    # Only flag pure keyword-only matches as generic; institution_name,
+    # domain, bin_range, etc. are strong signals we should keep.
+    generic_types = {"keyword"}
     all_generic = all(t.get("term_type") in generic_types for t in matched_terms)
 
     if all_generic and len(matched_terms) == 1:
         term = matched_terms[0]
         value = term.get("value", "")
-        # Very short generic terms are highly likely to be FPs
+        # Very short generic terms are more likely to be FPs
         if len(value) < 5:
             return FPSignal(
                 rule="generic_short_term",
                 description=f"Single short generic match: '{value}'",
-                weight=0.6,
+                weight=0.4,
             )
         # Common words that happen to be bank names
         common_words = {
             "first", "national", "american", "united", "community",
             "central", "western", "eastern", "northern", "southern",
-            "liberty", "heritage", "pioneer", "summit", "valley",
         }
         if value.lower() in common_words:
             return FPSignal(
                 rule="common_word_match",
                 description=f"Matched common word: '{value}'",
-                weight=0.5,
+                weight=0.35,
             )
     return None
 
@@ -101,11 +108,11 @@ def _check_legitimate_context(content: str) -> FPSignal | None:
         r"(?i)(?:news|blog)\s+(?:article|post)",
     ]
     matches = sum(1 for p in legitimate_patterns if re.search(p, content))
-    if matches >= 1:
+    if matches >= 2:
         return FPSignal(
             rule="legitimate_context",
             description=f"Content appears to be from legitimate context ({matches} indicators)",
-            weight=0.3 * matches,
+            weight=0.3 * min(matches, 3),
         )
     return None
 
@@ -201,7 +208,7 @@ def check_false_positive(finding_data: dict) -> FPResult:
     is_fp = fp_score >= FP_THRESHOLD
 
     if is_fp:
-        recommendation = "auto_dismiss" if fp_score >= 0.9 else "downgrade"
+        recommendation = "auto_dismiss" if fp_score >= 0.95 else "downgrade"
     else:
         recommendation = "keep"
 

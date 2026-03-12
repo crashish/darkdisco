@@ -119,7 +119,13 @@ class TestFPSignalDetectors:
         assert signal.rule == "generic_short_term"
 
     def test_generic_mention_common_word(self):
+        # institution_name is no longer flagged as generic — only keyword type is
         signal = _check_generic_mention("content", [{"term_type": "institution_name", "value": "first"}])
+        assert signal is None
+
+    def test_generic_mention_common_word_keyword(self):
+        # keyword type with common word IS still flagged
+        signal = _check_generic_mention("content", [{"term_type": "keyword", "value": "first"}])
         assert signal is not None
         assert signal.rule == "common_word_match"
 
@@ -138,8 +144,15 @@ class TestFPSignalDetectors:
         signal = _check_boilerplate_content(content)
         assert signal is None
 
-    def test_legitimate_context_job_posting(self):
+    def test_legitimate_context_single_match_no_signal(self):
+        # A single legitimate context indicator is no longer enough to flag
         content = "Job posting for senior developer at First National Bank"
+        signal = _check_legitimate_context(content)
+        assert signal is None
+
+    def test_legitimate_context_multiple_matches(self):
+        # Two or more legitimate context indicators DO flag
+        content = "Job posting for senior developer. We're hiring at First National Bank."
         signal = _check_legitimate_context(content)
         assert signal is not None
 
