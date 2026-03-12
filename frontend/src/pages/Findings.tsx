@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { fetchFindings, fetchInstitutions, updateFindingStatus } from '../api';
 import { colors, card, font } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import type { Finding, Institution, Severity, FindingStatus } from '../types';
-import { Search, ChevronDown, ExternalLink } from 'lucide-react';
+import { Search, ChevronDown, ExternalLink, Calendar } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allSeverities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -30,12 +31,14 @@ const inputStyle: CSSProperties = {
 };
 
 export default function Findings() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [findings, setFindings] = useState<Finding[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [search, setSearch] = useState('');
-  const [sevFilter, setSevFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [instFilter, setInstFilter] = useState('');
+  const [sevFilter, setSevFilter] = useState(searchParams.get('severity') || '');
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
+  const [instFilter, setInstFilter] = useState(searchParams.get('institution_id') || '');
+  const [dateFilter, setDateFilter] = useState(searchParams.get('date') || '');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [statusMenuId, setStatusMenuId] = useState<number | null>(null);
 
@@ -44,8 +47,12 @@ export default function Findings() {
     if (sevFilter) params.severity = sevFilter;
     if (statusFilter) params.status = statusFilter;
     if (instFilter) params.institution_id = Number(instFilter);
+    if (dateFilter) {
+      params.date_from = `${dateFilter}T00:00:00`;
+      params.date_to = `${dateFilter}T23:59:59`;
+    }
     fetchFindings(params as any).then(setFindings);
-  }, [sevFilter, statusFilter, instFilter]);
+  }, [sevFilter, statusFilter, instFilter, dateFilter]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { fetchInstitutions().then(setInstitutions); }, []);
@@ -94,9 +101,18 @@ export default function Findings() {
           <option value="">All Institutions</option>
           {institutions.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
         </select>
-        {(sevFilter || statusFilter || instFilter || search) && (
+        <div style={{ position: 'relative' }}>
+          <Calendar size={16} color={colors.textMuted} style={{ position: 'absolute', left: 12, top: 10 }} />
+          <input
+            type="date"
+            style={{ ...selectStyle, paddingLeft: 36, minWidth: 160 }}
+            value={dateFilter}
+            onChange={e => setDateFilter(e.target.value)}
+          />
+        </div>
+        {(sevFilter || statusFilter || instFilter || search || dateFilter) && (
           <button
-            onClick={() => { setSevFilter(''); setStatusFilter(''); setInstFilter(''); setSearch(''); }}
+            onClick={() => { setSevFilter(''); setStatusFilter(''); setInstFilter(''); setSearch(''); setDateFilter(''); setSearchParams({}); }}
             style={{ background: 'none', border: 'none', color: colors.accent, fontSize: 13, cursor: 'pointer', padding: '8px 4px' }}
           >
             Clear filters

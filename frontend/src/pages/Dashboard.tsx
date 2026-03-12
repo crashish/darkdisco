@@ -101,7 +101,9 @@ export default function Dashboard() {
                 contentStyle={{ background: colors.bgSurface, border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, color: colors.text }}
                 cursor={{ fill: 'rgba(99,102,241,0.08)' }}
               />
-              <Bar dataKey="count" fill={colors.accent} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="count" fill={colors.accent} radius={[4, 4, 0, 0]} cursor="pointer" onClick={(data: any) => {
+                if (data?.date) navigate(`/findings?date=${data.date}`);
+              }} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -109,7 +111,10 @@ export default function Dashboard() {
           <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: colors.textDim, alignSelf: 'flex-start' }}>Severity Distribution</h3>
           <ResponsiveContainer width="100%" height={180}>
             <PieChart>
-              <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" stroke="none">
+              <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" stroke="none" cursor="pointer" onClick={(_: any, index: number) => {
+                const sev = pieData[index]?.name;
+                if (sev) navigate(`/findings?severity=${sev}`);
+              }}>
                 {pieData.map(d => <Cell key={d.name} fill={severityColor(d.name)} />)}
               </Pie>
               <Tooltip

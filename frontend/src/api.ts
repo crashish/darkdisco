@@ -40,17 +40,23 @@ export async function fetchFindings(params?: {
   institution_id?: number;
   severity?: string;
   status?: string;
+  date_from?: string;
+  date_to?: string;
 }): Promise<Finding[]> {
   const qs = new URLSearchParams();
   if (params?.institution_id) qs.set('institution_id', String(params.institution_id));
   if (params?.severity) qs.set('severity', params.severity);
   if (params?.status) qs.set('status', params.status);
+  if (params?.date_from) qs.set('date_from', params.date_from);
+  if (params?.date_to) qs.set('date_to', params.date_to);
   const q = qs.toString();
 
   let fallback = [...mockFindings];
   if (params?.institution_id) fallback = fallback.filter(f => f.institution_id === params.institution_id);
   if (params?.severity) fallback = fallback.filter(f => f.severity === params.severity);
   if (params?.status) fallback = fallback.filter(f => f.status === params.status);
+  if (params?.date_from) fallback = fallback.filter(f => f.discovered_at >= params.date_from!);
+  if (params?.date_to) fallback = fallback.filter(f => f.discovered_at <= params.date_to!);
 
   return apiFetch(`/findings${q ? '?' + q : ''}`, fallback);
 }
