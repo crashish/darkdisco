@@ -37,22 +37,19 @@ SOURCES = [
         "poll_interval_seconds": 300,
         "config": {
             "channels": [
-                # Stealer log clouds (confirmed ONLINE per deepdarkCTI Feb 2026)
-                "+E9biBdpOv35iMmEy",      # SNATCH LOGS CLOUD
-                "+VbZVKqzgUURlMjdi",       # Everlasting Cloud
+                # Stealer log clouds (verified accessible Mar 2026)
                 "BHF_CLOUD",               # BHF Cloud
                 "Skyl1neCloud",            # Skyline Cloud
                 "PegasusCloud",            # Pegasus Cloud
-                "+IqEnwfj7CLU1Yjcy",       # Omega Cloud
-                "Creditunionbanksstore",   # Credit union/bank logs (directly relevant)
                 "cvv190_cloud",            # CVV190 Cloud
-                "ManticoreCloud",          # Manticore
                 "Trident_Cloud",           # Trident Cloud
                 "BurnCloudLogs",           # Burn Cloud
                 "darknescloud",            # Darkness Cloud
-                "universecloudtxt",        # Universe Cloud
+                "universecloudtxt",        # Universe Cloud / txtbases
                 "realcloud0",              # RealCloud
                 "Sl1ddifree",              # Sl1ddi Cloud (free logs)
+                # Pending join approval:
+                # "+IqEnwfj7CLU1Yjcy",    # Omega Cloud
             ],
             "last_message_ids": {},
             "history_limit": 100,
