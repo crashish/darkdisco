@@ -157,7 +157,8 @@ export default function Dashboard() {
           </thead>
           <tbody>
             {recent.map(f => (
-              <tr key={f.id} style={{ borderBottom: `1px solid ${colors.border}` }}
+              <tr key={f.id} style={{ borderBottom: `1px solid ${colors.border}`, cursor: 'pointer' }}
+                onClick={() => navigate(`/findings/${f.id}`)}
                 onMouseEnter={e => (e.currentTarget.style.background = colors.bgHover)}
                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
               >
