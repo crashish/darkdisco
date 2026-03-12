@@ -79,6 +79,7 @@ _CONNECTOR_MAP = {
     "telegram": "darkdisco.discovery.connectors.telegram:TelegramConnector",
     "breach_db": "darkdisco.discovery.connectors.breach_db:BreachDBConnector",
     "ransomware_blog": "darkdisco.discovery.connectors.ransomware_blog:RansomwareBlogConnector",
+    "stealer_log": "darkdisco.discovery.connectors.stealer_log:StealerLogConnector",
 }
 
 
