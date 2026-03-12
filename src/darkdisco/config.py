@@ -38,6 +38,19 @@ class Settings(BaseSettings):
     telegram_api_hash: str = ""
     telegram_session_name: str = "darkdisco_monitor"
 
+    # Email (SMTP) notifications
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_address: str = "alerts@darkdisco.local"
+    smtp_default_recipient: str = ""
+    smtp_use_tls: bool = False
+    smtp_use_starttls: bool = True
+
+    # Slack notifications
+    slack_webhook_url: str = ""
+
     # S3/MinIO for attachment storage
     s3_endpoint: str = "http://localhost:9000"
     s3_access_key: str = "darkdisco"

@@ -325,8 +325,14 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
 
 @app.task(name="darkdisco.pipeline.worker.evaluate_alerts")
 def evaluate_alerts():
-    """Check new findings against alert rules and create notifications."""
+    """Check new findings against alert rules and create notifications.
+
+    For each matching (finding, rule) pair:
+    1. Persist an in-app Notification row
+    2. Dispatch delivery to configured channels (email, Slack, webhook)
+    """
     from darkdisco.common.models import AlertRule, Finding, FindingStatus, Notification
+    from darkdisco.pipeline.notify import deliver_notification
 
     session = _get_sync_session()
     try:
@@ -344,6 +350,7 @@ def evaluate_alerts():
         ).scalars().all()
 
         notifications_created = 0
+        deliveries: list[dict] = []
         severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
         for finding in new_findings:
@@ -351,19 +358,38 @@ def evaluate_alerts():
                 if not _rule_matches(rule, finding, severity_rank):
                     continue
 
+                title = f"Alert: {finding.title}"
+                message = f"[{finding.severity.value.upper()}] {finding.summary or finding.title}"
+
+                # 1. Persist in-app notification
                 notification = Notification(
                     user_id=rule.owner_id,
                     alert_rule_id=rule.id,
                     finding_id=finding.id,
-                    title=f"Alert: {finding.title}",
-                    message=f"[{finding.severity.value.upper()}] {finding.summary or finding.title}",
+                    title=title,
+                    message=message,
                 )
                 session.add(notification)
                 notifications_created += 1
 
+                # 2. Deliver to external channels
+                result = deliver_notification(
+                    rule=rule,
+                    title=title,
+                    message=message,
+                    finding_id=finding.id,
+                )
+                if result:
+                    deliveries.append({"finding": finding.id, "rule": rule.id, **result})
+
         session.commit()
-        logger.info("Created %d notifications from %d new findings", notifications_created, len(new_findings))
-        return {"notifications_created": notifications_created}
+        logger.info(
+            "Created %d notifications from %d new findings (%d external deliveries)",
+            notifications_created,
+            len(new_findings),
+            len(deliveries),
+        )
+        return {"notifications_created": notifications_created, "deliveries": deliveries}
     finally:
         session.close()
 

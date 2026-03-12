@@ -14,6 +14,9 @@ from darkdisco.api.auth import (
     verify_password,
 )
 from darkdisco.api.schemas import (
+    AlertRuleCreate,
+    AlertRuleOut,
+    AlertRuleUpdate,
     ClientCreate,
     ClientOut,
     ClientUpdate,
@@ -25,6 +28,8 @@ from darkdisco.api.schemas import (
     InstitutionCreate,
     InstitutionOut,
     InstitutionUpdate,
+    NotificationMarkRead,
+    NotificationOut,
     SeverityCount,
     SourceCreate,
     SourceOut,
@@ -38,10 +43,12 @@ from darkdisco.api.schemas import (
 )
 from darkdisco.common.database import get_session
 from darkdisco.common.models import (
+    AlertRule,
     Client,
     Finding,
     FindingStatus,
     Institution,
+    Notification,
     Severity,
     Source,
     User,
@@ -561,6 +568,135 @@ async def dashboard_stats(
         by_status=by_status,
         recent_findings=recent_rows,
     )
+
+
+# ---- Alert Rules -----------------------------------------------------------
+
+@protected.get("/alert-rules", response_model=list[AlertRuleOut])
+async def list_alert_rules(
+    owner_id: str | None = None,
+    enabled: bool | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    stmt = select(AlertRule).order_by(AlertRule.created_at.desc())
+    if owner_id is not None:
+        stmt = stmt.where(AlertRule.owner_id == owner_id)
+    if enabled is not None:
+        stmt = stmt.where(AlertRule.enabled == enabled)
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+@protected.post("/alert-rules", response_model=AlertRuleOut, status_code=201)
+async def create_alert_rule(
+    body: AlertRuleCreate,
+    db: AsyncSession = Depends(get_session),
+):
+    rule = AlertRule(**body.model_dump())
+    db.add(rule)
+    await db.commit()
+    await db.refresh(rule)
+    return rule
+
+
+@protected.get("/alert-rules/{rule_id}", response_model=AlertRuleOut)
+async def get_alert_rule(
+    rule_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    rule = await db.get(AlertRule, rule_id)
+    if not rule:
+        raise HTTPException(404, "Alert rule not found")
+    return rule
+
+
+@protected.put("/alert-rules/{rule_id}", response_model=AlertRuleOut)
+async def update_alert_rule(
+    rule_id: str,
+    body: AlertRuleUpdate,
+    db: AsyncSession = Depends(get_session),
+):
+    rule = await db.get(AlertRule, rule_id)
+    if not rule:
+        raise HTTPException(404, "Alert rule not found")
+    for key, val in body.model_dump(exclude_unset=True).items():
+        setattr(rule, key, val)
+    await db.commit()
+    await db.refresh(rule)
+    return rule
+
+
+@protected.delete("/alert-rules/{rule_id}", status_code=204)
+async def delete_alert_rule(
+    rule_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    rule = await db.get(AlertRule, rule_id)
+    if not rule:
+        raise HTTPException(404, "Alert rule not found")
+    await db.delete(rule)
+    await db.commit()
+
+
+# ---- Notifications ---------------------------------------------------------
+
+@protected.get("/notifications", response_model=list[NotificationOut])
+async def list_notifications(
+    user_id: str | None = None,
+    unread_only: bool = False,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_session),
+):
+    stmt = select(Notification).order_by(Notification.created_at.desc())
+    if user_id is not None:
+        stmt = stmt.where(Notification.user_id == user_id)
+    if unread_only:
+        stmt = stmt.where(Notification.read.is_(False))
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+@protected.get("/notifications/{notification_id}", response_model=NotificationOut)
+async def get_notification(
+    notification_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    notif = await db.get(Notification, notification_id)
+    if not notif:
+        raise HTTPException(404, "Notification not found")
+    return notif
+
+
+@protected.put("/notifications/{notification_id}/read", response_model=NotificationOut)
+async def mark_notification_read(
+    notification_id: str,
+    body: NotificationMarkRead,
+    db: AsyncSession = Depends(get_session),
+):
+    notif = await db.get(Notification, notification_id)
+    if not notif:
+        raise HTTPException(404, "Notification not found")
+    notif.read = body.read
+    await db.commit()
+    await db.refresh(notif)
+    return notif
+
+
+@protected.post("/notifications/mark-all-read", status_code=204)
+async def mark_all_notifications_read(
+    user_id: str = Query(...),
+    db: AsyncSession = Depends(get_session),
+):
+    from sqlalchemy import update
+
+    await db.execute(
+        update(Notification)
+        .where(Notification.user_id == user_id, Notification.read.is_(False))
+        .values(read=True)
+    )
+    await db.commit()
 
 
 # Include protected routes into the public router so they share the same prefix

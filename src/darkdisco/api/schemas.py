@@ -253,6 +253,77 @@ class DashboardStats(BaseModel):
 # Generic pagination wrapper
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Alert Rules
+# ---------------------------------------------------------------------------
+
+class AlertRuleCreate(BaseModel):
+    name: str
+    owner_id: str
+    institution_id: str | None = None
+    min_severity: Severity = Severity.high
+    source_types: list[str] | None = None
+    keyword_filter: str | None = None
+    enabled: bool = True
+    notify_email: bool = False
+    notify_slack: bool = False
+    notify_webhook_url: str | None = None
+
+
+class AlertRuleUpdate(BaseModel):
+    name: str | None = None
+    institution_id: str | None = None
+    min_severity: Severity | None = None
+    source_types: list[str] | None = None
+    keyword_filter: str | None = None
+    enabled: bool | None = None
+    notify_email: bool | None = None
+    notify_slack: bool | None = None
+    notify_webhook_url: str | None = None
+
+
+class AlertRuleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    owner_id: str
+    institution_id: str | None = None
+    min_severity: Severity
+    source_types: list[str] | None = None
+    keyword_filter: str | None = None
+    enabled: bool
+    notify_email: bool
+    notify_slack: bool
+    notify_webhook_url: str | None = None
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+class NotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    user_id: str
+    alert_rule_id: str | None = None
+    finding_id: str | None = None
+    title: str
+    message: str | None = None
+    read: bool
+    created_at: datetime
+
+
+class NotificationMarkRead(BaseModel):
+    read: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Generic pagination wrapper
+# ---------------------------------------------------------------------------
+
 class PaginatedResponse(BaseModel):
     items: list
     total: int
