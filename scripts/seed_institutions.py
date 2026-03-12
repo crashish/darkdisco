@@ -1609,7 +1609,58 @@ async def _ensure_institution(
     )
     inst = result.scalars().first()
     if inst:
-        print(f"  [exists] {charter_type:12s} | {name}")
+        # Update bin_ranges and routing_numbers if they are empty
+        updated_fields = []
+        if not inst.bin_ranges and bin_ranges:
+            inst.bin_ranges = bin_ranges
+            updated_fields.append("bin_ranges")
+        if not inst.routing_numbers and routing_numbers:
+            inst.routing_numbers = routing_numbers
+            updated_fields.append("routing_numbers")
+
+        # Add missing routing_number and bin_range watch terms
+        existing_terms = await session.execute(
+            select(WatchTerm).where(
+                WatchTerm.institution_id == inst.id,
+                WatchTerm.term_type.in_([WatchTermType.routing_number, WatchTermType.bin_range]),
+            )
+        )
+        existing_values = {t.value for t in existing_terms.scalars().all()}
+        new_terms = []
+        for rtn in routing_numbers:
+            if rtn not in existing_values:
+                new_terms.append(
+                    WatchTerm(
+                        id=str(uuid4()),
+                        institution_id=inst.id,
+                        term_type=WatchTermType.routing_number,
+                        value=rtn,
+                        enabled=True,
+                        case_sensitive=False,
+                        notes="ABA routing number (FDIC/NCUA public data)",
+                    )
+                )
+        for bin_prefix in bin_ranges:
+            if bin_prefix not in existing_values:
+                new_terms.append(
+                    WatchTerm(
+                        id=str(uuid4()),
+                        institution_id=inst.id,
+                        term_type=WatchTermType.bin_range,
+                        value=bin_prefix,
+                        enabled=True,
+                        case_sensitive=False,
+                        notes=f"Card BIN prefix ({len(bin_prefix)}-digit)",
+                    )
+                )
+        for t in new_terms:
+            session.add(t)
+
+        if updated_fields or new_terms:
+            await session.flush()
+            print(f"  [updated] {charter_type:12s} | {name} ({', '.join(updated_fields)}, +{len(new_terms)} watch terms)")
+        else:
+            print(f"  [exists] {charter_type:12s} | {name}")
         return inst.id
 
     inst_id = str(uuid4())
