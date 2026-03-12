@@ -532,7 +532,7 @@ async def trigger_poll(
     return {"status": "dispatched", "task_id": task.id, "source_id": source_id}
 
 
-@protected.get("/sources/{source_id}/findings", response_model=list[FindingOut])
+@router.get("/sources/{source_id}/findings", response_model=list[FindingOut])
 async def list_source_findings(
     source_id: str,
     page: int = Query(1, ge=1),
@@ -556,7 +556,7 @@ async def list_source_findings(
     return result.scalars().all()
 
 
-@protected.get("/sources/{source_id}/findings/trend")
+@router.get("/sources/{source_id}/findings/trend")
 async def source_findings_trend(
     source_id: str,
     days: int = Query(14, ge=1, le=90),
