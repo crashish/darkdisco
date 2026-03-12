@@ -6,7 +6,6 @@ channel is fire-and-forget with logging; failures don't block other channels.
 
 from __future__ import annotations
 
-import json
 import logging
 import smtplib
 import ssl
