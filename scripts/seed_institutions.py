@@ -1204,43 +1204,78 @@ def _generate_watch_terms(
 # ---------------------------------------------------------------------------
 
 DEFAULT_SOURCES = [
+    # --- Forums (Tor) ---
+    # BreachForums Tor Mirror: separate source for .onion access (not a duplicate of
+    # the clearnet BreachForums Monitor in seed_sources.py — different URL and config).
     {
         "name": "BreachForums Tor Mirror",
         "source_type": SourceType.forum,
         "url": "http://breachforums.example.onion",
-        "connector_class": "darkdisco.connectors.tor_forum.TorForumConnector",
+        "connector_class": "darkdisco.discovery.connectors.forum:ForumConnector",
         "poll_interval_seconds": 1800,
-        "config": {"forum_engine": "xenforo", "sections": ["databases", "combos"]},
+        "config": {
+            "forums": [
+                {
+                    "name": "BreachForums (.onion)",
+                    "base_url": "http://breachforums.example.onion",
+                    "recent_path": "/Forum-Databases",
+                    "selector_profile": "mybb",
+                    "last_seen_id": "",
+                    "tor": True,
+                },
+            ],
+            "max_pages": 3,
+        },
     },
     {
         "name": "Dread Market Forum",
         "source_type": SourceType.forum,
         "url": "http://dread.example.onion",
-        "connector_class": "darkdisco.connectors.tor_forum.TorForumConnector",
+        "connector_class": "darkdisco.discovery.connectors.forum:ForumConnector",
         "poll_interval_seconds": 3600,
-        "config": {"forum_engine": "custom", "sections": ["fraud", "banking"]},
+        "config": {
+            "forums": [
+                {
+                    "name": "Dread",
+                    "base_url": "http://dread.example.onion",
+                    "recent_path": "/",
+                    "selector_profile": "custom",
+                    "last_seen_id": "",
+                    "tor": True,
+                },
+            ],
+            "max_pages": 2,
+        },
     },
+    # --- Paste sites (duplicates of Paste Site Monitor — disabled) ---
+    # Pastebin and Rentry are already covered by the "Paste Site Monitor" source
+    # in seed_sources.py which uses PasteSiteConnector with DEFAULT_SITES.
+    # Kept as disabled records to avoid re-creation; seed_sources.py is canonical.
     {
         "name": "Pastebin Scraper",
         "source_type": SourceType.paste_site,
         "url": "https://pastebin.com",
-        "connector_class": "darkdisco.connectors.paste_site.PasteSiteConnector",
+        "connector_class": "darkdisco.discovery.connectors.paste_site:PasteSiteConnector",
+        "enabled": False,
         "poll_interval_seconds": 600,
-        "config": {"api_key_env": "PASTEBIN_API_KEY"},
+        "config": {},
     },
     {
         "name": "Rentry Paste Monitor",
         "source_type": SourceType.paste_site,
         "url": "https://rentry.co",
-        "connector_class": "darkdisco.connectors.paste_site.PasteSiteConnector",
+        "connector_class": "darkdisco.discovery.connectors.paste_site:PasteSiteConnector",
+        "enabled": False,
         "poll_interval_seconds": 900,
         "config": {},
     },
+    # --- Telegram (disabled — consolidated into Telegram Stealer Logs in seed_sources.py) ---
     {
         "name": "Telegram Channel Monitor",
         "source_type": SourceType.telegram,
         "url": None,
-        "connector_class": "darkdisco.connectors.telegram.TelegramConnector",
+        "connector_class": "darkdisco.discovery.connectors.telegram:TelegramConnector",
+        "enabled": False,
         "poll_interval_seconds": 300,
         "config": {
             "channels": [
@@ -1250,27 +1285,40 @@ DEFAULT_SOURCES = [
             ]
         },
     },
+    # --- Breach databases ---
     {
         "name": "DeHashed Breach Database",
         "source_type": SourceType.breach_db,
         "url": "https://dehashed.com",
-        "connector_class": "darkdisco.connectors.breach_db.DehashedConnector",
+        "connector_class": "darkdisco.discovery.connectors.breach_db:BreachDBConnector",
         "poll_interval_seconds": 7200,
-        "config": {"api_key_env": "DEHASHED_API_KEY"},
+        "config": {
+            "domains": [],
+            "dehashed_enabled": True,
+            "hibp_enabled": False,
+            "intelx_enabled": False,
+        },
     },
     {
         "name": "Have I Been Pwned Monitor",
         "source_type": SourceType.breach_db,
         "url": "https://haveibeenpwned.com",
-        "connector_class": "darkdisco.connectors.breach_db.HIBPConnector",
+        "connector_class": "darkdisco.discovery.connectors.breach_db:BreachDBConnector",
         "poll_interval_seconds": 3600,
-        "config": {"api_key_env": "HIBP_API_KEY"},
+        "config": {
+            "domains": [],
+            "dehashed_enabled": False,
+            "hibp_enabled": True,
+            "intelx_enabled": False,
+        },
     },
+    # --- Ransomware blogs (disabled — duplicates of groups in Ransomware Blog Monitor) ---
     {
         "name": "LockBit Ransomware Blog",
         "source_type": SourceType.ransomware_blog,
         "url": "http://lockbit.example.onion",
-        "connector_class": "darkdisco.connectors.ransomware_blog.RansomwareBlogConnector",
+        "connector_class": "darkdisco.discovery.connectors.ransomware_blog:RansomwareBlogConnector",
+        "enabled": False,
         "poll_interval_seconds": 1800,
         "config": {"group": "lockbit"},
     },
@@ -1278,17 +1326,24 @@ DEFAULT_SOURCES = [
         "name": "ALPHV/BlackCat Blog",
         "source_type": SourceType.ransomware_blog,
         "url": "http://alphv.example.onion",
-        "connector_class": "darkdisco.connectors.ransomware_blog.RansomwareBlogConnector",
+        "connector_class": "darkdisco.discovery.connectors.ransomware_blog:RansomwareBlogConnector",
+        "enabled": False,
         "poll_interval_seconds": 1800,
         "config": {"group": "alphv"},
     },
+    # --- Stealer logs ---
     {
         "name": "Stealer Log Aggregator",
         "source_type": SourceType.stealer_log,
         "url": None,
-        "connector_class": "darkdisco.connectors.stealer_log.StealerLogConnector",
+        "connector_class": "darkdisco.discovery.connectors.stealer_log:StealerLogConnector",
         "poll_interval_seconds": 3600,
-        "config": {"parsers": ["redline", "raccoon", "vidar"]},
+        "config": {
+            "s3_prefix": "stealer-logs/incoming/",
+            "archive_formats": ["zip", "tar.gz"],
+            "parsers": ["redline", "raccoon", "generic"],
+            "seen_hashes": [],
+        },
     },
 ]
 
@@ -1595,11 +1650,16 @@ async def _ensure_source(
     connector_class: str | None,
     poll_interval_seconds: int,
     config: dict | None,
+    enabled: bool = True,
 ) -> str:
     result = await session.execute(select(Source).where(Source.name == name))
     src = result.scalars().first()
     if src:
-        print(f"  [exists] Source: {name}")
+        # Update connector_class path and enabled state on existing records
+        src.connector_class = connector_class
+        src.enabled = enabled
+        src.config = config or src.config
+        print(f"  [updated] Source: {name} → {connector_class} (enabled={enabled})")
         return src.id
 
     src = Source(
@@ -1608,13 +1668,13 @@ async def _ensure_source(
         source_type=source_type,
         url=url,
         connector_class=connector_class,
-        enabled=True,
+        enabled=enabled,
         poll_interval_seconds=poll_interval_seconds,
         config=config,
     )
     session.add(src)
     await session.flush()
-    print(f"  [created] Source: {name} ({source_type.value})")
+    print(f"  [created] Source: {name} ({source_type.value}, enabled={enabled})")
     return src.id
 
 

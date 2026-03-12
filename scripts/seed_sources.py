@@ -125,11 +125,43 @@ SOURCES = [
         "connector_class": "darkdisco.discovery.connectors.ransomware_blog:RansomwareBlogConnector",
         "poll_interval_seconds": 1800,
         "config": {
-            "blogs": [
-                {"name": "LockBit", "group": "lockbit"},
-                {"name": "ALPHV/BlackCat", "group": "alphv"},
-                {"name": "Cl0p", "group": "clop"},
-            ],
+            "groups": {
+                "lockbit": {
+                    "last_known_url": "",
+                    "mirror_urls": [],
+                    "parser": "generic",
+                    "enabled": True,
+                },
+                "alphv": {
+                    "last_known_url": "",
+                    "mirror_urls": [],
+                    "parser": "generic",
+                    "enabled": True,
+                },
+                "clop": {
+                    "last_known_url": "",
+                    "mirror_urls": [],
+                    "parser": "generic",
+                    "enabled": True,
+                },
+            },
+            "seen_hashes": [],
+            "request_delay_seconds": 5,
+            "max_pages": 3,
+        },
+    },
+    # ---- Stealer Logs ----
+    {
+        "name": "Stealer Log Aggregator",
+        "source_type": SourceType.stealer_log,
+        "url": None,
+        "connector_class": "darkdisco.discovery.connectors.stealer_log:StealerLogConnector",
+        "poll_interval_seconds": 3600,
+        "config": {
+            "s3_prefix": "stealer-logs/incoming/",
+            "archive_formats": ["zip", "tar.gz"],
+            "parsers": ["redline", "raccoon", "generic"],
+            "seen_hashes": [],
         },
     },
 ]
@@ -202,7 +234,7 @@ _PATH_FIXES = {
     "darkdisco.connectors.breach_db.DehashedConnector": "darkdisco.discovery.connectors.breach_db:BreachDBConnector",
     "darkdisco.connectors.breach_db.HIBPConnector": "darkdisco.discovery.connectors.breach_db:BreachDBConnector",
     "darkdisco.connectors.ransomware_blog.RansomwareBlogConnector": "darkdisco.discovery.connectors.ransomware_blog:RansomwareBlogConnector",
-    "darkdisco.connectors.stealer_log.StealerLogConnector": None,  # No connector yet
+    "darkdisco.connectors.stealer_log.StealerLogConnector": "darkdisco.discovery.connectors.stealer_log:StealerLogConnector",
 }
 
 
