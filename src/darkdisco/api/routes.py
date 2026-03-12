@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from darkdisco.api.auth import (
     create_access_token,
@@ -388,7 +389,11 @@ async def list_findings(
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_session),
 ):
-    stmt = select(Finding).order_by(Finding.discovered_at.desc())
+    stmt = (
+        select(Finding)
+        .options(selectinload(Finding.institution), selectinload(Finding.source))
+        .order_by(Finding.discovered_at.desc())
+    )
     if institution_id is not None:
         stmt = stmt.where(Finding.institution_id == institution_id)
     if severity is not None:
@@ -415,8 +420,13 @@ async def create_finding(
     finding = Finding(**body.model_dump(by_alias=False))
     db.add(finding)
     await db.commit()
-    await db.refresh(finding)
-    return finding
+    # Re-fetch with relationships loaded
+    result = await db.execute(
+        select(Finding)
+        .options(selectinload(Finding.institution), selectinload(Finding.source))
+        .where(Finding.id == finding.id)
+    )
+    return result.scalar_one()
 
 
 @protected.get("/findings/search", response_model=list[FindingOut])
@@ -430,6 +440,7 @@ async def search_findings(
     like_pattern = f"%{q}%"
     stmt = (
         select(Finding)
+        .options(selectinload(Finding.institution), selectinload(Finding.source))
         .where(
             or_(
                 Finding.title.ilike(like_pattern),
@@ -450,7 +461,12 @@ async def get_finding(
     finding_id: str,
     db: AsyncSession = Depends(get_session),
 ):
-    finding = await db.get(Finding, finding_id)
+    result = await db.execute(
+        select(Finding)
+        .options(selectinload(Finding.institution), selectinload(Finding.source))
+        .where(Finding.id == finding_id)
+    )
+    finding = result.scalar_one_or_none()
     if not finding:
         raise HTTPException(404, "Finding not found")
     return finding
@@ -472,8 +488,13 @@ async def update_finding(
     for key, val in updates.items():
         setattr(finding, key, val)
     await db.commit()
-    await db.refresh(finding)
-    return finding
+    # Re-fetch with relationships loaded
+    result = await db.execute(
+        select(Finding)
+        .options(selectinload(Finding.institution), selectinload(Finding.source))
+        .where(Finding.id == finding_id)
+    )
+    return result.scalar_one()
 
 
 @protected.post("/findings/{finding_id}/transition", response_model=FindingOut)
@@ -493,8 +514,13 @@ async def transition_finding_status(
         separator = "\n---\n" if existing else ""
         finding.analyst_notes = existing + separator + body.notes
     await db.commit()
-    await db.refresh(finding)
-    return finding
+    # Re-fetch with relationships loaded
+    result = await db.execute(
+        select(Finding)
+        .options(selectinload(Finding.institution), selectinload(Finding.source))
+        .where(Finding.id == finding_id)
+    )
+    return result.scalar_one()
 
 
 @protected.delete("/findings/{finding_id}", status_code=204)
@@ -526,7 +552,9 @@ async def dashboard_stats(
     institution_id: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
-    base = select(Finding)
+    base = select(Finding).options(
+        selectinload(Finding.institution), selectinload(Finding.source)
+    )
     if institution_id:
         base = base.where(Finding.institution_id == institution_id)
 

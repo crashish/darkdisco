@@ -198,6 +198,18 @@ class Finding(Base):
     institution: Mapped[Institution] = relationship(back_populates="findings")
     source: Mapped[Source | None] = relationship(back_populates="findings")
 
+    @property
+    def institution_name(self) -> str | None:
+        return self.institution.name if self.institution else None
+
+    @property
+    def source_type(self) -> str | None:
+        return self.source.source_type.value if self.source else None
+
+    @property
+    def source_name(self) -> str | None:
+        return self.source.name if self.source else None
+
     __table_args__ = (
         Index("ix_findings_status_severity", "status", "severity"),
         Index("ix_findings_institution_status", "institution_id", "status"),

@@ -204,7 +204,10 @@ class FindingOut(BaseModel):
 
     id: str
     institution_id: str
+    institution_name: str | None = None
     source_id: str | None = None
+    source_type: str | None = None
+    source_name: str | None = None
     severity: Severity
     status: FindingStatus
     title: str
