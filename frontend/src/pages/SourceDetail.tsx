@@ -10,6 +10,7 @@ import type { Source, TelegramChannel, Finding, FindingTrend } from '../types';
 import {
   ArrowLeft, Plus, Trash2, MessageSquare, Hash, Wifi, WifiOff,
   AlertTriangle, Loader, Play, Settings, Activity, BarChart3, Save, Check,
+  Code, Eye, EyeOff,
 } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
@@ -31,14 +32,42 @@ const healthIcons: Record<string, typeof Wifi> = {
   offline: WifiOff,
 };
 
-const configHints: Record<string, string[]> = {
-  telegram: ['channels', 'last_message_ids'],
-  paste_site: ['paste_sites', 'seen_hashes'],
-  tor_forum: ['forums', 'last_thread_ids'],
-  forum: ['forums', 'last_thread_ids'],
-  breach_db: ['services', 'api_keys'],
-  ransomware_blog: ['groups', 'seen_hashes'],
-  stealer_log: ['paths', 'seen_hashes'],
+interface ConfigFieldDef {
+  key: string;
+  label: string;
+  type: 'list' | 'readonly-count' | 'readonly-map' | 'key-value';
+  placeholder?: string;
+  masked?: boolean;
+}
+
+const sourceConfigFields: Record<string, ConfigFieldDef[]> = {
+  telegram: [
+    { key: 'last_message_ids', label: 'High-Water Marks', type: 'readonly-map' },
+  ],
+  paste_site: [
+    { key: 'paste_sites', label: 'Paste Sites', type: 'list', placeholder: 'https://pastebin.com/...' },
+    { key: 'seen_hashes', label: 'Seen Hashes', type: 'readonly-count' },
+  ],
+  forum: [
+    { key: 'forums', label: 'Forums', type: 'list', placeholder: 'forum URL or name' },
+    { key: 'last_thread_ids', label: 'Thread Tracking', type: 'readonly-map' },
+  ],
+  tor_forum: [
+    { key: 'forums', label: 'Forums', type: 'list', placeholder: 'forum URL or .onion' },
+    { key: 'last_thread_ids', label: 'Thread Tracking', type: 'readonly-map' },
+  ],
+  breach_db: [
+    { key: 'services', label: 'Services', type: 'list', placeholder: 'service name' },
+    { key: 'api_keys', label: 'API Keys', type: 'key-value', masked: true },
+  ],
+  ransomware_blog: [
+    { key: 'groups', label: 'Groups', type: 'list', placeholder: 'group name' },
+    { key: 'seen_hashes', label: 'Seen Hashes', type: 'readonly-count' },
+  ],
+  stealer_log: [
+    { key: 'paths', label: 'Paths', type: 'list', placeholder: '/path/to/logs' },
+    { key: 'seen_hashes', label: 'Seen Hashes', type: 'readonly-count' },
+  ],
 };
 
 export default function SourceDetail() {
@@ -59,8 +88,25 @@ export default function SourceDetail() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [trend, setTrend] = useState<FindingTrend[]>([]);
+  const [showRawConfig, setShowRawConfig] = useState(false);
 
   const isTelegram = source?.source_type === 'telegram';
+
+  const parsedConfig: Record<string, unknown> = (() => {
+    try { return JSON.parse(configJson); } catch { return {}; }
+  })();
+
+  const updateConfigKey = (key: string, value: unknown) => {
+    try {
+      const parsed = JSON.parse(configJson);
+      parsed[key] = value;
+      setConfigJson(JSON.stringify(parsed, null, 2));
+      setConfigDirty(true);
+      setConfigError(null);
+    } catch {
+      setConfigError('Cannot update: config JSON is invalid');
+    }
+  };
 
   const loadSource = useCallback(async () => {
     if (!id) return;
@@ -158,7 +204,7 @@ export default function SourceDetail() {
   const HealthIcon = healthIcons[source.health] || Wifi;
   const hColor = healthColor(source.health);
   const hBg = healthBg(source.health);
-  const hints = configHints[source.source_type] || [];
+  const fields = sourceConfigFields[source.source_type] || [];
 
   const inputStyle: CSSProperties = {
     flex: 1,
@@ -296,34 +342,66 @@ export default function SourceDetail() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           {/* Config editor */}
           <div style={card}>
-            <h2 style={sectionTitle}>
-              <Settings size={16} color={colors.accent} />
-              Configuration
-            </h2>
-            {hints.length > 0 && (
-              <div style={{ fontSize: 11, color: colors.textMuted, marginBottom: 12 }}>
-                Expected keys: {hints.map(h => <code key={h} style={{ background: colors.bgSurface, padding: '1px 5px', borderRadius: 3, marginRight: 4 }}>{h}</code>)}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h2 style={{ ...sectionTitle, marginBottom: 0 }}>
+                <Settings size={16} color={colors.accent} />
+                Configuration
+              </h2>
+              <button
+                onClick={() => setShowRawConfig(!showRawConfig)}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  background: 'none', border: 'none', color: colors.textMuted,
+                  cursor: 'pointer', fontSize: 11, padding: '4px 8px',
+                }}
+              >
+                <Code size={12} />
+                {showRawConfig ? 'Structured' : 'Raw JSON'}
+              </button>
+            </div>
+
+            {showRawConfig ? (
+              <>
+                <textarea
+                  value={configJson}
+                  onChange={e => { setConfigJson(e.target.value); setConfigDirty(true); setConfigError(null); }}
+                  style={{
+                    width: '100%',
+                    minHeight: 180,
+                    background: colors.bgSurface,
+                    border: `1px solid ${configError ? colors.critical : colors.border}`,
+                    borderRadius: 6,
+                    padding: 12,
+                    color: colors.text,
+                    fontSize: 12,
+                    fontFamily: font.mono,
+                    lineHeight: 1.5,
+                    outline: 'none',
+                    resize: 'vertical',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {fields.length === 0 ? (
+                  <div style={{ fontSize: 12, color: colors.textMuted }}>
+                    No structured fields defined for this source type. Use Raw JSON to edit.
+                  </div>
+                ) : (
+                  fields.map(field => (
+                    <ConfigField
+                      key={field.key}
+                      field={field}
+                      config={parsedConfig}
+                      onUpdate={updateConfigKey}
+                      inputStyle={inputStyle}
+                    />
+                  ))
+                )}
               </div>
             )}
-            <textarea
-              value={configJson}
-              onChange={e => { setConfigJson(e.target.value); setConfigDirty(true); setConfigError(null); }}
-              style={{
-                width: '100%',
-                minHeight: 180,
-                background: colors.bgSurface,
-                border: `1px solid ${configError ? colors.critical : colors.border}`,
-                borderRadius: 6,
-                padding: 12,
-                color: colors.text,
-                fontSize: 12,
-                fontFamily: font.mono,
-                lineHeight: 1.5,
-                outline: 'none',
-                resize: 'vertical',
-                boxSizing: 'border-box',
-              }}
-            />
+
             {configError && (
               <div style={{ color: colors.critical, fontSize: 12, marginTop: 6 }}>{configError}</div>
             )}
@@ -346,7 +424,7 @@ export default function SourceDetail() {
             <div style={card}>
               <h2 style={sectionTitle}>
                 <MessageSquare size={16} color={colors.accent} />
-                Channels ({channels.length})
+                Monitored Channels ({channels.length})
               </h2>
 
               {/* Add channel form */}
@@ -380,8 +458,8 @@ export default function SourceDetail() {
 
               {/* Channel list */}
               {channels.length === 0 ? (
-                <div style={{ textAlign: 'center', color: colors.textMuted, padding: 20 }}>
-                  No channels configured.
+                <div style={{ textAlign: 'center', color: colors.textMuted, padding: 20, fontSize: 13 }}>
+                  No channels monitored. Add a channel to start collecting messages.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -547,6 +625,217 @@ export default function SourceDetail() {
       </div>
     </div>
   );
+}
+
+function ConfigField({
+  field, config, onUpdate, inputStyle,
+}: {
+  field: ConfigFieldDef;
+  config: Record<string, unknown>;
+  onUpdate: (key: string, value: unknown) => void;
+  inputStyle: CSSProperties;
+}) {
+  const [newItem, setNewItem] = useState('');
+  const [newKey, setNewKey] = useState('');
+  const [newValue, setNewValue] = useState('');
+  const [showMasked, setShowMasked] = useState<Record<string, boolean>>({});
+
+  const labelStyle: CSSProperties = {
+    fontSize: 11, fontWeight: 600, color: colors.textMuted,
+    textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8,
+  };
+
+  const itemStyle: CSSProperties = {
+    background: colors.bgSurface,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 6,
+    padding: '8px 12px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    fontSize: 13,
+    fontFamily: font.mono,
+  };
+
+  if (field.type === 'list') {
+    const items = Array.isArray(config[field.key]) ? (config[field.key] as string[]) : [];
+    return (
+      <div>
+        <div style={labelStyle}>{field.label} ({items.length})</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {items.map((item, idx) => (
+            <div key={idx} style={itemStyle}>
+              <span>{item}</span>
+              <button
+                onClick={() => onUpdate(field.key, items.filter((_, i) => i !== idx))}
+                style={{
+                  background: 'none', border: 'none', color: colors.textMuted,
+                  cursor: 'pointer', padding: 4,
+                }}
+                title="Remove"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <input
+            style={inputStyle}
+            value={newItem}
+            onChange={e => setNewItem(e.target.value)}
+            placeholder={field.placeholder || 'Add item...'}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && newItem.trim()) {
+                onUpdate(field.key, [...items, newItem.trim()]);
+                setNewItem('');
+              }
+            }}
+          />
+          <button
+            onClick={() => {
+              if (newItem.trim()) {
+                onUpdate(field.key, [...items, newItem.trim()]);
+                setNewItem('');
+              }
+            }}
+            disabled={!newItem.trim()}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '8px 12px', background: colors.accent, color: '#fff',
+              border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+              opacity: newItem.trim() ? 1 : 0.5,
+            }}
+          >
+            <Plus size={13} /> Add
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (field.type === 'readonly-count') {
+    const val = config[field.key];
+    const count = Array.isArray(val) ? val.length : (val && typeof val === 'object' ? Object.keys(val).length : 0);
+    return (
+      <div>
+        <div style={labelStyle}>{field.label}</div>
+        <div style={{ ...itemStyle, color: colors.textMuted }}>
+          {count} tracked entries
+        </div>
+      </div>
+    );
+  }
+
+  if (field.type === 'readonly-map') {
+    const val = config[field.key];
+    const entries = val && typeof val === 'object' && !Array.isArray(val)
+      ? Object.entries(val as Record<string, unknown>)
+      : [];
+    return (
+      <div>
+        <div style={labelStyle}>{field.label} ({entries.length})</div>
+        {entries.length === 0 ? (
+          <div style={{ ...itemStyle, color: colors.textMuted }}>No entries</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {entries.map(([k, v]) => (
+              <div key={k} style={itemStyle}>
+                <span style={{ color: colors.text }}>{k}</span>
+                <span style={{ color: colors.textMuted, fontSize: 11 }}>{String(v)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (field.type === 'key-value') {
+    const val = config[field.key];
+    const entries = val && typeof val === 'object' && !Array.isArray(val)
+      ? Object.entries(val as Record<string, string>)
+      : [];
+    return (
+      <div>
+        <div style={labelStyle}>{field.label} ({entries.length})</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {entries.map(([k, v]) => (
+            <div key={k} style={itemStyle}>
+              <span style={{ color: colors.text }}>{k}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: colors.textMuted, fontSize: 12, fontFamily: font.mono }}>
+                  {field.masked && !showMasked[k] ? '••••••••' : String(v)}
+                </span>
+                {field.masked && (
+                  <button
+                    onClick={() => setShowMasked(prev => ({ ...prev, [k]: !prev[k] }))}
+                    style={{ background: 'none', border: 'none', color: colors.textMuted, cursor: 'pointer', padding: 2 }}
+                  >
+                    {showMasked[k] ? <EyeOff size={12} /> : <Eye size={12} />}
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    const updated = { ...(val as Record<string, string>) };
+                    delete updated[k];
+                    onUpdate(field.key, updated);
+                  }}
+                  style={{ background: 'none', border: 'none', color: colors.textMuted, cursor: 'pointer', padding: 2 }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <input
+            style={{ ...inputStyle, flex: 1 }}
+            value={newKey}
+            onChange={e => setNewKey(e.target.value)}
+            placeholder="Key"
+          />
+          <input
+            style={{ ...inputStyle, flex: 2 }}
+            value={newValue}
+            onChange={e => setNewValue(e.target.value)}
+            placeholder="Value"
+            type={field.masked ? 'password' : 'text'}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && newKey.trim() && newValue.trim()) {
+                const updated = { ...(val as Record<string, string> || {}), [newKey.trim()]: newValue.trim() };
+                onUpdate(field.key, updated);
+                setNewKey('');
+                setNewValue('');
+              }
+            }}
+          />
+          <button
+            onClick={() => {
+              if (newKey.trim() && newValue.trim()) {
+                const updated = { ...(val as Record<string, string> || {}), [newKey.trim()]: newValue.trim() };
+                onUpdate(field.key, updated);
+                setNewKey('');
+                setNewValue('');
+              }
+            }}
+            disabled={!newKey.trim() || !newValue.trim()}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '8px 12px', background: colors.accent, color: '#fff',
+              border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+              opacity: newKey.trim() && newValue.trim() ? 1 : 0.5,
+            }}
+          >
+            <Plus size={13} /> Add
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function InfoField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {

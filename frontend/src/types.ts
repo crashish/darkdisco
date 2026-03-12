@@ -1,6 +1,6 @@
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type FindingStatus = 'new' | 'reviewing' | 'confirmed' | 'dismissed' | 'resolved';
-export type SourceType = 'tor_forum' | 'paste_site' | 'telegram' | 'breach_db' | 'ransomware_blog';
+export type SourceType = 'tor_forum' | 'paste_site' | 'telegram' | 'breach_db' | 'ransomware_blog' | 'forum' | 'marketplace' | 'stealer_log' | 'other';
 export type SourceHealth = 'healthy' | 'degraded' | 'offline';
 
 export interface Client {
