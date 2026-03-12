@@ -55,6 +55,7 @@ class SourceType(str, enum.Enum):
     telegram = "telegram"
     breach_db = "breach_db"
     ransomware_blog = "ransomware_blog"
+    ransomware_aggregator = "ransomware_aggregator"
     stealer_log = "stealer_log"
     other = "other"
 
