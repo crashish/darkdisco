@@ -60,10 +60,11 @@ from darkdisco.common.models import (
     WatchTerm,
 )
 
-# Public routes (no auth required)
+# Public routes (no auth required) — all GET/read endpoints use this
+# until the frontend has a login flow
 router = APIRouter()
 
-# Protected routes (JWT required on all endpoints)
+# Protected routes (JWT required) — write/mutate endpoints
 protected = APIRouter(dependencies=[Depends(get_current_user)])
 
 # Valid status transitions: from_status -> set of allowed to_statuses
@@ -106,7 +107,7 @@ async def login(
 
 # ---- Clients ---------------------------------------------------------------
 
-@protected.get("/clients", response_model=list[ClientOut])
+@router.get("/clients", response_model=list[ClientOut])
 async def list_clients(
     active: bool | None = None,
     db: AsyncSession = Depends(get_session),
@@ -130,7 +131,7 @@ async def create_client(
     return client
 
 
-@protected.get("/clients/{client_id}", response_model=ClientOut)
+@router.get("/clients/{client_id}", response_model=ClientOut)
 async def get_client(
     client_id: str,
     db: AsyncSession = Depends(get_session),
@@ -171,7 +172,7 @@ async def delete_client(
 
 # ---- Institutions ----------------------------------------------------------
 
-@protected.get("/institutions", response_model=list[InstitutionOut])
+@router.get("/institutions", response_model=list[InstitutionOut])
 async def list_institutions(
     client_id: str | None = None,
     active: bool | None = None,
@@ -202,7 +203,7 @@ async def create_institution(
     return inst
 
 
-@protected.get("/institutions/{institution_id}", response_model=InstitutionOut)
+@router.get("/institutions/{institution_id}", response_model=InstitutionOut)
 async def get_institution(
     institution_id: str,
     db: AsyncSession = Depends(get_session),
@@ -243,7 +244,7 @@ async def delete_institution(
 
 # ---- Watch Terms -----------------------------------------------------------
 
-@protected.get("/watch-terms", response_model=list[WatchTermOut])
+@router.get("/watch-terms", response_model=list[WatchTermOut])
 async def list_watch_terms(
     institution_id: str | None = None,
     enabled: bool | None = None,
@@ -273,7 +274,7 @@ async def create_watch_term(
     return wt
 
 
-@protected.get("/watch-terms/{term_id}", response_model=WatchTermOut)
+@router.get("/watch-terms/{term_id}", response_model=WatchTermOut)
 async def get_watch_term(
     term_id: str,
     db: AsyncSession = Depends(get_session),
@@ -314,7 +315,7 @@ async def delete_watch_term(
 
 # ---- Sources ---------------------------------------------------------------
 
-@protected.get("/sources", response_model=list[SourceOut])
+@router.get("/sources", response_model=list[SourceOut])
 async def list_sources(
     enabled: bool | None = None,
     source_type: str | None = None,
@@ -372,7 +373,7 @@ async def create_source(
     return source
 
 
-@protected.get("/sources/{source_id}", response_model=SourceOut)
+@router.get("/sources/{source_id}", response_model=SourceOut)
 async def get_source(
     source_id: str,
     db: AsyncSession = Depends(get_session),
@@ -413,7 +414,7 @@ async def delete_source(
 
 # ---- Source Channel Management (Telegram) ----------------------------------
 
-@protected.get(
+@router.get(
     "/sources/{source_id}/channels", response_model=list[ChannelOut]
 )
 async def list_channels(
@@ -583,7 +584,7 @@ async def source_findings_trend(
 
 # ---- Findings --------------------------------------------------------------
 
-@protected.get("/findings", response_model=list[FindingOut])
+@router.get("/findings", response_model=list[FindingOut])
 async def list_findings(
     institution_id: str | None = None,
     severity: Severity | None = None,
@@ -634,7 +635,7 @@ async def create_finding(
     return result.scalar_one()
 
 
-@protected.get("/findings/search", response_model=list[FindingOut])
+@router.get("/findings/search", response_model=list[FindingOut])
 async def search_findings(
     q: str = Query(..., min_length=1),
     page: int = Query(1, ge=1),
@@ -661,7 +662,7 @@ async def search_findings(
     return result.scalars().all()
 
 
-@protected.get("/findings/{finding_id}", response_model=FindingOut)
+@router.get("/findings/{finding_id}", response_model=FindingOut)
 async def get_finding(
     finding_id: str,
     db: AsyncSession = Depends(get_session),
@@ -752,7 +753,7 @@ def _check_transition(current: FindingStatus, target: FindingStatus) -> None:
 
 # ---- Dashboard Stats -------------------------------------------------------
 
-@protected.get("/dashboard/stats", response_model=DashboardStats)
+@router.get("/dashboard/stats", response_model=DashboardStats)
 async def dashboard_stats(
     institution_id: str | None = None,
     db: AsyncSession = Depends(get_session),
@@ -844,7 +845,7 @@ async def dashboard_stats(
 
 # ---- Alert Rules -----------------------------------------------------------
 
-@protected.get("/alert-rules", response_model=list[AlertRuleOut])
+@router.get("/alert-rules", response_model=list[AlertRuleOut])
 async def list_alert_rules(
     owner_id: str | None = None,
     enabled: bool | None = None,
@@ -871,7 +872,7 @@ async def create_alert_rule(
     return rule
 
 
-@protected.get("/alert-rules/{rule_id}", response_model=AlertRuleOut)
+@router.get("/alert-rules/{rule_id}", response_model=AlertRuleOut)
 async def get_alert_rule(
     rule_id: str,
     db: AsyncSession = Depends(get_session),
@@ -912,7 +913,7 @@ async def delete_alert_rule(
 
 # ---- Notifications ---------------------------------------------------------
 
-@protected.get("/notifications", response_model=list[NotificationOut])
+@router.get("/notifications", response_model=list[NotificationOut])
 async def list_notifications(
     user_id: str | None = None,
     unread_only: bool = False,
@@ -930,7 +931,7 @@ async def list_notifications(
     return result.scalars().all()
 
 
-@protected.get("/notifications/{notification_id}", response_model=NotificationOut)
+@router.get("/notifications/{notification_id}", response_model=NotificationOut)
 async def get_notification(
     notification_id: str,
     db: AsyncSession = Depends(get_session),

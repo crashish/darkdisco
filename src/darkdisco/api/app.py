@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from darkdisco.api.routes import router
+from darkdisco.api.routes import protected, router
 
 app = FastAPI(
     title="DarkDisco",
@@ -22,3 +22,4 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api")
+app.include_router(protected, prefix="/api")

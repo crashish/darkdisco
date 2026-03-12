@@ -7,17 +7,12 @@ import {
 const BASE = '/api';
 
 async function apiFetch<T>(url: string, fallback: T, init?: RequestInit): Promise<T> {
-  try {
-    const res = await fetch(`${BASE}${url}`, {
-      headers: { 'Content-Type': 'application/json' },
-      ...init,
-    });
-    if (!res.ok) throw new Error(`${res.status}`);
-    return await res.json() as T;
-  } catch {
-    console.warn(`API unavailable for ${url}, using mock data`);
-    return fallback;
-  }
+  const res = await fetch(`${BASE}${url}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...init,
+  });
+  if (!res.ok) throw new Error(`${res.status}`);
+  return await res.json() as T;
 }
 
 export async function fetchDashboardStats(): Promise<DashboardStats> {
