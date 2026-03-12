@@ -378,3 +378,27 @@ class TokenRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+# ---------------------------------------------------------------------------
+# Integration (trapline connector)
+# ---------------------------------------------------------------------------
+
+class DomainMatchResult(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    institution_id: str
+    name: str
+    primary_domain: str | None = None
+    additional_domains: list | None = None
+    bin_ranges: list | None = None
+    match_type: str  # "exact_primary", "exact_additional", "fuzzy_name"
+    score: float  # 1.0 for exact, <1.0 for fuzzy
+
+
+class InstitutionDomainExport(BaseModel):
+    institution_id: str
+    name: str
+    primary_domain: str | None = None
+    additional_domains: list[str]
+    bin_ranges: list | None = None

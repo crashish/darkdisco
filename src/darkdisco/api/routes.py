@@ -25,11 +25,13 @@ from darkdisco.api.schemas import (
     ClientOut,
     ClientUpdate,
     DashboardStats,
+    DomainMatchResult,
     FindingCreate,
     FindingOut,
     FindingStatusTransition,
     FindingUpdate,
     InstitutionCreate,
+    InstitutionDomainExport,
     InstitutionOut,
     InstitutionUpdate,
     NotificationMarkRead,
@@ -102,6 +104,112 @@ async def login(
     user.last_login = datetime.now(timezone.utc)
     await db.commit()
     return TokenResponse(access_token=token)
+
+
+# ---- Integration (trapline connector) --------------------------------------
+
+
+@router.get(
+    "/integration/match-domain",
+    response_model=list[DomainMatchResult],
+)
+async def match_domain(
+    domain: str = Query(..., min_length=1),
+    db: AsyncSession = Depends(get_session),
+):
+    """Match institutions by domain similarity for trapline integration.
+
+    Checks primary_domain, additional_domains, and fuzzy institution name matching.
+    """
+    domain_lower = domain.lower().strip()
+    results: list[DomainMatchResult] = []
+
+    stmt = select(Institution).where(Institution.active.is_(True))
+    rows = (await db.execute(stmt)).scalars().all()
+
+    # Extract the base name from the query domain for fuzzy name matching
+    # e.g. "first-national-bank.com" -> "first national bank"
+    domain_base = domain_lower.rsplit(".", 1)[0]  # strip TLD
+    domain_words = set(domain_base.replace("-", " ").replace("_", " ").split())
+
+    for inst in rows:
+        # Check exact primary domain match
+        if inst.primary_domain and inst.primary_domain.lower() == domain_lower:
+            results.append(DomainMatchResult(
+                institution_id=inst.id,
+                name=inst.name,
+                primary_domain=inst.primary_domain,
+                additional_domains=inst.additional_domains,
+                bin_ranges=inst.bin_ranges,
+                match_type="exact_primary",
+                score=1.0,
+            ))
+            continue
+
+        # Check additional domains
+        additional = inst.additional_domains or []
+        if any(d.lower() == domain_lower for d in additional if isinstance(d, str)):
+            results.append(DomainMatchResult(
+                institution_id=inst.id,
+                name=inst.name,
+                primary_domain=inst.primary_domain,
+                additional_domains=inst.additional_domains,
+                bin_ranges=inst.bin_ranges,
+                match_type="exact_additional",
+                score=1.0,
+            ))
+            continue
+
+        # Fuzzy name matching: check if institution name words overlap with domain
+        if domain_words:
+            name_words = set(inst.name.lower().replace("-", " ").replace("_", " ").split())
+            overlap = domain_words & name_words
+            if len(overlap) >= 2 or (
+                len(overlap) == 1
+                and len(domain_words) == 1
+                and len(next(iter(overlap))) >= 4
+            ):
+                score = len(overlap) / max(len(domain_words), len(name_words))
+                results.append(DomainMatchResult(
+                    institution_id=inst.id,
+                    name=inst.name,
+                    primary_domain=inst.primary_domain,
+                    additional_domains=inst.additional_domains,
+                    bin_ranges=inst.bin_ranges,
+                    match_type="fuzzy_name",
+                    score=round(score, 3),
+                ))
+
+    # Sort: exact matches first, then by score descending
+    results.sort(key=lambda r: (-r.score, r.match_type))
+    return results
+
+
+@router.get(
+    "/integration/institutions/domains",
+    response_model=list[InstitutionDomainExport],
+)
+async def list_institution_domains(
+    db: AsyncSession = Depends(get_session),
+):
+    """Bulk export all monitored institution domains for trapline to cache locally."""
+    stmt = (
+        select(Institution)
+        .where(Institution.active.is_(True))
+        .order_by(Institution.name)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        InstitutionDomainExport(
+            institution_id=inst.id,
+            name=inst.name,
+            primary_domain=inst.primary_domain,
+            additional_domains=inst.additional_domains or [],
+            bin_ranges=inst.bin_ranges,
+        )
+        for inst in rows
+        if inst.primary_domain or inst.additional_domains
+    ]
 
 
 # ---- Clients ---------------------------------------------------------------

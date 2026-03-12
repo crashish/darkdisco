@@ -584,3 +584,109 @@ async def test_mark_all_notifications_read(client, auth_headers, db_session, tes
     )
     assert resp.status_code == 200
     assert len(resp.json()) == 0
+
+
+# ---------------------------------------------------------------------------
+# Integration Endpoints (trapline connector)
+# ---------------------------------------------------------------------------
+
+
+async def test_match_domain_exact_primary(client, sample_institution):
+    """Exact match on primary_domain should return score 1.0."""
+    resp = await client.get("/api/integration/match-domain?domain=firstnational.com")
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) >= 1
+    match = results[0]
+    assert match["institution_id"] == sample_institution.id
+    assert match["match_type"] == "exact_primary"
+    assert match["score"] == 1.0
+
+
+async def test_match_domain_case_insensitive(client, sample_institution):
+    """Domain matching should be case-insensitive."""
+    resp = await client.get("/api/integration/match-domain?domain=FirstNational.COM")
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) >= 1
+    assert results[0]["match_type"] == "exact_primary"
+
+
+async def test_match_domain_additional(client, db_session, sample_institution):
+    """Match on additional_domains."""
+    sample_institution.additional_domains = ["fnb-online.com", "fnbank.net"]
+    await db_session.commit()
+
+    resp = await client.get("/api/integration/match-domain?domain=fnb-online.com")
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) >= 1
+    assert results[0]["match_type"] == "exact_additional"
+    assert results[0]["score"] == 1.0
+
+
+async def test_match_domain_fuzzy_name(client, sample_institution):
+    """Fuzzy match when domain words overlap with institution name."""
+    resp = await client.get("/api/integration/match-domain?domain=first-national-bank.com")
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) >= 1
+    fuzzy = [r for r in results if r["match_type"] == "fuzzy_name"]
+    assert len(fuzzy) >= 1
+    assert fuzzy[0]["score"] > 0
+
+
+async def test_match_domain_no_match(client, sample_institution):
+    """Domain with no similarity should return empty."""
+    resp = await client.get("/api/integration/match-domain?domain=totally-unrelated-xyz.org")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 0
+
+
+async def test_match_domain_no_auth_required(client, sample_institution):
+    """Integration endpoints should not require authentication."""
+    resp = await client.get("/api/integration/match-domain?domain=firstnational.com")
+    assert resp.status_code == 200
+
+
+async def test_match_domain_missing_param(client):
+    """Missing domain parameter should return 422."""
+    resp = await client.get("/api/integration/match-domain")
+    assert resp.status_code == 422
+
+
+async def test_list_institution_domains(client, sample_institution):
+    """Bulk domain export returns institutions with domains."""
+    resp = await client.get("/api/integration/institutions/domains")
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) >= 1
+    entry = next(r for r in results if r["institution_id"] == sample_institution.id)
+    assert entry["name"] == "First National Bank"
+    assert entry["primary_domain"] == "firstnational.com"
+
+
+async def test_list_institution_domains_no_auth_required(client, sample_institution):
+    """Domain export should not require authentication."""
+    resp = await client.get("/api/integration/institutions/domains")
+    assert resp.status_code == 200
+
+
+async def test_list_institution_domains_excludes_no_domain(client, db_session, sample_client):
+    """Institutions without any domains should be excluded from export."""
+    from uuid import uuid4
+    from darkdisco.common.models import Institution
+
+    no_domain_inst = Institution(
+        id=str(uuid4()),
+        client_id=sample_client.id,
+        name="No Domain Bank",
+        active=True,
+    )
+    db_session.add(no_domain_inst)
+    await db_session.commit()
+
+    resp = await client.get("/api/integration/institutions/domains")
+    assert resp.status_code == 200
+    results = resp.json()
+    assert not any(r["institution_id"] == no_domain_inst.id for r in results)
