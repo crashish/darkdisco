@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { fetchFindings, fetchInstitutions, updateFindingStatus } from '../api';
 import { colors, card, font } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
@@ -35,6 +35,7 @@ export default function Findings() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [search, setSearch] = useState('');
+  const navigate = useNavigate();
   const [sevFilter, setSevFilter] = useState(searchParams.get('severity') || '');
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
   const [instFilter, setInstFilter] = useState(searchParams.get('institution_id') || '');
@@ -141,7 +142,12 @@ export default function Findings() {
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
                   <td style={{ padding: '10px 12px' }}><SeverityBadge severity={f.severity} /></td>
-                  <td style={{ padding: '10px 12px', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.title}</td>
+                  <td
+                    style={{ padding: '10px 12px', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                    onClick={e => { e.stopPropagation(); navigate(`/findings/${f.id}`); }}
+                    onMouseEnter={e => (e.currentTarget.style.color = colors.accent)}
+                    onMouseLeave={e => (e.currentTarget.style.color = colors.text)}
+                  >{f.title}</td>
                   <td style={{ padding: '10px 12px', color: colors.textDim }}>{f.institution_name}</td>
                   <td style={{ padding: '10px 12px', color: colors.textDim, fontFamily: font.mono, fontSize: 11 }}>{f.source_type}</td>
                   <td style={{ padding: '10px 12px', position: 'relative' }}>

@@ -1,6 +1,6 @@
 import type {
-  Client, Institution, WatchTerm, Finding, Source, DashboardStats,
-  Severity, FindingStatus, SourceType,
+  Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats,
+  Severity, FindingStatus, SourceType, MatchedTerm, StatusHistoryEntry, EnrichmentData,
 } from './types';
 
 const now = new Date();
@@ -105,3 +105,51 @@ export const mockDashboardStats: DashboardStats = {
     count: Math.floor(Math.random() * 8) + 1,
   })),
 };
+
+function buildStatusHistory(status: FindingStatus, discoveredAt: string): StatusHistoryEntry[] {
+  const transitions: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
+  const idx = transitions.indexOf(status);
+  const history: StatusHistoryEntry[] = [
+    { status: 'new', changed_at: discoveredAt, changed_by: 'system', notes: 'Auto-created by pipeline' },
+  ];
+  if (idx >= 1) history.push({ status: 'reviewing', changed_at: hoursAgo(Math.max(0, idx * 4 - 2)), changed_by: 'analyst@example.com', notes: 'Assigned for triage' });
+  if (idx >= 2 && status !== 'dismissed') history.push({ status: 'confirmed', changed_at: hoursAgo(Math.max(0, idx * 2 - 1)), changed_by: 'analyst@example.com', notes: 'Verified as legitimate threat' });
+  if (status === 'dismissed') history.push({ status: 'dismissed', changed_at: hoursAgo(1), changed_by: 'analyst@example.com', notes: 'False positive - generic mention' });
+  if (status === 'resolved') history.push({ status: 'resolved', changed_at: hoursAgo(1), changed_by: 'analyst@example.com', notes: 'Mitigated - credentials rotated' });
+  return history;
+}
+
+function buildMatchedTerms(institutionId: string): MatchedTerm[] {
+  const terms = mockWatchTerms.filter(w => w.institution_id === institutionId);
+  return terms.slice(0, 3).map(t => ({
+    term_id: Number(t.id.replace(/\D/g, '')),
+    term_type: t.term_type,
+    value: t.value,
+    context: `...matched "${t.value}" in source content...`,
+  }));
+}
+
+function buildEnrichment(severity: string, i: number): EnrichmentData {
+  return {
+    dedup: { similarity_score: 0.15 + (i % 5) * 0.12, action: 'create' },
+    false_positive: {
+      is_fp: false,
+      confidence: 0.85 + (i % 3) * 0.05,
+      reason: severity === 'info' ? 'Low-confidence generic mention' : undefined,
+    },
+    threat_intel: i % 3 === 0 ? { ioc_matches: 2, threat_actors: ['cr3d1tgh0st'], campaigns: ['FIN-2024-Q4'] } : undefined,
+  };
+}
+
+export const mockFindingDetails: FindingDetail[] = mockFindings.map((f, i) => ({
+  ...f,
+  raw_content: findingTemplates[i].summary + '\n\n[Raw scraped content from source. May contain formatting artifacts, markup, and surrounding context from the original post.]',
+  matched_terms: buildMatchedTerms(f.institution_id),
+  tags: i % 4 === 0 ? ['credential-leak', 'priority'] : i % 3 === 0 ? ['carding', 'financial-fraud'] : i % 2 === 0 ? ['phishing'] : null,
+  analyst_notes: i < 8 ? `Initial triage complete. ${i % 2 === 0 ? 'Escalated to incident response team.' : 'Monitoring for further activity.'}` : null,
+  enrichment: buildEnrichment(f.severity, i),
+  status_history: buildStatusHistory(f.status, f.discovered_at),
+  created_at: f.discovered_at,
+  reviewed_by: i < 10 ? 'analyst@example.com' : null,
+  reviewed_at: i < 10 ? hoursAgo(i + 1) : null,
+}));

@@ -1,6 +1,6 @@
-import type { Client, Institution, WatchTerm, Finding, Source, DashboardStats, FindingStatus } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus } from './types';
 import {
-  mockClients, mockInstitutions, mockWatchTerms, mockFindings,
+  mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats,
 } from './mockData';
 
@@ -59,6 +59,11 @@ export async function fetchFindings(params?: {
   if (params?.date_to) fallback = fallback.filter(f => f.discovered_at <= params.date_to!);
 
   return apiFetch(`/findings${q ? '?' + q : ''}`, fallback);
+}
+
+export async function fetchFinding(id: string): Promise<FindingDetail> {
+  const fallback = mockFindingDetails.find(f => f.id === id) || mockFindingDetails[0];
+  return apiFetch(`/findings/${id}`, fallback);
 }
 
 export async function updateFindingStatus(id: string, status: FindingStatus): Promise<Finding> {

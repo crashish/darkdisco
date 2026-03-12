@@ -42,6 +42,38 @@ export interface Finding {
   updated_at: string;
 }
 
+export interface FindingDetail extends Finding {
+  raw_content: string | null;
+  matched_terms: MatchedTerm[] | null;
+  tags: string[] | null;
+  analyst_notes: string | null;
+  enrichment: EnrichmentData | null;
+  status_history: StatusHistoryEntry[];
+  created_at: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+}
+
+export interface MatchedTerm {
+  term_id: number;
+  term_type: string;
+  value: string;
+  context?: string;
+}
+
+export interface EnrichmentData {
+  dedup?: { similarity_score?: number; similar_finding_id?: string; action?: string };
+  false_positive?: { is_fp?: boolean; confidence?: number; reason?: string };
+  threat_intel?: Record<string, unknown>;
+}
+
+export interface StatusHistoryEntry {
+  status: FindingStatus;
+  changed_at: string;
+  changed_by?: string;
+  notes?: string;
+}
+
 export interface Source {
   id: string;
   name: string;
