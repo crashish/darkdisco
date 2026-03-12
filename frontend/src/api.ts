@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats,
@@ -81,4 +81,26 @@ export async function fetchWatchTerms(institutionId: string): Promise<WatchTerm[
 
 export async function fetchSources(): Promise<Source[]> {
   return apiFetch('/sources', mockSources);
+}
+
+export async function fetchSource(id: string): Promise<Source> {
+  const fallback = mockSources.find(s => s.id === id) || mockSources[0];
+  return apiFetch(`/sources/${id}`, fallback);
+}
+
+export async function fetchChannels(sourceId: string): Promise<TelegramChannel[]> {
+  return apiFetch(`/sources/${sourceId}/channels`, []);
+}
+
+export async function addChannel(sourceId: string, channel: string, join: boolean = true): Promise<TelegramChannel> {
+  return apiFetch(`/sources/${sourceId}/channels`, { channel, last_message_id: null }, {
+    method: 'POST',
+    body: JSON.stringify({ channel, join }),
+  });
+}
+
+export async function removeChannel(sourceId: string, channel: string): Promise<{ removed: string }> {
+  return apiFetch(`/sources/${sourceId}/channels/${encodeURIComponent(channel)}`, { removed: channel }, {
+    method: 'DELETE',
+  });
 }

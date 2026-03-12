@@ -82,6 +82,12 @@ export interface Source {
   last_poll: string;
   finding_count: number;
   avg_poll_seconds: number;
+  config?: Record<string, unknown>;
+}
+
+export interface TelegramChannel {
+  channel: string;
+  last_message_id: number | null;
 }
 
 export interface DashboardStats {

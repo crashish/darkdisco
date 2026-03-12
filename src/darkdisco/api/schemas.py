@@ -335,6 +335,24 @@ class PaginatedResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Telegram Channel Management
+# ---------------------------------------------------------------------------
+
+class ChannelOut(BaseModel):
+    channel: str
+    last_message_id: int | None = None
+
+
+class ChannelAdd(BaseModel):
+    channel: str
+    join: bool = True
+
+
+class ChannelRemoveOut(BaseModel):
+    removed: str
+
+
+# ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 

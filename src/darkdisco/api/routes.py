@@ -18,6 +18,9 @@ from darkdisco.api.schemas import (
     AlertRuleCreate,
     AlertRuleOut,
     AlertRuleUpdate,
+    ChannelAdd,
+    ChannelOut,
+    ChannelRemoveOut,
     ClientCreate,
     ClientOut,
     ClientUpdate,
@@ -52,6 +55,7 @@ from darkdisco.common.models import (
     Notification,
     Severity,
     Source,
+    SourceType,
     User,
     WatchTerm,
 )
@@ -374,6 +378,106 @@ async def delete_source(
         raise HTTPException(404, "Source not found")
     await db.delete(source)
     await db.commit()
+
+
+# ---- Source Channel Management (Telegram) ----------------------------------
+
+@protected.get(
+    "/sources/{source_id}/channels", response_model=list[ChannelOut]
+)
+async def list_channels(
+    source_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    source = await db.get(Source, source_id)
+    if not source:
+        raise HTTPException(404, "Source not found")
+    if source.source_type != SourceType.telegram:
+        raise HTTPException(400, "Channel management is only available for Telegram sources")
+    cfg = source.config or {}
+    channels = cfg.get("channels", [])
+    hwm = cfg.get("last_message_ids", {})
+    return [
+        ChannelOut(channel=ch, last_message_id=hwm.get(ch))
+        for ch in channels
+    ]
+
+
+@protected.post(
+    "/sources/{source_id}/channels",
+    response_model=ChannelOut,
+    status_code=201,
+)
+async def add_channel(
+    source_id: str,
+    body: ChannelAdd,
+    db: AsyncSession = Depends(get_session),
+):
+    source = await db.get(Source, source_id)
+    if not source:
+        raise HTTPException(404, "Source not found")
+    if source.source_type != SourceType.telegram:
+        raise HTTPException(400, "Channel management is only available for Telegram sources")
+
+    cfg = dict(source.config or {})
+    channels: list[str] = list(cfg.get("channels", []))
+
+    if body.channel in channels:
+        raise HTTPException(409, f"Channel already configured: {body.channel}")
+
+    # Optionally join the channel via Telegram API
+    if body.join:
+        from darkdisco.discovery.connectors.telegram import TelegramConnector
+
+        connector = TelegramConnector(cfg)
+        try:
+            await connector.setup()
+            joined = await connector.join_channel(body.channel)
+            if not joined:
+                raise HTTPException(
+                    502, f"Failed to join channel: {body.channel}"
+                )
+        finally:
+            await connector.teardown()
+
+    channels.append(body.channel)
+    cfg["channels"] = channels
+    source.config = cfg
+    await db.commit()
+    await db.refresh(source)
+    return ChannelOut(channel=body.channel)
+
+
+@protected.delete(
+    "/sources/{source_id}/channels/{channel:path}",
+    response_model=ChannelRemoveOut,
+)
+async def remove_channel(
+    source_id: str,
+    channel: str,
+    db: AsyncSession = Depends(get_session),
+):
+    source = await db.get(Source, source_id)
+    if not source:
+        raise HTTPException(404, "Source not found")
+    if source.source_type != SourceType.telegram:
+        raise HTTPException(400, "Channel management is only available for Telegram sources")
+
+    cfg = dict(source.config or {})
+    channels: list[str] = list(cfg.get("channels", []))
+
+    if channel not in channels:
+        raise HTTPException(404, f"Channel not configured: {channel}")
+
+    channels.remove(channel)
+    cfg["channels"] = channels
+    # Clean up high-water mark
+    hwm: dict = dict(cfg.get("last_message_ids", {}))
+    hwm.pop(channel, None)
+    cfg["last_message_ids"] = hwm
+    source.config = cfg
+    await db.commit()
+    return ChannelRemoveOut(removed=channel)
 
 
 # ---- Findings --------------------------------------------------------------
