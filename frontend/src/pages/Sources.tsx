@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { fetchSources } from '../api';
 import { colors, card, font, healthColor, healthBg, badge as makeBadge } from '../theme';
 import type { Source, SourceHealth } from '../types';
@@ -20,6 +21,7 @@ const sourceLabels: Record<string, string> = {
 };
 
 export default function Sources() {
+  const navigate = useNavigate();
   const [sources, setSources] = useState<Source[]>([]);
 
   useEffect(() => {
@@ -66,7 +68,7 @@ export default function Sources() {
           const lastPollMinutes = Math.floor((Date.now() - new Date(src.last_poll).getTime()) / 60000);
 
           return (
-            <div key={src.id} style={{ ...card, padding: 0, overflow: 'hidden' }}>
+            <div key={src.id} onClick={() => navigate(`/sources/${src.id}`)} style={{ ...card, padding: 0, overflow: 'hidden', cursor: 'pointer', transition: 'border-color 0.15s' }} onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = colors.borderLight; }} onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = colors.border; }}>
               {/* Header */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: `1px solid ${colors.border}` }}>
                 <div>

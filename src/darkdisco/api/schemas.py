@@ -167,6 +167,13 @@ class SourceOut(BaseModel):
     created_at: datetime
 
 
+class PollTriggerResponse(BaseModel):
+    source_id: str
+    status: str
+    message: str
+    polled_at: datetime
+
+
 # ---------------------------------------------------------------------------
 # Findings
 # ---------------------------------------------------------------------------

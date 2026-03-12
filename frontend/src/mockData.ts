@@ -1,6 +1,7 @@
 import type {
-  Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats,
+  Client, Institution, WatchTerm, Finding, FindingDetail, Source, SourceDetail, DashboardStats,
   Severity, FindingStatus, SourceType, MatchedTerm, StatusHistoryEntry, EnrichmentData,
+  PollHistoryEntry,
 } from './types';
 
 const now = new Date();
@@ -152,4 +153,52 @@ export const mockFindingDetails: FindingDetail[] = mockFindings.map((f, i) => ({
   created_at: f.discovered_at,
   reviewed_by: i < 10 ? 'analyst@example.com' : null,
   reviewed_at: i < 10 ? hoursAgo(i + 1) : null,
+}));
+
+const sourceConfigs: Record<string, Record<string, unknown>> = {
+  's-001': { base_url: 'http://darkleaks...onion', max_pages: 50, proxy: 'socks5://tor:9050', user_agent: 'Mozilla/5.0', rate_limit_ms: 2000 },
+  's-002': { endpoints: ['pastebin.com', 'ghostbin.com'], api_key: '***redacted***', scrape_interval: 60, max_results: 200 },
+  's-003': { channels: ['darkweb_intel', 'carding_alerts', 'breach_notify'], api_id: 12345, api_hash: '***redacted***' },
+  's-004': { databases: ['breachcomp_v3', 'finleaks_2024'], match_threshold: 0.85, batch_size: 1000 },
+  's-005': { blogs: ['lockbit3', 'alphv', 'cl0p', 'play'], check_mirrors: true, screenshot: true },
+  's-006': { base_url: 'http://darkmarket...onion', categories: ['carding', 'fullz'], proxy: 'socks5://tor:9050' },
+};
+
+function buildPollHistory(sourceId: string, health: string): PollHistoryEntry[] {
+  const count = 8 + Math.floor(Math.random() * 5);
+  return Array.from({ length: count }, (_, i) => {
+    const isError = health === 'offline' ? i < 3 : health === 'degraded' ? i === 0 : false;
+    return {
+      polled_at: minsAgo(i * 15 + Math.floor(Math.random() * 5)),
+      duration_ms: Math.floor(1200 + Math.random() * 4000),
+      findings_found: isError ? 0 : Math.floor(Math.random() * 12),
+      status: isError ? 'error' as const : 'success' as const,
+      error: isError ? 'Connection timed out after 30s' : undefined,
+    };
+  });
+}
+
+function buildFindingsByDay(): { date: string; count: number }[] {
+  return Array.from({ length: 14 }, (_, i) => ({
+    date: daysAgo(13 - i).split('T')[0],
+    count: Math.floor(Math.random() * 15) + 1,
+  }));
+}
+
+export const mockSourceDetails: SourceDetail[] = mockSources.map((s) => ({
+  id: s.id,
+  name: s.name,
+  source_type: s.source_type,
+  url: sourceConfigs[s.id]?.base_url as string | null ?? null,
+  connector_class: `darkdisco.discovery.connectors.${s.source_type}.${s.source_type.split('_').map(w => w[0].toUpperCase() + w.slice(1)).join('')}Connector`,
+  enabled: s.health !== 'offline',
+  poll_interval_seconds: s.avg_poll_seconds,
+  last_polled_at: s.last_poll,
+  last_error: s.health === 'offline' ? 'Connection refused: target host unreachable via Tor circuit' : s.health === 'degraded' ? 'Partial response: 3 of 5 channels timed out' : null,
+  config: sourceConfigs[s.id] || null,
+  created_at: daysAgo(90 + Math.floor(Math.random() * 30)),
+  health: s.health,
+  finding_count: s.finding_count,
+  poll_history: buildPollHistory(s.id, s.health),
+  findings_by_day: buildFindingsByDay(),
 }));

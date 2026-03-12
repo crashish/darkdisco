@@ -84,6 +84,32 @@ export interface Source {
   avg_poll_seconds: number;
 }
 
+export interface SourceDetail {
+  id: string;
+  name: string;
+  source_type: SourceType;
+  url: string | null;
+  connector_class: string | null;
+  enabled: boolean;
+  poll_interval_seconds: number;
+  last_polled_at: string | null;
+  last_error: string | null;
+  config: Record<string, unknown> | null;
+  created_at: string;
+  health: SourceHealth;
+  finding_count: number;
+  poll_history: PollHistoryEntry[];
+  findings_by_day: { date: string; count: number }[];
+}
+
+export interface PollHistoryEntry {
+  polled_at: string;
+  duration_ms: number;
+  findings_found: number;
+  status: 'success' | 'error' | 'partial';
+  error?: string;
+}
+
 export interface DashboardStats {
   total_findings: number;
   findings_by_severity: Record<Severity, number>;

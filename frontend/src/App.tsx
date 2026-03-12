@@ -5,6 +5,7 @@ import Findings from './pages/Findings';
 import FindingDetail from './pages/FindingDetail';
 import Institutions from './pages/Institutions';
 import Sources from './pages/Sources';
+import SourceDetail from './pages/SourceDetail';
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/findings/:id" element={<FindingDetail />} />
         <Route path="/institutions" element={<Institutions />} />
         <Route path="/sources" element={<Sources />} />
+        <Route path="/sources/:id" element={<SourceDetail />} />
       </Route>
     </Routes>
   );

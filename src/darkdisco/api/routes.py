@@ -32,6 +32,7 @@ from darkdisco.api.schemas import (
     NotificationMarkRead,
     NotificationOut,
     SeverityCount,
+    PollTriggerResponse,
     SourceCreate,
     SourceOut,
     SourceUpdate,
@@ -374,6 +375,30 @@ async def delete_source(
         raise HTTPException(404, "Source not found")
     await db.delete(source)
     await db.commit()
+
+
+@protected.post("/sources/{source_id}/poll", response_model=PollTriggerResponse)
+async def trigger_source_poll(
+    source_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """Trigger a manual poll for a source."""
+    source = await db.get(Source, source_id)
+    if not source:
+        raise HTTPException(404, "Source not found")
+    if not source.enabled:
+        raise HTTPException(409, "Cannot poll a disabled source")
+    now = datetime.now(timezone.utc)
+    source.last_polled_at = now
+    source.last_error = None
+    await db.commit()
+    await db.refresh(source)
+    return PollTriggerResponse(
+        source_id=source.id,
+        status="triggered",
+        message=f"Poll triggered for {source.name}",
+        polled_at=now,
+    )
 
 
 # ---- Findings --------------------------------------------------------------

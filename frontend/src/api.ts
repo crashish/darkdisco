@@ -1,7 +1,7 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, SourceDetail, DashboardStats, FindingStatus } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
-  mockSources, mockDashboardStats,
+  mockSources, mockSourceDetails, mockDashboardStats,
 } from './mockData';
 
 const BASE = '/api';
@@ -81,4 +81,25 @@ export async function fetchWatchTerms(institutionId: string): Promise<WatchTerm[
 
 export async function fetchSources(): Promise<Source[]> {
   return apiFetch('/sources', mockSources);
+}
+
+export async function fetchSource(id: string): Promise<SourceDetail> {
+  const fallback = mockSourceDetails.find(s => s.id === id) || mockSourceDetails[0];
+  return apiFetch(`/sources/${id}`, fallback);
+}
+
+export async function updateSource(id: string, data: Partial<SourceDetail>): Promise<SourceDetail> {
+  const fallback = mockSourceDetails.find(s => s.id === id) || mockSourceDetails[0];
+  return apiFetch(`/sources/${id}`, { ...fallback, ...data }, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function triggerSourcePoll(id: string): Promise<{ status: string; message: string; polled_at: string }> {
+  return apiFetch(`/sources/${id}/poll`, {
+    status: 'triggered',
+    message: 'Poll triggered successfully',
+    polled_at: new Date().toISOString(),
+  }, { method: 'POST' });
 }
