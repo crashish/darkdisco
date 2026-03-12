@@ -196,10 +196,11 @@ async def _poll_async(connector, since):
 
 @app.task(name="darkdisco.pipeline.worker.run_matching")
 def run_matching(source_id: str, raw_mentions: list[dict]):
-    """Match raw mentions against all active watch terms, create findings, trigger alerts."""
+    """Match raw mentions against all active watch terms, enrich, filter, create findings."""
     from darkdisco.common.models import Finding, Source, WatchTerm
     from darkdisco.discovery.connectors.base import RawMention
     from darkdisco.discovery.matcher import match_mention
+    from darkdisco.enrichment import enrich_and_filter
 
     session = _get_sync_session()
     try:
@@ -218,6 +219,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
             return {"findings_created": 0}
 
         findings_created = 0
+        findings_suppressed = 0
 
         for raw in raw_mentions:
             mention = RawMention(
@@ -230,12 +232,12 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 metadata=raw.get("metadata", {}),
             )
 
-            # Content hash for dedup
+            # Content hash for exact dedup
             content_hash = hashlib.sha256(
                 f"{mention.source_name}:{mention.content}".encode()
             ).hexdigest()
 
-            # Check for duplicate
+            # Check for exact duplicate
             existing = session.execute(
                 select(Finding.id).where(Finding.content_hash == content_hash)
             ).scalar_one_or_none()
@@ -248,10 +250,43 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
             match_results = match_mention(mention, watch_terms)
 
             for result in match_results:
+                # Build candidate finding data for enrichment
+                candidate = {
+                    "institution_id": result.institution_id,
+                    "source_id": source_id,
+                    "severity": result.severity_hint,
+                    "title": mention.title or f"Mention from {source.name}",
+                    "summary": mention.content[:1000] if mention.content else None,
+                    "raw_content": mention.content,
+                    "content_hash": content_hash,
+                    "source_url": mention.source_url,
+                    "matched_terms": result.matched_terms,
+                    "metadata": mention.metadata,
+                }
+
+                # Run enrichment pipeline (dedup scoring, FP filtering, threat intel)
+                enrichment = enrich_and_filter(candidate, session)
+
+                if not enrichment.should_create:
+                    logger.info(
+                        "Finding suppressed: %s",
+                        enrichment.suppression_reason,
+                    )
+                    findings_suppressed += 1
+                    continue
+
+                # Use adjusted severity if enrichment modified it
+                severity = enrichment.adjusted_severity or result.severity_hint
+
+                # Merge enrichment metadata into finding metadata
+                merged_metadata = dict(mention.metadata)
+                if enrichment.enrichment_metadata:
+                    merged_metadata["enrichment"] = enrichment.enrichment_metadata
+
                 finding = Finding(
                     institution_id=result.institution_id,
                     source_id=source_id,
-                    severity=result.severity_hint,
+                    severity=severity,
                     title=mention.title or f"Mention from {source.name}",
                     summary=mention.content[:1000] if mention.content else None,
                     raw_content=mention.content,
@@ -259,7 +294,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                     source_url=mention.source_url,
                     matched_terms=result.matched_terms,
                     tags=[source.source_type.value],
-                    metadata_=mention.metadata,
+                    metadata_=merged_metadata,
                     discovered_at=mention.discovered_at,
                 )
                 session.add(finding)
@@ -268,17 +303,22 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
         session.commit()
 
         logger.info(
-            "Matching complete for source %s: %d mentions → %d findings",
+            "Matching complete for source %s: %d mentions → %d findings (%d suppressed)",
             source.name if source else source_id,
             len(raw_mentions),
             findings_created,
+            findings_suppressed,
         )
 
         # Trigger alert evaluation for new findings
         if findings_created > 0:
             evaluate_alerts.delay()
 
-        return {"findings_created": findings_created, "mentions_processed": len(raw_mentions)}
+        return {
+            "findings_created": findings_created,
+            "findings_suppressed": findings_suppressed,
+            "mentions_processed": len(raw_mentions),
+        }
     finally:
         session.close()
 
