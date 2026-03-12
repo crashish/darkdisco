@@ -1,6 +1,6 @@
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type FindingStatus = 'new' | 'reviewing' | 'confirmed' | 'dismissed' | 'resolved';
-export type SourceType = 'tor_forum' | 'paste_site' | 'telegram' | 'breach_db' | 'ransomware_blog' | 'forum' | 'marketplace' | 'stealer_log' | 'other';
+export type SourceType = 'tor_forum' | 'paste_site' | 'telegram' | 'telegram_intel' | 'discord' | 'breach_db' | 'ransomware_blog' | 'forum' | 'marketplace' | 'stealer_log' | 'other';
 export type SourceHealth = 'healthy' | 'degraded' | 'offline';
 
 export interface Client {
@@ -92,6 +92,11 @@ export interface Source {
 export interface TelegramChannel {
   channel: string;
   last_message_id: number | null;
+}
+
+export interface DiscordGuildChannel {
+  guild_id: string;
+  channel_ids: string[];
 }
 
 export interface PollTriggerResult {

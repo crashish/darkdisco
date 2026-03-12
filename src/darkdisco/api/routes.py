@@ -25,6 +25,9 @@ from darkdisco.api.schemas import (
     ClientOut,
     ClientUpdate,
     DashboardStats,
+    DiscordChannelAdd,
+    DiscordChannelRemoveOut,
+    DiscordGuildChannelOut,
     DomainMatchResult,
     DryRunMatch,
     DryRunRequest,
@@ -583,7 +586,7 @@ async def list_channels(
     source = await db.get(Source, source_id)
     if not source:
         raise HTTPException(404, "Source not found")
-    if source.source_type != SourceType.telegram:
+    if source.source_type not in (SourceType.telegram, SourceType.telegram_intel):
         raise HTTPException(400, "Channel management is only available for Telegram sources")
     cfg = source.config or {}
     channels = cfg.get("channels", [])
@@ -607,7 +610,7 @@ async def add_channel(
     source = await db.get(Source, source_id)
     if not source:
         raise HTTPException(404, "Source not found")
-    if source.source_type != SourceType.telegram:
+    if source.source_type not in (SourceType.telegram, SourceType.telegram_intel):
         raise HTTPException(400, "Channel management is only available for Telegram sources")
 
     cfg = dict(source.config or {})
@@ -651,7 +654,7 @@ async def remove_channel(
     source = await db.get(Source, source_id)
     if not source:
         raise HTTPException(404, "Source not found")
-    if source.source_type != SourceType.telegram:
+    if source.source_type not in (SourceType.telegram, SourceType.telegram_intel):
         raise HTTPException(400, "Channel management is only available for Telegram sources")
 
     cfg = dict(source.config or {})
@@ -669,6 +672,100 @@ async def remove_channel(
     source.config = cfg
     await db.commit()
     return ChannelRemoveOut(removed=channel)
+
+
+# ---- Discord Guild/Channel Management -------------------------------------
+
+@protected.get(
+    "/sources/{source_id}/discord-channels",
+    response_model=list[DiscordGuildChannelOut],
+)
+async def list_discord_channels(
+    source_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    source = await db.get(Source, source_id)
+    if not source:
+        raise HTTPException(404, "Source not found")
+    if source.source_type != SourceType.discord:
+        raise HTTPException(400, "Discord channel management is only available for Discord sources")
+    cfg = source.config or {}
+    guild_channels = cfg.get("guild_channels", {})
+    return [
+        DiscordGuildChannelOut(guild_id=gid, channel_ids=cids)
+        for gid, cids in guild_channels.items()
+    ]
+
+
+@protected.post(
+    "/sources/{source_id}/discord-channels",
+    response_model=DiscordGuildChannelOut,
+    status_code=201,
+)
+async def add_discord_channel(
+    source_id: str,
+    body: DiscordChannelAdd,
+    db: AsyncSession = Depends(get_session),
+):
+    source = await db.get(Source, source_id)
+    if not source:
+        raise HTTPException(404, "Source not found")
+    if source.source_type != SourceType.discord:
+        raise HTTPException(400, "Discord channel management is only available for Discord sources")
+
+    cfg = dict(source.config or {})
+    guild_channels: dict[str, list[str]] = dict(cfg.get("guild_channels", {}))
+
+    channels = list(guild_channels.get(body.guild_id, []))
+    if body.channel_id in channels:
+        raise HTTPException(409, f"Channel already configured: {body.guild_id}/{body.channel_id}")
+
+    channels.append(body.channel_id)
+    guild_channels[body.guild_id] = channels
+    cfg["guild_channels"] = guild_channels
+    source.config = cfg
+    await db.commit()
+    await db.refresh(source)
+    return DiscordGuildChannelOut(guild_id=body.guild_id, channel_ids=channels)
+
+
+@protected.delete(
+    "/sources/{source_id}/discord-channels/{guild_id}/{channel_id}",
+    response_model=DiscordChannelRemoveOut,
+)
+async def remove_discord_channel(
+    source_id: str,
+    guild_id: str,
+    channel_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    source = await db.get(Source, source_id)
+    if not source:
+        raise HTTPException(404, "Source not found")
+    if source.source_type != SourceType.discord:
+        raise HTTPException(400, "Discord channel management is only available for Discord sources")
+
+    cfg = dict(source.config or {})
+    guild_channels: dict[str, list[str]] = dict(cfg.get("guild_channels", {}))
+
+    channels = list(guild_channels.get(guild_id, []))
+    if channel_id not in channels:
+        raise HTTPException(404, f"Channel not configured: {guild_id}/{channel_id}")
+
+    channels.remove(channel_id)
+    if channels:
+        guild_channels[guild_id] = channels
+    else:
+        guild_channels.pop(guild_id, None)
+
+    # Clean up high-water mark
+    hwm: dict = dict(cfg.get("last_message_ids", {}))
+    hwm.pop(channel_id, None)
+    cfg["last_message_ids"] = hwm
+    cfg["guild_channels"] = guild_channels
+    source.config = cfg
+    await db.commit()
+    return DiscordChannelRemoveOut(guild_id=guild_id, removed_channel=channel_id)
 
 
 # ---- Source Poll Trigger & Findings ----------------------------------------

@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     telegram_api_id: int = 0
     telegram_api_hash: str = ""
     telegram_session_name: str = "darkdisco_monitor"
+    discord_bot_token: str = ""
     pastebin_api_key: str = ""
 
     # Email (SMTP) notifications

@@ -4,9 +4,10 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recha
 import {
   fetchSource, fetchChannels, addChannel, removeChannel,
   updateSource, triggerPoll, fetchSourceFindings, fetchSourceFindingsTrend,
+  fetchDiscordChannels, addDiscordChannel, removeDiscordChannel,
 } from '../api';
 import { colors, card, font, badge as makeBadge, healthColor, healthBg, severityColor, severityBg } from '../theme';
-import type { Source, TelegramChannel, Finding, FindingTrend } from '../types';
+import type { Source, TelegramChannel, DiscordGuildChannel, Finding, FindingTrend } from '../types';
 import {
   ArrowLeft, Plus, Trash2, MessageSquare, Hash, Wifi, WifiOff,
   AlertTriangle, Loader, Play, Settings, Activity, BarChart3, Save, Check,
@@ -18,6 +19,8 @@ const sourceLabels: Record<string, string> = {
   tor_forum: 'Tor Forum',
   paste_site: 'Paste Site',
   telegram: 'Telegram',
+  telegram_intel: 'Telegram Intel',
+  discord: 'Discord',
   breach_db: 'Breach Database',
   ransomware_blog: 'Ransomware Blog',
   stealer_log: 'Stealer Log',
@@ -42,6 +45,13 @@ interface ConfigFieldDef {
 
 const sourceConfigFields: Record<string, ConfigFieldDef[]> = {
   telegram: [
+    { key: 'last_message_ids', label: 'High-Water Marks', type: 'readonly-map' },
+  ],
+  telegram_intel: [
+    { key: 'last_message_ids', label: 'High-Water Marks', type: 'readonly-map' },
+  ],
+  discord: [
+    { key: 'guild_channels', label: 'Guild Channels', type: 'readonly-map' },
     { key: 'last_message_ids', label: 'High-Water Marks', type: 'readonly-map' },
   ],
   paste_site: [
@@ -91,8 +101,15 @@ export default function SourceDetail() {
   const [showRawConfig, setShowRawConfig] = useState(false);
   const [togglingEnabled, setTogglingEnabled] = useState(false);
   const [errorDismissed, setErrorDismissed] = useState(false);
+  // Discord state
+  const [discordGuilds, setDiscordGuilds] = useState<DiscordGuildChannel[]>([]);
+  const [newGuildId, setNewGuildId] = useState('');
+  const [newDiscordChannelId, setNewDiscordChannelId] = useState('');
+  const [addingDiscord, setAddingDiscord] = useState(false);
+  const [removingDiscord, setRemovingDiscord] = useState<string | null>(null);
 
-  const isTelegram = source?.source_type === 'telegram';
+  const isTelegram = source?.source_type === 'telegram' || source?.source_type === 'telegram_intel';
+  const isDiscord = source?.source_type === 'discord';
 
   const parsedConfig: Record<string, unknown> = (() => {
     try { return JSON.parse(configJson); } catch { return {}; }
@@ -127,6 +144,11 @@ export default function SourceDetail() {
   }, [id, isTelegram]);
 
   useEffect(() => {
+    if (!id || !isDiscord) return;
+    fetchDiscordChannels(id).then(setDiscordGuilds);
+  }, [id, isDiscord]);
+
+  useEffect(() => {
     if (!id) return;
     fetchSourceFindings(id).then(setFindings);
     fetchSourceFindingsTrend(id).then(setTrend);
@@ -158,6 +180,45 @@ export default function SourceDetail() {
       setError(e instanceof Error ? e.message : 'Failed to remove channel');
     } finally {
       setRemoving(null);
+    }
+  };
+
+  const handleAddDiscord = async () => {
+    if (!id || !newGuildId.trim() || !newDiscordChannelId.trim()) return;
+    setAddingDiscord(true);
+    setError(null);
+    try {
+      const result = await addDiscordChannel(id, newGuildId.trim(), newDiscordChannelId.trim());
+      setDiscordGuilds(prev => {
+        const existing = prev.find(g => g.guild_id === result.guild_id);
+        if (existing) {
+          return prev.map(g => g.guild_id === result.guild_id ? result : g);
+        }
+        return [...prev, result];
+      });
+      setNewDiscordChannelId('');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to add Discord channel');
+    } finally {
+      setAddingDiscord(false);
+    }
+  };
+
+  const handleRemoveDiscord = async (guildId: string, channelId: string) => {
+    if (!id) return;
+    setRemovingDiscord(`${guildId}/${channelId}`);
+    setError(null);
+    try {
+      await removeDiscordChannel(id, guildId, channelId);
+      setDiscordGuilds(prev => prev.map(g => {
+        if (g.guild_id !== guildId) return g;
+        const updated = g.channel_ids.filter(c => c !== channelId);
+        return { ...g, channel_ids: updated };
+      }).filter(g => g.channel_ids.length > 0));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to remove Discord channel');
+    } finally {
+      setRemovingDiscord(null);
     }
   };
 
@@ -506,6 +567,100 @@ export default function SourceDetail() {
               </div>
             )}
           </div>
+
+          {/* Discord channel management */}
+          {isDiscord && (
+            <div style={card}>
+              <h2 style={sectionTitle}>
+                <MessageSquare size={16} color={colors.accent} />
+                Discord Channels ({discordGuilds.reduce((n, g) => n + g.channel_ids.length, 0)})
+              </h2>
+
+              {/* Add channel form */}
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16 }}>
+                <input
+                  style={{ ...inputStyle, flex: 1 }}
+                  value={newGuildId}
+                  onChange={e => setNewGuildId(e.target.value)}
+                  placeholder="Guild ID"
+                  disabled={addingDiscord}
+                />
+                <input
+                  style={{ ...inputStyle, flex: 1 }}
+                  value={newDiscordChannelId}
+                  onChange={e => setNewDiscordChannelId(e.target.value)}
+                  placeholder="Channel ID"
+                  onKeyDown={e => e.key === 'Enter' && handleAddDiscord()}
+                  disabled={addingDiscord}
+                />
+                <button
+                  style={{ ...btnPrimary, opacity: addingDiscord ? 0.6 : 1 }}
+                  onClick={handleAddDiscord}
+                  disabled={addingDiscord || !newGuildId.trim() || !newDiscordChannelId.trim()}
+                >
+                  {addingDiscord ? <Loader size={14} /> : <Plus size={14} />}
+                  Add
+                </button>
+              </div>
+
+              {/* Guild/channel list */}
+              {discordGuilds.length === 0 ? (
+                <div style={{ textAlign: 'center', color: colors.textMuted, padding: 20, fontSize: 13 }}>
+                  No Discord channels monitored. Add a guild and channel ID to start collecting.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {discordGuilds.map(guild => (
+                    <div key={guild.guild_id}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Guild: {guild.guild_id}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {guild.channel_ids.map(chId => (
+                          <div
+                            key={chId}
+                            style={{
+                              background: colors.bgSurface,
+                              border: `1px solid ${colors.border}`,
+                              borderRadius: 6,
+                              padding: '10px 14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <Hash size={13} color={colors.accent} />
+                              <span style={{ fontFamily: font.mono, fontSize: 13 }}>{chId}</span>
+                            </div>
+                            <button
+                              style={{
+                                ...btnDanger,
+                                opacity: removingDiscord === `${guild.guild_id}/${chId}` ? 0.5 : 1,
+                              }}
+                              onClick={() => handleRemoveDiscord(guild.guild_id, chId)}
+                              disabled={removingDiscord === `${guild.guild_id}/${chId}`}
+                              title="Remove channel"
+                              onMouseEnter={e => {
+                                (e.currentTarget as HTMLButtonElement).style.color = colors.critical;
+                                (e.currentTarget as HTMLButtonElement).style.borderColor = colors.critical;
+                              }}
+                              onMouseLeave={e => {
+                                (e.currentTarget as HTMLButtonElement).style.color = colors.textMuted;
+                                (e.currentTarget as HTMLButtonElement).style.borderColor = colors.border;
+                              }}
+                            >
+                              {removingDiscord === `${guild.guild_id}/${chId}` ? <Loader size={14} /> : <Trash2 size={14} />}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Channel management (Telegram only) */}
           {isTelegram && (

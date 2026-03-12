@@ -77,6 +77,8 @@ _CONNECTOR_MAP = {
     "paste_site": "darkdisco.discovery.connectors.paste_site:PasteSiteConnector",
     "forum": "darkdisco.discovery.connectors.forum:ForumConnector",
     "telegram": "darkdisco.discovery.connectors.telegram:TelegramConnector",
+    "telegram_intel": "darkdisco.discovery.connectors.telegram:TelegramConnector",
+    "discord": "darkdisco.discovery.connectors.discord:DiscordConnector",
     "breach_db": "darkdisco.discovery.connectors.breach_db:BreachDBConnector",
     "ransomware_blog": "darkdisco.discovery.connectors.ransomware_blog:RansomwareBlogConnector",
     "ransomware_aggregator": "darkdisco.discovery.connectors.ransomware_aggregator:RansomwareAggregatorConnector",

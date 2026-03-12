@@ -53,6 +53,8 @@ class SourceType(str, enum.Enum):
     forum = "forum"
     marketplace = "marketplace"
     telegram = "telegram"
+    telegram_intel = "telegram_intel"
+    discord = "discord"
     breach_db = "breach_db"
     ransomware_blog = "ransomware_blog"
     ransomware_aggregator = "ransomware_aggregator"

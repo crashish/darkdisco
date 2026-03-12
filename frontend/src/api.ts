@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, PollTriggerResult, FindingTrend } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats,
@@ -133,4 +133,21 @@ export async function fetchSourceFindingsTrend(sourceId: string, days: number = 
     count: Math.floor(Math.random() * 6) + 1,
   }));
   return apiFetch(`/sources/${sourceId}/findings/trend?days=${days}`, mockTrend);
+}
+
+export async function fetchDiscordChannels(sourceId: string): Promise<DiscordGuildChannel[]> {
+  return apiFetch(`/sources/${sourceId}/discord-channels`, []);
+}
+
+export async function addDiscordChannel(sourceId: string, guildId: string, channelId: string): Promise<DiscordGuildChannel> {
+  return apiFetch(`/sources/${sourceId}/discord-channels`, { guild_id: guildId, channel_ids: [channelId] }, {
+    method: 'POST',
+    body: JSON.stringify({ guild_id: guildId, channel_id: channelId }),
+  });
+}
+
+export async function removeDiscordChannel(sourceId: string, guildId: string, channelId: string): Promise<{ guild_id: string; removed_channel: string }> {
+  return apiFetch(`/sources/${sourceId}/discord-channels/${guildId}/${channelId}`, { guild_id: guildId, removed_channel: channelId }, {
+    method: 'DELETE',
+  });
 }

@@ -16,6 +16,8 @@ const sourceLabels: Record<string, string> = {
   tor_forum: 'Tor Forum',
   paste_site: 'Paste Site',
   telegram: 'Telegram',
+  telegram_intel: 'Telegram Intel',
+  discord: 'Discord',
   breach_db: 'Breach Database',
   ransomware_blog: 'Ransomware Blog',
   stealer_log: 'Stealer Log',

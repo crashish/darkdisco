@@ -367,6 +367,25 @@ class ChannelRemoveOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Discord Guild/Channel Management
+# ---------------------------------------------------------------------------
+
+class DiscordGuildChannelOut(BaseModel):
+    guild_id: str
+    channel_ids: list[str]
+
+
+class DiscordChannelAdd(BaseModel):
+    guild_id: str
+    channel_id: str
+
+
+class DiscordChannelRemoveOut(BaseModel):
+    guild_id: str
+    removed_channel: str
+
+
+# ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 
