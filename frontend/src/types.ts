@@ -56,11 +56,17 @@ export interface FindingDetail extends Finding {
   metadata?: Record<string, unknown> | null;
 }
 
+export interface HighlightSpan {
+  start: number;
+  end: number;
+}
+
 export interface MatchedTerm {
   term_id: number;
   term_type: string;
   value: string;
   context?: string;
+  highlights?: HighlightSpan[];
 }
 
 export interface EnrichmentData {

@@ -357,7 +357,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
     """Match raw mentions against all active watch terms, enrich, filter, create findings."""
     from darkdisco.common.models import Finding, Source, WatchTerm
     from darkdisco.discovery.connectors.base import RawMention
-    from darkdisco.discovery.matcher import match_mention
+    from darkdisco.discovery.matcher import match_mention, recompute_highlights
     from darkdisco.enrichment import enrich_and_filter
 
     session = _get_sync_session()
@@ -446,6 +446,11 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 # show only the file(s) that contain the matched terms
                 raw_content = _attributed_raw_content(mention, result.matched_terms)
 
+                # Recompute highlight offsets against the actual stored raw_content
+                matched_terms_with_highlights = recompute_highlights(
+                    result.matched_terms, raw_content,
+                ) if raw_content else result.matched_terms
+
                 # Build candidate finding data for enrichment
                 candidate = {
                     "institution_id": result.institution_id,
@@ -456,7 +461,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                     "raw_content": raw_content,
                     "content_hash": content_hash,
                     "source_url": mention.source_url,
-                    "matched_terms": result.matched_terms,
+                    "matched_terms": matched_terms_with_highlights,
                     "metadata": mention.metadata,
                 }
 
@@ -488,7 +493,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                     raw_content=raw_content,
                     content_hash=content_hash,
                     source_url=mention.source_url,
-                    matched_terms=result.matched_terms,
+                    matched_terms=matched_terms_with_highlights,
                     tags=[source.source_type.value],
                     metadata_=merged_metadata,
                     discovered_at=mention.discovered_at,

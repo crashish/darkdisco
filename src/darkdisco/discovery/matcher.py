@@ -44,35 +44,38 @@ def match_mention(mention: RawMention, watch_terms: list[WatchTerm]) -> list[Mat
             if not term.case_sensitive:
                 value = value.lower()
 
+            highlights: list[dict] = []
+
             if term.term_type == WatchTermType.regex:
                 try:
                     flags = 0 if term.case_sensitive else re.IGNORECASE
-                    if re.search(value, raw_text, flags):
-                        matched.append(_term_dict(term))
+                    highlights = _find_all_spans(value, raw_text, flags=flags)
+                    if highlights:
+                        matched.append(_term_dict(term, highlights))
                 except re.error:
                     logger.warning("Invalid regex in watch term %s: %s", term.id, value)
             elif term.term_type == WatchTermType.bin_range:
-                # BIN ranges are 6-8 digit prefixes
-                if re.search(rf"\b{re.escape(value)}\d{{2,10}}\b", searchable):
-                    matched.append(_term_dict(term))
+                pattern = rf"\b{re.escape(value)}\d{{2,10}}\b"
+                highlights = _find_all_spans(pattern, raw_text, flags=re.IGNORECASE)
+                if highlights:
+                    matched.append(_term_dict(term, highlights))
             elif term.term_type == WatchTermType.domain:
-                # Domain matching: look for the domain as a distinct token,
-                # not as a substring of unrelated words.
-                # Matches: "chase.com", "www.chase.com", "https://chase.com/path"
-                # Avoids: "purchased" matching "chase" inside it
                 escaped = re.escape(value)
-                if re.search(rf"(?:^|[\s//@.:])({escaped})(?:$|[\s/,;:)\]>]|/)", searchable):
-                    matched.append(_term_dict(term))
+                pattern = rf"(?:^|[\s//@.:])({escaped})(?:$|[\s/,;:)\]>]|/)"
+                highlights = _find_all_spans(pattern, raw_text, flags=re.IGNORECASE, group=1)
+                if highlights:
+                    matched.append(_term_dict(term, highlights))
             elif term.term_type == WatchTermType.institution_name:
-                # Institution name: word-boundary match to avoid partial matches
-                # e.g. "First National Bank" should not match "unfirst"
                 escaped = re.escape(value)
-                if re.search(rf"\b{escaped}\b", searchable):
-                    matched.append(_term_dict(term))
+                pattern = rf"\b{escaped}\b"
+                highlights = _find_all_spans(pattern, raw_text, flags=re.IGNORECASE)
+                if highlights:
+                    matched.append(_term_dict(term, highlights))
             else:
-                # keyword, executive_name, routing_number: substring match
-                if value in searchable:
-                    matched.append(_term_dict(term))
+                # keyword, executive_name, routing_number: find all occurrences
+                highlights = _find_all_substring(value, searchable)
+                if highlights:
+                    matched.append(_term_dict(term, highlights))
 
         if matched:
             results.append(MatchResult(
@@ -84,12 +87,60 @@ def match_mention(mention: RawMention, watch_terms: list[WatchTerm]) -> list[Mat
     return results
 
 
-def _term_dict(term: WatchTerm) -> dict:
-    return {
+def _find_all_spans(
+    pattern: str, text: str, *, flags: int = 0, group: int = 0,
+) -> list[dict]:
+    """Find all regex matches and return their character spans."""
+    spans = []
+    for m in re.finditer(pattern, text, flags):
+        start, end = m.span(group)
+        spans.append({"start": start, "end": end})
+    return spans
+
+
+def _find_all_substring(value_lower: str, searchable: str) -> list[dict]:
+    """Find all substring occurrences in the lowercased text."""
+    spans = []
+    start = 0
+    while True:
+        idx = searchable.find(value_lower, start)
+        if idx == -1:
+            break
+        spans.append({"start": idx, "end": idx + len(value_lower)})
+        start = idx + 1
+    return spans
+
+
+def _term_dict(term: WatchTerm, highlights: list[dict] | None = None) -> dict:
+    d: dict = {
         "term_id": term.id,
         "term_type": term.term_type.value,
         "value": term.value,
     }
+    if highlights:
+        d["highlights"] = highlights
+    return d
+
+
+def recompute_highlights(matched_terms: list[dict], raw_content: str) -> list[dict]:
+    """Recompute highlight offsets against the actual stored raw_content.
+
+    The matcher computes offsets against the full mention text, but the finding
+    may store different content (e.g. attributed to specific extracted files).
+    This recalculates offsets so they match what's displayed.
+    """
+    result = []
+    for term in matched_terms:
+        value = term["value"]
+        # Case-insensitive search for the term value in raw_content
+        highlights = _find_all_substring(value.lower(), raw_content.lower())
+        updated = dict(term)
+        if highlights:
+            updated["highlights"] = highlights
+        else:
+            updated.pop("highlights", None)
+        result.append(updated)
+    return result
 
 
 def _severity_hint(matched: list[dict]) -> str:

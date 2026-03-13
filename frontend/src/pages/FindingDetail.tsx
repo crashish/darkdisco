@@ -4,7 +4,7 @@ import { fetchFinding, updateFindingStatus } from '../api';
 import { colors, card, font, statusColor } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
-import type { FindingDetail as FindingDetailType, FindingStatus } from '../types';
+import type { FindingDetail as FindingDetailType, FindingStatus, HighlightSpan } from '../types';
 import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
@@ -39,6 +39,65 @@ const valueStyle: CSSProperties = {
   fontSize: 13,
   color: colors.text,
 };
+
+function HighlightedContent({ text, matchedTerms }: { text: string; matchedTerms: { term_type: string; highlights?: HighlightSpan[] }[] | null }) {
+  // Merge all highlight spans from all matched terms
+  const spans: { start: number; end: number }[] = [];
+  if (matchedTerms) {
+    for (const term of matchedTerms) {
+      if (term.highlights) {
+        for (const h of term.highlights) {
+          spans.push({ start: h.start, end: h.end });
+        }
+      }
+    }
+  }
+
+  if (spans.length === 0) return <>{text}</>;
+
+  // Sort by start position, then merge overlapping spans
+  spans.sort((a, b) => a.start - b.start);
+  const merged: { start: number; end: number }[] = [spans[0]];
+  for (let i = 1; i < spans.length; i++) {
+    const prev = merged[merged.length - 1];
+    if (spans[i].start <= prev.end) {
+      prev.end = Math.max(prev.end, spans[i].end);
+    } else {
+      merged.push({ ...spans[i] });
+    }
+  }
+
+  // Build segments
+  const parts: JSX.Element[] = [];
+  let cursor = 0;
+  for (let i = 0; i < merged.length; i++) {
+    const { start, end } = merged[i];
+    const clampedStart = Math.max(0, Math.min(start, text.length));
+    const clampedEnd = Math.max(0, Math.min(end, text.length));
+    if (cursor < clampedStart) {
+      parts.push(<span key={`t${i}`}>{text.slice(cursor, clampedStart)}</span>);
+    }
+    if (clampedStart < clampedEnd) {
+      parts.push(
+        <mark key={`h${i}`} style={{
+          background: 'rgba(99, 102, 241, 0.25)',
+          color: colors.text,
+          borderRadius: 2,
+          padding: '1px 0',
+          borderBottom: `2px solid ${colors.accent}`,
+        }}>
+          {text.slice(clampedStart, clampedEnd)}
+        </mark>
+      );
+    }
+    cursor = clampedEnd;
+  }
+  if (cursor < text.length) {
+    parts.push(<span key="tail">{text.slice(cursor)}</span>);
+  }
+
+  return <>{parts}</>;
+}
 
 export default function FindingDetail() {
   const { id } = useParams<{ id: string }>();
@@ -252,7 +311,7 @@ export default function FindingDetail() {
                 background: colors.bgSurface, padding: 16, borderRadius: 6,
                 border: `1px solid ${colors.border}`, margin: 0, maxHeight: 600, overflow: 'auto',
               }}>
-                {finding.raw_content}
+                <HighlightedContent text={finding.raw_content} matchedTerms={finding.matched_terms} />
               </pre>
               {finding.source_url && (
                 <div style={{ marginTop: 8 }}>
