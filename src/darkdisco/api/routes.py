@@ -92,6 +92,32 @@ _VALID_TRANSITIONS: dict[FindingStatus, set[FindingStatus]] = {
 }
 
 
+def _extract_archive_file_list(
+    metadata: dict | None, search: str | None = None
+) -> list[dict]:
+    """Pull extracted_file_contents from metadata, optionally filter by search term."""
+    if not metadata:
+        return []
+    files = metadata.get("extracted_file_contents")
+    if not files or not isinstance(files, list):
+        return []
+
+    result = []
+    needle = search.lower() if search else None
+    for f in files:
+        filename = f.get("filename", "")
+        content = f.get("content", "")
+        if needle and needle not in filename.lower() and needle not in content.lower():
+            continue
+        result.append({
+            "filename": filename,
+            "size": len(content),
+            "preview": content[:500] if content else "",
+            "content": content,
+        })
+    return result
+
+
 # ---- Health ----------------------------------------------------------------
 
 @router.get("/health")
@@ -891,6 +917,24 @@ async def get_mention(
     return mention
 
 
+@protected.get("/mentions/{mention_id}/archive-contents")
+async def mention_archive_contents(
+    mention_id: str,
+    q: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """Return per-file extracted archive contents from a mention's metadata."""
+    result = await db.execute(
+        select(RawMention).where(RawMention.id == mention_id)
+    )
+    mention = result.scalar_one_or_none()
+    if not mention:
+        raise HTTPException(404, "Mention not found")
+
+    files = _extract_archive_file_list(mention.metadata_, q)
+    return {"mention_id": mention_id, "files": files, "total": len(files)}
+
+
 @protected.post("/mentions/{mention_id}/promote", response_model=FindingOut)
 async def promote_mention(
     mention_id: str,
@@ -1017,6 +1061,21 @@ async def search_findings(
     )
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+@protected.get("/findings/{finding_id}/archive-contents")
+async def finding_archive_contents(
+    finding_id: str,
+    q: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """Return per-file extracted archive contents from a finding's metadata."""
+    finding = await db.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(404, "Finding not found")
+
+    files = _extract_archive_file_list(finding.metadata_, q)
+    return {"finding_id": finding_id, "files": files, "total": len(files)}
 
 
 @protected.get("/findings/{finding_id}", response_model=FindingOut)

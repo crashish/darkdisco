@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { fetchMentions, fetchSources, fetchInstitutions, promoteMention } from '../api';
+import { fetchMentions, fetchSources, fetchInstitutions, promoteMention, fetchArchiveContents } from '../api';
 import { colors, card, font } from '../theme';
 import type { RawMention, Source, Institution, Severity } from '../types';
+import ArchiveContents from '../components/ArchiveContents';
+import type { ArchiveFile } from '../components/ArchiveContents';
 import { MessageSquare, Filter, Search, ChevronDown, ChevronUp, ExternalLink, ArrowRight, X, Check } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
@@ -28,6 +30,7 @@ export default function Mentions() {
   const [promoteId, setPromoteId] = useState<string | null>(null);
   const [promoteForm, setPromoteForm] = useState({ institution_id: '', title: '', severity: 'medium' as Severity, summary: '' });
   const [promoting, setPromoting] = useState(false);
+  const [archiveFilesMap, setArchiveFilesMap] = useState<Record<string, ArchiveFile[]>>({});
 
   const loadMentions = useCallback(async () => {
     setLoading(true);
@@ -49,6 +52,27 @@ export default function Mentions() {
     fetchSources().then(setSources);
     fetchInstitutions().then(setInstitutions);
   }, []);
+
+  useEffect(() => {
+    if (!expandedId || archiveFilesMap[expandedId] !== undefined) return;
+    // Try extracting from local metadata first (already loaded)
+    const mention = mentions.find(m => m.id === expandedId);
+    const localFiles = (mention?.metadata as Record<string, unknown> | undefined)?.extracted_file_contents;
+    if (Array.isArray(localFiles) && localFiles.length > 0) {
+      const mapped = localFiles.map((f: Record<string, string>) => ({
+        filename: f.filename || '',
+        size: (f.content || '').length,
+        preview: (f.content || '').slice(0, 500),
+        content: f.content || '',
+      }));
+      setArchiveFilesMap(prev => ({ ...prev, [expandedId]: mapped }));
+      return;
+    }
+    // Fallback to API call
+    fetchArchiveContents('mentions', expandedId)
+      .then(r => setArchiveFilesMap(prev => ({ ...prev, [expandedId]: r.files })))
+      .catch(() => setArchiveFilesMap(prev => ({ ...prev, [expandedId]: [] })));
+  }, [expandedId]);
 
   const handlePromote = async (mentionId: string) => {
     if (!promoteForm.institution_id || !promoteForm.title) return;
@@ -243,6 +267,11 @@ export default function Mentions() {
                     }}>
                       {mention.content}
                     </pre>
+
+                    {/* Archive Contents (if present) */}
+                    {archiveFilesMap[mention.id] && archiveFilesMap[mention.id].length > 0 && (
+                      <ArchiveContents files={archiveFilesMap[mention.id]} />
+                    )}
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: colors.textMuted }}>
                       <span>ID: {mention.id}</span>

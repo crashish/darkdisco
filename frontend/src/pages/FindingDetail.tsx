@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchFinding, updateFindingStatus } from '../api';
+import { fetchFinding, updateFindingStatus, fetchArchiveContents } from '../api';
 import { colors, card, font, statusColor } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
+import ArchiveContents from '../components/ArchiveContents';
+import type { ArchiveFile } from '../components/ArchiveContents';
 import type { FindingDetail as FindingDetailType, FindingStatus, HighlightSpan } from '../types';
 import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash } from 'lucide-react';
 import type { CSSProperties } from 'react';
@@ -105,11 +107,28 @@ export default function FindingDetail() {
   const [finding, setFinding] = useState<FindingDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const [archiveFiles, setArchiveFiles] = useState<ArchiveFile[]>([]);
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    fetchFinding(id).then(f => { setFinding(f); setLoading(false); });
+    fetchFinding(id).then(f => {
+      setFinding(f);
+      setLoading(false);
+      // Extract archive files from metadata if available
+      const localFiles = (f.metadata as Record<string, unknown> | undefined)?.extracted_file_contents;
+      if (Array.isArray(localFiles) && localFiles.length > 0) {
+        setArchiveFiles(localFiles.map((ef: Record<string, string>) => ({
+          filename: ef.filename || '',
+          size: (ef.content || '').length,
+          preview: (ef.content || '').slice(0, 500),
+          content: ef.content || '',
+        })));
+      } else {
+        // Fallback to API
+        fetchArchiveContents('findings', id).then(r => setArchiveFiles(r.files)).catch(() => {});
+      }
+    });
   }, [id]);
 
   const handleStatusChange = async (status: FindingStatus) => {
@@ -327,6 +346,9 @@ export default function FindingDetail() {
               )}
             </div>
           )}
+
+          {/* Archive Contents */}
+          {archiveFiles.length > 0 && <ArchiveContents files={archiveFiles} />}
 
           {/* Matched Terms */}
           {finding.matched_terms && finding.matched_terms.length > 0 && (

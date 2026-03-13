@@ -176,6 +176,13 @@ export async function fetchMentions(params?: {
   return apiFetch(`/mentions${q ? '?' + q : ''}`, fallback);
 }
 
+export async function fetchArchiveContents(
+  type: 'mentions' | 'findings',
+  id: string,
+): Promise<{ files: { filename: string; size: number; preview: string; content: string }[]; total: number }> {
+  return apiFetch(`/${type}/${id}/archive-contents`, { files: [], total: 0 });
+}
+
 export async function promoteMention(mentionId: string, body: {
   institution_id: string;
   title: string;
