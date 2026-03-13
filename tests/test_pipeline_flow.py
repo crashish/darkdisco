@@ -574,3 +574,97 @@ class TestEndToEndPipeline:
         # Heavy boilerplate + generic short term should push score high
         assert result.fp_score > 0.5
         assert result.recommendation in ("downgrade", "auto_dismiss")
+
+
+class TestAttributedRawContent:
+    """Test that archive findings show only the matching file's content."""
+
+    def test_no_extracted_files_returns_full_content(self):
+        """Without extracted files, raw_content should be the full mention content."""
+        from darkdisco.pipeline.worker import _attributed_raw_content
+
+        class FakeMention:
+            content = "original message text"
+            metadata = {}
+
+        mention = FakeMention()
+        terms = [{"term_type": "domain", "value": "bank.com"}]
+        result = _attributed_raw_content(mention, terms)
+        assert result == "original message text"
+
+    def test_returns_only_matching_file(self):
+        """When multiple files extracted, only the one containing the match is shown."""
+        from darkdisco.pipeline.worker import _attributed_raw_content
+
+        class FakeMention:
+            content = (
+                "original message"
+                "\n\n--- Extracted file: passwords.txt ---\n\n"
+                "URL: https://bank.com/login\nuser:pass"
+                "\n\n--- Extracted file: readme.txt ---\n\n"
+                "This is a readme with no relevant content"
+            )
+            metadata = {
+                "extracted_file_contents": [
+                    {"filename": "passwords.txt", "content": "URL: https://bank.com/login\nuser:pass"},
+                    {"filename": "readme.txt", "content": "This is a readme with no relevant content"},
+                ]
+            }
+
+        mention = FakeMention()
+        terms = [{"term_type": "domain", "value": "bank.com"}]
+        result = _attributed_raw_content(mention, terms)
+        assert "passwords.txt" in result
+        assert "bank.com" in result
+        assert "readme.txt" not in result
+
+    def test_match_in_original_message_returns_original(self):
+        """If the match is in the original message (not extracted files), return original."""
+        from darkdisco.pipeline.worker import _attributed_raw_content
+
+        class FakeMention:
+            content = (
+                "Alert: bank.com credentials found"
+                "\n\n--- Extracted file: data.txt ---\n\n"
+                "some random data without the term"
+            )
+            metadata = {
+                "extracted_file_contents": [
+                    {"filename": "data.txt", "content": "some random data without the term"},
+                ]
+            }
+
+        mention = FakeMention()
+        terms = [{"term_type": "domain", "value": "bank.com"}]
+        result = _attributed_raw_content(mention, terms)
+        assert "bank.com" in result
+        assert "data.txt" not in result
+
+    def test_multiple_files_match(self):
+        """When multiple extracted files match, all matching files are included."""
+        from darkdisco.pipeline.worker import _attributed_raw_content
+
+        class FakeMention:
+            content = (
+                "archive contents"
+                "\n\n--- Extracted file: creds1.txt ---\n\n"
+                "bank.com login data"
+                "\n\n--- Extracted file: creds2.txt ---\n\n"
+                "more bank.com data"
+                "\n\n--- Extracted file: unrelated.txt ---\n\n"
+                "nothing here"
+            )
+            metadata = {
+                "extracted_file_contents": [
+                    {"filename": "creds1.txt", "content": "bank.com login data"},
+                    {"filename": "creds2.txt", "content": "more bank.com data"},
+                    {"filename": "unrelated.txt", "content": "nothing here"},
+                ]
+            }
+
+        mention = FakeMention()
+        terms = [{"term_type": "domain", "value": "bank.com"}]
+        result = _attributed_raw_content(mention, terms)
+        assert "creds1.txt" in result
+        assert "creds2.txt" in result
+        assert "unrelated.txt" not in result

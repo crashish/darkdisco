@@ -251,8 +251,26 @@ def _process_file_mentions(mentions: list) -> list:
                 analysis = analyze_extracted_files(extracted)
                 mention.metadata["file_analysis"] = analysis.to_dict()
 
-                # Append extracted text to mention content for matching
-                if analysis.text_content:
+                # Store per-file text content for accurate finding attribution
+                per_file_texts = []
+                for ef in extracted:
+                    if ef.is_text and ef.content:
+                        try:
+                            text = ef.content.decode("utf-8", errors="replace") if isinstance(ef.content, bytes) else ef.content
+                        except Exception:
+                            continue
+                        if text.strip():
+                            per_file_texts.append({"filename": ef.filename, "content": text})
+                if per_file_texts:
+                    mention.metadata["extracted_file_contents"] = per_file_texts
+
+                # Append extracted text to mention content for matching (per-file separators)
+                if per_file_texts:
+                    parts = [mention.content or ""]
+                    for pf in per_file_texts:
+                        parts.append(f"\n\n--- Extracted file: {pf['filename']} ---\n\n{pf['content']}")
+                    mention.content = "".join(parts)
+                elif analysis.text_content:
                     separator = "\n\n--- Extracted from archive ---\n\n"
                     mention.content = (mention.content or "") + separator + analysis.text_content
 
@@ -292,6 +310,46 @@ def _process_file_mentions(mentions: list) -> list:
                     pass
 
     return mentions
+
+
+def _attributed_raw_content(mention, matched_terms: list[dict]) -> str:
+    """Return raw_content attributed to the specific extracted file(s) that matched.
+
+    If the mention has extracted_file_contents in metadata, find which inner file(s)
+    contain the matched term values and return only those files' content with filename
+    headers. Falls back to the full mention.content if no per-file data or no match
+    found in individual files (e.g., match was in the original message text).
+    """
+    extracted_files = mention.metadata.get("extracted_file_contents")
+    if not extracted_files:
+        return mention.content
+
+    # Collect the term values to search for
+    term_values = [t["value"] for t in matched_terms]
+
+    # Check if the original message (before extraction) contains any match
+    # The original content is everything before the first "--- Extracted file:" separator
+    original_content = (mention.content or "").split("\n\n--- Extracted file:", 1)[0]
+
+    matching_files = []
+    for ef in extracted_files:
+        searchable = ef["content"].lower()
+        for val in term_values:
+            if val.lower() in searchable:
+                matching_files.append(ef)
+                break
+
+    if not matching_files:
+        # Match was in original message text or via regex — return original content
+        return original_content or mention.content
+
+    # Build attributed content: original message + only the matching file(s)
+    parts = []
+    if original_content.strip():
+        parts.append(original_content)
+    for mf in matching_files:
+        parts.append(f"\n\n--- Extracted file: {mf['filename']} ---\n\n{mf['content']}")
+    return "".join(parts)
 
 
 @app.task(name="darkdisco.pipeline.worker.run_matching")
@@ -384,14 +442,18 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 )
 
             for result in match_results:
+                # Determine raw_content: if mention has extracted files,
+                # show only the file(s) that contain the matched terms
+                raw_content = _attributed_raw_content(mention, result.matched_terms)
+
                 # Build candidate finding data for enrichment
                 candidate = {
                     "institution_id": result.institution_id,
                     "source_id": source_id,
                     "severity": result.severity_hint,
                     "title": mention.title or f"Mention from {source.name}",
-                    "summary": mention.content[:1000] if mention.content else None,
-                    "raw_content": mention.content,
+                    "summary": raw_content[:1000] if raw_content else None,
+                    "raw_content": raw_content,
                     "content_hash": content_hash,
                     "source_url": mention.source_url,
                     "matched_terms": result.matched_terms,
@@ -422,8 +484,8 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                     source_id=source_id,
                     severity=severity,
                     title=mention.title or f"Mention from {source.name}",
-                    summary=mention.content[:1000] if mention.content else None,
-                    raw_content=mention.content,
+                    summary=raw_content[:1000] if raw_content else None,
+                    raw_content=raw_content,
                     content_hash=content_hash,
                     source_url=mention.source_url,
                     matched_terms=result.matched_terms,
