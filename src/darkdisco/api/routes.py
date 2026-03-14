@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -42,6 +43,7 @@ from darkdisco.api.schemas import (
     InstitutionUpdate,
     NotificationMarkRead,
     NotificationOut,
+    PaginatedMentionsOut,
     PipelineStatus,
     RawMentionOut,
     RawMentionPromote,
@@ -60,6 +62,7 @@ from darkdisco.common.database import get_session
 from darkdisco.common.models import (
     AlertRule,
     Client,
+    ExtractedFile,
     Finding,
     FindingStatus,
     Institution,
@@ -71,6 +74,8 @@ from darkdisco.common.models import (
     User,
     WatchTerm,
 )
+
+logger = logging.getLogger(__name__)
 
 # Public routes (no auth required) — health check and login only
 router = APIRouter()
@@ -90,6 +95,35 @@ _VALID_TRANSITIONS: dict[FindingStatus, set[FindingStatus]] = {
     FindingStatus.resolved: {FindingStatus.reviewing},  # reopen
     FindingStatus.false_positive: {FindingStatus.reviewing},  # reopen
 }
+
+
+def _extract_archive_file_list(
+    metadata: dict | None, search: str | None = None
+) -> list[dict]:
+    """Pull extracted_file_contents from metadata, optionally filter by search term.
+
+    Legacy fallback: used when ExtractedFile rows don't exist for a mention.
+    """
+    if not metadata:
+        return []
+    files = metadata.get("extracted_file_contents")
+    if not files or not isinstance(files, list):
+        return []
+
+    result = []
+    needle = search.lower() if search else None
+    for f in files:
+        filename = f.get("filename", "")
+        content = f.get("content", "")
+        if needle and needle not in filename.lower() and needle not in content.lower():
+            continue
+        result.append({
+            "filename": filename,
+            "size": len(content),
+            "preview": content[:500] if content else "",
+            "content": content,
+        })
+    return result
 
 
 # ---- Health ----------------------------------------------------------------
@@ -287,6 +321,18 @@ async def delete_client(
     await db.commit()
 
 
+# ---- Trapline sync helper --------------------------------------------------
+
+
+def _trigger_trapline_sync(institution_id: str) -> None:
+    """Dispatch a Celery task to sync an institution to trapline's watchlist."""
+    try:
+        from darkdisco.pipeline.worker import sync_institution_to_trapline
+        sync_institution_to_trapline.delay(institution_id)
+    except Exception:
+        logger.warning("Failed to dispatch trapline sync for %s", institution_id, exc_info=True)
+
+
 # ---- Institutions ----------------------------------------------------------
 
 @protected.get("/institutions", response_model=list[InstitutionOut])
@@ -317,6 +363,7 @@ async def create_institution(
     db.add(inst)
     await db.commit()
     await db.refresh(inst)
+    _trigger_trapline_sync(inst.id)
     return inst
 
 
@@ -344,6 +391,7 @@ async def update_institution(
         setattr(inst, key, val)
     await db.commit()
     await db.refresh(inst)
+    _trigger_trapline_sync(inst.id)
     return inst
 
 
@@ -458,10 +506,11 @@ async def list_sources(
     for s in sources:
         health = "offline"
         if s.enabled and s.last_polled_at:
-            age_min = (now - s.last_polled_at).total_seconds() / 60
+            age_sec = (now - s.last_polled_at).total_seconds()
+            stale_threshold = max(s.poll_interval_seconds * 2, 1800)
             if s.last_error:
                 health = "degraded"
-            elif age_min < 30:
+            elif age_sec < stale_threshold:
                 health = "healthy"
             else:
                 health = "degraded"
@@ -506,10 +555,11 @@ async def get_source(
     now = datetime.now(timezone.utc)
     health = "offline"
     if source.enabled and source.last_polled_at:
-        age_min = (now - source.last_polled_at).total_seconds() / 60
+        age_sec = (now - source.last_polled_at).total_seconds()
+        stale_threshold = max(source.poll_interval_seconds * 2, 1800)
         if source.last_error:
             health = "degraded"
-        elif age_min < 30:
+        elif age_sec < stale_threshold:
             health = "healthy"
         else:
             health = "degraded"
@@ -546,10 +596,11 @@ async def update_source(
     now = datetime.now(timezone.utc)
     health = "offline"
     if source.enabled and source.last_polled_at:
-        age_min = (now - source.last_polled_at).total_seconds() / 60
+        age_sec = (now - source.last_polled_at).total_seconds()
+        stale_threshold = max(source.poll_interval_seconds * 2, 1800)
         if source.last_error:
             health = "degraded"
-        elif age_min < 30:
+        elif age_sec < stale_threshold:
             health = "healthy"
         else:
             health = "degraded"
@@ -843,36 +894,69 @@ async def source_findings_trend(
 
 # ---- Raw Mentions ----------------------------------------------------------
 
-@protected.get("/mentions", response_model=list[RawMentionOut])
+@protected.get("/mentions", response_model=PaginatedMentionsOut)
 async def list_mentions(
     source_id: str | None = None,
     source_type: str | None = None,
     promoted: bool | None = None,
+    channel: str | None = None,
+    has_media: bool | None = None,
     q: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_session),
 ):
-    """Browse raw collected mentions. Filter by source, promotion status, or search content."""
-    stmt = (
-        select(RawMention)
-        .options(selectinload(RawMention.source))
-        .order_by(RawMention.collected_at.desc())
-    )
+    """Browse raw collected mentions. Filter by source, channel, media, promotion status, or search content."""
+    base = select(RawMention)
     if source_id is not None:
-        stmt = stmt.where(RawMention.source_id == source_id)
+        base = base.where(RawMention.source_id == source_id)
     if source_type is not None:
-        stmt = stmt.join(Source).where(Source.source_type == source_type)
+        base = base.join(Source).where(Source.source_type == source_type)
     if promoted is not None:
         if promoted:
-            stmt = stmt.where(RawMention.promoted_to_finding_id.isnot(None))
+            base = base.where(RawMention.promoted_to_finding_id.isnot(None))
         else:
-            stmt = stmt.where(RawMention.promoted_to_finding_id.is_(None))
+            base = base.where(RawMention.promoted_to_finding_id.is_(None))
+    if channel:
+        base = base.where(RawMention.metadata_["channel_ref"].astext == channel)
+    if has_media is not None:
+        if has_media:
+            base = base.where(RawMention.metadata_["has_media"].astext == "true")
+        else:
+            base = base.where(
+                RawMention.metadata_["has_media"].is_(None)
+                | (RawMention.metadata_["has_media"].astext != "true")
+            )
     if q:
-        stmt = stmt.where(RawMention.content.ilike(f"%{q}%"))
-    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+        base = base.where(RawMention.content.ilike(f"%{q}%"))
+
+    # Total count
+    count_result = await db.execute(select(func.count()).select_from(base.subquery()))
+    total = count_result.scalar() or 0
+
+    # Paginated query
+    stmt = (
+        base.options(selectinload(RawMention.source))
+        .order_by(RawMention.collected_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     result = await db.execute(stmt)
-    return result.scalars().all()
+    mentions = result.scalars().all()
+    return PaginatedMentionsOut(items=mentions, total=total, page=page, page_size=page_size)
+
+
+@protected.get("/mentions/channels")
+async def list_mention_channels(db: AsyncSession = Depends(get_session)):
+    """Return distinct channel_ref values from raw_mentions metadata."""
+    stmt = select(
+        RawMention.metadata_["channel_ref"].astext.label("channel"),
+        func.count(RawMention.id).label("count"),
+    ).where(
+        RawMention.metadata_["channel_ref"].isnot(None)
+    ).group_by("channel").order_by(func.count(RawMention.id).desc())
+    rows = (await db.execute(stmt)).all()
+    return [{"channel": r.channel, "count": r.count} for r in rows]
 
 
 @protected.get("/mentions/{mention_id}", response_model=RawMentionOut)
@@ -889,6 +973,101 @@ async def get_mention(
     if not mention:
         raise HTTPException(404, "Mention not found")
     return mention
+
+
+@protected.get("/mentions/{mention_id}/archive-contents")
+async def mention_archive_contents(
+    mention_id: str,
+    q: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """Return per-file extracted archive contents for a mention.
+
+    Queries the extracted_files table first (with FTS for search), falling back
+    to legacy JSONB metadata if no ExtractedFile rows exist.
+    """
+    result = await db.execute(
+        select(RawMention).where(RawMention.id == mention_id)
+    )
+    mention = result.scalar_one_or_none()
+    if not mention:
+        raise HTTPException(404, "Mention not found")
+
+    # Try normalized ExtractedFile table first
+    stmt = select(ExtractedFile).where(ExtractedFile.mention_id == mention_id)
+    if q:
+        stmt = stmt.where(
+            or_(
+                ExtractedFile.filename.ilike(f"%{q}%"),
+                ExtractedFile.content_tsvector.match(q),
+            )
+        )
+    ef_result = await db.execute(stmt)
+    extracted_rows = ef_result.scalars().all()
+
+    if extracted_rows:
+        files = [
+            {
+                "filename": ef.filename,
+                "size": ef.size or 0,
+                "preview": (ef.text_content or "")[:500],
+                "content": ef.text_content or "",
+                "s3_key": ef.s3_key,
+                "sha256": ef.sha256,
+                "extension": ef.extension,
+                "is_text": ef.is_text,
+            }
+            for ef in extracted_rows
+        ]
+    else:
+        # Fallback to legacy JSONB metadata
+        files = _extract_archive_file_list(mention.metadata_, q)
+
+    return {"mention_id": mention_id, "files": files, "total": len(files)}
+
+
+@protected.get("/extracted-files/search")
+async def search_extracted_files(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_session),
+):
+    """Full-text search across all extracted file contents using PostgreSQL tsquery."""
+    stmt = (
+        select(ExtractedFile)
+        .where(ExtractedFile.content_tsvector.match(q))
+        .order_by(ExtractedFile.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    count_stmt = (
+        select(func.count())
+        .select_from(ExtractedFile)
+        .where(ExtractedFile.content_tsvector.match(q))
+    )
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    return {
+        "query": q,
+        "total": total,
+        "files": [
+            {
+                "id": ef.id,
+                "mention_id": ef.mention_id,
+                "filename": ef.filename,
+                "size": ef.size or 0,
+                "extension": ef.extension,
+                "is_text": ef.is_text,
+                "preview": (ef.text_content or "")[:500],
+                "s3_key": ef.s3_key,
+            }
+            for ef in rows
+        ],
+    }
 
 
 @protected.post("/mentions/{mention_id}/promote", response_model=FindingOut)
@@ -937,6 +1116,167 @@ async def promote_mention(
         .where(Finding.id == finding.id)
     )
     return result.scalar_one()
+
+
+# ---- Mention Files ---------------------------------------------------------
+
+@protected.get("/mentions/{mention_id}/file")
+async def get_mention_file(
+    mention_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """Serve the original file attached to a mention from S3."""
+    import boto3
+    from botocore.config import Config
+    from fastapi.responses import StreamingResponse
+    from darkdisco.config import settings
+
+    mention = (await db.execute(
+        select(RawMention).where(RawMention.id == mention_id)
+    )).scalar_one_or_none()
+    if not mention:
+        raise HTTPException(404, "Mention not found")
+
+    meta = mention.metadata_ or {}
+    s3_key = meta.get("s3_key")
+    if not s3_key:
+        raise HTTPException(404, "No file stored for this mention")
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=settings.s3_endpoint,
+        aws_access_key_id=settings.s3_access_key,
+        aws_secret_access_key=settings.s3_secret_key,
+        config=Config(signature_version="s3v4"),
+    )
+
+    try:
+        obj = s3.get_object(Bucket=settings.s3_bucket, Key=s3_key)
+    except Exception:
+        raise HTTPException(404, "File not found in storage")
+
+    content_type = meta.get("file_mime", "application/octet-stream")
+    filename = meta.get("file_name") or s3_key.rsplit("/", 1)[-1]
+
+    return StreamingResponse(
+        obj["Body"],
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Content-Length": str(obj.get("ContentLength", "")),
+        },
+    )
+
+
+@protected.get("/mentions/{mention_id}/files")
+async def list_mention_files(
+    mention_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """List all files associated with a mention — original + extracted."""
+    import boto3
+    from botocore.config import Config
+    from darkdisco.config import settings
+
+    mention = (await db.execute(
+        select(RawMention).where(RawMention.id == mention_id)
+    )).scalar_one_or_none()
+    if not mention:
+        raise HTTPException(404, "Mention not found")
+
+    meta = mention.metadata_ or {}
+    files = []
+
+    # Original file
+    if meta.get("s3_key"):
+        files.append({
+            "type": "original",
+            "filename": meta.get("file_name") or "unnamed",
+            "size": meta.get("file_size"),
+            "mime": meta.get("file_mime"),
+            "sha256": meta.get("file_sha256"),
+            "s3_key": meta["s3_key"],
+            "download_url": f"/api/mentions/{mention_id}/file",
+        })
+
+    # Extracted files from archive analysis
+    analysis = meta.get("file_analysis", {})
+    if analysis.get("files"):
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=settings.s3_endpoint,
+            aws_access_key_id=settings.s3_access_key,
+            aws_secret_access_key=settings.s3_secret_key,
+            config=Config(signature_version="s3v4"),
+        )
+
+        file_sha_prefix = meta.get("file_sha256", "")[:8]
+        for ef in analysis["files"]:
+            ef_s3_key = f"files/{file_sha_prefix}/extracted/{ef['sha256'][:8]}/{ef['filename']}"
+            # Check if extracted file exists in S3
+            exists = True
+            try:
+                s3.head_object(Bucket=settings.s3_bucket, Key=ef_s3_key)
+            except Exception:
+                exists = False
+
+            files.append({
+                "type": "extracted",
+                "filename": ef["filename"],
+                "size": ef.get("size"),
+                "extension": ef.get("extension"),
+                "sha256": ef.get("sha256"),
+                "s3_key": ef_s3_key if exists else None,
+                "download_url": f"/api/files/{ef_s3_key}" if exists else None,
+            })
+
+    return {
+        "mention_id": mention_id,
+        "original_file": meta.get("file_name"),
+        "download_status": meta.get("download_status"),
+        "passwords": meta.get("extracted_passwords", []),
+        "has_credentials": meta.get("has_credentials", False),
+        "credential_count": meta.get("credential_count", 0),
+        "credential_samples": analysis.get("credential_samples", []),
+        "files": files,
+    }
+
+
+@protected.get("/files/{s3_key:path}")
+async def serve_s3_file(
+    s3_key: str,
+):
+    """Serve any file from S3 by key. Used for extracted archive contents."""
+    import boto3
+    import mimetypes
+    from botocore.config import Config
+    from fastapi.responses import StreamingResponse
+    from darkdisco.config import settings
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=settings.s3_endpoint,
+        aws_access_key_id=settings.s3_access_key,
+        aws_secret_access_key=settings.s3_secret_key,
+        config=Config(signature_version="s3v4"),
+    )
+
+    try:
+        obj = s3.get_object(Bucket=settings.s3_bucket, Key=s3_key)
+    except Exception:
+        raise HTTPException(404, "File not found in storage")
+
+    filename = s3_key.rsplit("/", 1)[-1]
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    return StreamingResponse(
+        obj["Body"],
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Content-Length": str(obj.get("ContentLength", "")),
+        },
+    )
 
 
 # ---- Findings --------------------------------------------------------------
@@ -1017,6 +1357,60 @@ async def search_findings(
     )
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+@protected.get("/findings/{finding_id}/archive-contents")
+async def finding_archive_contents(
+    finding_id: str,
+    q: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """Return per-file extracted archive contents for a finding.
+
+    Looks up the linked raw_mention via promoted_to_finding_id and queries
+    ExtractedFile rows, falling back to legacy JSONB metadata.
+    """
+    finding = await db.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(404, "Finding not found")
+
+    # Find the raw_mention that was promoted to this finding
+    mention_result = await db.execute(
+        select(RawMention).where(RawMention.promoted_to_finding_id == finding_id)
+    )
+    linked_mention = mention_result.scalar_one_or_none()
+
+    if linked_mention:
+        stmt = select(ExtractedFile).where(ExtractedFile.mention_id == linked_mention.id)
+        if q:
+            stmt = stmt.where(
+                or_(
+                    ExtractedFile.filename.ilike(f"%{q}%"),
+                    ExtractedFile.content_tsvector.match(q),
+                )
+            )
+        ef_result = await db.execute(stmt)
+        extracted_rows = ef_result.scalars().all()
+
+        if extracted_rows:
+            files = [
+                {
+                    "filename": ef.filename,
+                    "size": ef.size or 0,
+                    "preview": (ef.text_content or "")[:500],
+                    "content": ef.text_content or "",
+                    "s3_key": ef.s3_key,
+                    "sha256": ef.sha256,
+                    "extension": ef.extension,
+                    "is_text": ef.is_text,
+                }
+                for ef in extracted_rows
+            ]
+            return {"finding_id": finding_id, "files": files, "total": len(files)}
+
+    # Fallback to legacy JSONB metadata
+    files = _extract_archive_file_list(finding.metadata_, q)
+    return {"finding_id": finding_id, "files": files, "total": len(files)}
 
 
 @protected.get("/findings/{finding_id}", response_model=FindingOut)

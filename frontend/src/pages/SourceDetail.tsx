@@ -901,14 +901,19 @@ function ConfigField({
   };
 
   if (field.type === 'list') {
-    const items = Array.isArray(config[field.key]) ? (config[field.key] as string[]) : [];
+    const items = Array.isArray(config[field.key]) ? (config[field.key] as unknown[]) : [];
+    const itemLabel = (item: unknown): string => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object' && 'name' in item) return String((item as Record<string, unknown>).name);
+      return JSON.stringify(item);
+    };
     return (
       <div>
         <div style={labelStyle}>{field.label} ({items.length})</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {items.map((item, idx) => (
             <div key={idx} style={itemStyle}>
-              <span>{item}</span>
+              <span>{itemLabel(item)}</span>
               <button
                 onClick={() => onUpdate(field.key, items.filter((_, i) => i !== idx))}
                 style={{

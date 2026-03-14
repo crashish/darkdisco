@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""  # Legacy — kept for compat
     telegram_api_id: int = 0
     telegram_api_hash: str = ""
-    telegram_session_name: str = "darkdisco_monitor"
+    telegram_session_name: str = "data/darkdisco_monitor"
     discord_bot_token: str = ""
     pastebin_api_key: str = ""
 
@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     s3_access_key: str = "darkdisco"
     s3_secret_key: str = "darkdisco-secret"
     s3_bucket: str = "darkdisco-attachments"
+
+    # Trapline integration (client watchlist sync)
+    trapline_api_url: str = ""  # e.g. https://trapline.example.com
+    trapline_api_key: str = ""
 
     # Celery tuning
     celery_task_soft_time_limit: int = 300

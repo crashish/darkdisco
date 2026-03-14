@@ -12,7 +12,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RawMention:
-    """A single mention found by a connector, before matching against watch terms."""
+    """A single mention found by a connector, before matching against watch terms.
+
+    Metadata may include file attachments as raw bytes under the 'file_data' key.
+    The pipeline strips file_data before JSON serialization and processes
+    archives (ZIP/RAR with password support) in _process_file_mentions().
+    """
 
     source_name: str
     source_url: str | None = None

@@ -1,7 +1,8 @@
-"""Add raw_mentions table for browsing unmatched collected data.
+"""Consolidated polecat work: raw_mentions table, new source types, orphan cleanup.
 
 Revision ID: 002
 Revises: 001
+Create Date: 2026-03-12
 """
 
 from alembic import op
@@ -15,6 +16,20 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # 1. Add new enum values for source types
+    op.execute("ALTER TYPE sourcetype ADD VALUE IF NOT EXISTS 'telegram_intel'")
+    op.execute("ALTER TYPE sourcetype ADD VALUE IF NOT EXISTS 'discord'")
+    op.execute("ALTER TYPE sourcetype ADD VALUE IF NOT EXISTS 'ransomware_aggregator'")
+
+    # 2. Remove orphaned sources with nonexistent connector paths
+    op.execute(
+        sa.text(
+            "DELETE FROM sources "
+            "WHERE connector_class LIKE 'darkdisco.connectors.%'"
+        )
+    )
+
+    # 3. Create raw_mentions table
     op.create_table(
         "raw_mentions",
         sa.Column("id", sa.String(36), primary_key=True),

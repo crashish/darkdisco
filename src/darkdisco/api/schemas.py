@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from darkdisco.common.models import (
     FindingStatus,
@@ -58,7 +58,7 @@ class InstitutionCreate(BaseModel):
     additional_domains: list | None = None
     bin_ranges: list | None = None
     routing_numbers: list | None = None
-    metadata_: dict | None = Field(None, alias="metadata")
+    metadata: dict | None = Field(None, validation_alias=AliasChoices("metadata_", "metadata"))
     active: bool = True
 
 
@@ -71,7 +71,7 @@ class InstitutionUpdate(BaseModel):
     additional_domains: list | None = None
     bin_ranges: list | None = None
     routing_numbers: list | None = None
-    metadata_: dict | None = Field(None, alias="metadata")
+    metadata: dict | None = Field(None, validation_alias=AliasChoices("metadata_", "metadata"))
     active: bool | None = None
 
 
@@ -188,7 +188,7 @@ class FindingCreate(BaseModel):
     source_url: str | None = None
     matched_terms: list | None = None
     tags: list | None = None
-    metadata_: dict | None = Field(None, alias="metadata")
+    metadata: dict | None = Field(None, validation_alias=AliasChoices("metadata_", "metadata"))
     analyst_notes: str | None = None
     assigned_to: str | None = None
 
@@ -201,7 +201,7 @@ class FindingUpdate(BaseModel):
     analyst_notes: str | None = None
     assigned_to: str | None = None
     tags: list | None = None
-    metadata_: dict | None = Field(None, alias="metadata")
+    metadata: dict | None = Field(None, validation_alias=AliasChoices("metadata_", "metadata"))
 
 
 class FindingOut(BaseModel):
@@ -226,7 +226,7 @@ class FindingOut(BaseModel):
     assigned_to: str | None = None
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
-    metadata_: dict | None = Field(None, alias="metadata")
+    metadata: dict | None = Field(None, validation_alias=AliasChoices("metadata_", "metadata"))
     discovered_at: datetime
     created_at: datetime
     updated_at: datetime
@@ -255,9 +255,16 @@ class RawMentionOut(BaseModel):
     content: str
     content_hash: str | None = None
     source_url: str | None = None
-    metadata_: dict | None = Field(None, alias="metadata")
+    metadata: dict | None = Field(None, validation_alias=AliasChoices("metadata_", "metadata"))
     collected_at: datetime
     promoted_to_finding_id: str | None = None
+
+
+class PaginatedMentionsOut(BaseModel):
+    items: list[RawMentionOut]
+    total: int
+    page: int
+    page_size: int
 
 
 class RawMentionPromote(BaseModel):

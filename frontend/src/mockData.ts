@@ -43,7 +43,7 @@ export const mockWatchTerms: WatchTerm[] = [
 ];
 
 const severities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
-const statuses: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
+const statuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'false_positive', 'resolved'];
 const sourceTypes: SourceType[] = ['tor_forum', 'paste_site', 'telegram', 'breach_db', 'ransomware_blog'];
 
 const findingTemplates: { title: string; summary: string; severity: Severity; source_type: SourceType }[] = [
@@ -72,7 +72,7 @@ export const mockFindings: Finding[] = findingTemplates.map((t, i) => ({
   institution_name: mockInstitutions[i % 6].name,
   source_type: t.source_type,
   severity: t.severity,
-  status: i < 4 ? 'new' : i < 7 ? 'reviewing' : i < 10 ? 'confirmed' : i < 13 ? 'resolved' : 'dismissed' as FindingStatus,
+  status: i < 4 ? 'new' : i < 7 ? 'reviewing' : i < 10 ? 'escalated' : i < 13 ? 'resolved' : 'false_positive' as FindingStatus,
   title: t.title,
   summary: t.summary,
   source_url: i % 3 === 0 ? undefined : `https://darkweb.example/${i}`,
@@ -108,14 +108,14 @@ export const mockDashboardStats: DashboardStats = {
 };
 
 function buildStatusHistory(status: FindingStatus, discoveredAt: string): StatusHistoryEntry[] {
-  const transitions: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
+  const transitions: FindingStatus[] = ['new', 'reviewing', 'escalated', 'false_positive', 'resolved'];
   const idx = transitions.indexOf(status);
   const history: StatusHistoryEntry[] = [
     { status: 'new', changed_at: discoveredAt, changed_by: 'system', notes: 'Auto-created by pipeline' },
   ];
   if (idx >= 1) history.push({ status: 'reviewing', changed_at: hoursAgo(Math.max(0, idx * 4 - 2)), changed_by: 'analyst@example.com', notes: 'Assigned for triage' });
-  if (idx >= 2 && status !== 'dismissed') history.push({ status: 'confirmed', changed_at: hoursAgo(Math.max(0, idx * 2 - 1)), changed_by: 'analyst@example.com', notes: 'Verified as legitimate threat' });
-  if (status === 'dismissed') history.push({ status: 'dismissed', changed_at: hoursAgo(1), changed_by: 'analyst@example.com', notes: 'False positive - generic mention' });
+  if (idx >= 2 && status !== 'false_positive') history.push({ status: 'escalated', changed_at: hoursAgo(Math.max(0, idx * 2 - 1)), changed_by: 'analyst@example.com', notes: 'Verified as legitimate threat' });
+  if (status === 'false_positive') history.push({ status: 'false_positive', changed_at: hoursAgo(1), changed_by: 'analyst@example.com', notes: 'False positive - generic mention' });
   if (status === 'resolved') history.push({ status: 'resolved', changed_at: hoursAgo(1), changed_by: 'analyst@example.com', notes: 'Mitigated - credentials rotated' });
   return history;
 }

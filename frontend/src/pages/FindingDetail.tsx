@@ -1,14 +1,21 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchFinding, updateFindingStatus } from '../api';
+<<<<<<< Updated upstream
+import { fetchFinding, updateFindingStatus, fetchArchiveContents } from '../api';
 import { colors, card, font, statusColor } from '../theme';
+=======
+import { fetchFinding, updateFindingStatus } from '../api';
+import { colors, card, font, statusColor, statusLabel } from '../theme';
+>>>>>>> Stashed changes
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
-import type { FindingDetail as FindingDetailType, FindingStatus } from '../types';
+import ArchiveContents from '../components/ArchiveContents';
+import type { ArchiveFile } from '../components/ArchiveContents';
+import type { FindingDetail as FindingDetailType, FindingStatus, HighlightSpan } from '../types';
 import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
-const allStatuses: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
+const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'false_positive', 'resolved'];
 
 const sectionStyle: CSSProperties = {
   ...card,
@@ -40,17 +47,93 @@ const valueStyle: CSSProperties = {
   color: colors.text,
 };
 
+function HighlightedContent({ text, matchedTerms }: { text: string; matchedTerms: { term_type: string; highlights?: HighlightSpan[] }[] | null }) {
+  // Merge all highlight spans from all matched terms
+  const spans: { start: number; end: number }[] = [];
+  if (matchedTerms) {
+    for (const term of matchedTerms) {
+      if (term.highlights) {
+        for (const h of term.highlights) {
+          spans.push({ start: h.start, end: h.end });
+        }
+      }
+    }
+  }
+
+  if (spans.length === 0) return <>{text}</>;
+
+  // Sort by start position, then merge overlapping spans
+  spans.sort((a, b) => a.start - b.start);
+  const merged: { start: number; end: number }[] = [spans[0]];
+  for (let i = 1; i < spans.length; i++) {
+    const prev = merged[merged.length - 1];
+    if (spans[i].start <= prev.end) {
+      prev.end = Math.max(prev.end, spans[i].end);
+    } else {
+      merged.push({ ...spans[i] });
+    }
+  }
+
+  // Build segments
+  const parts: JSX.Element[] = [];
+  let cursor = 0;
+  for (let i = 0; i < merged.length; i++) {
+    const { start, end } = merged[i];
+    const clampedStart = Math.max(0, Math.min(start, text.length));
+    const clampedEnd = Math.max(0, Math.min(end, text.length));
+    if (cursor < clampedStart) {
+      parts.push(<span key={`t${i}`}>{text.slice(cursor, clampedStart)}</span>);
+    }
+    if (clampedStart < clampedEnd) {
+      parts.push(
+        <mark key={`h${i}`} style={{
+          background: 'rgba(99, 102, 241, 0.25)',
+          color: colors.text,
+          borderRadius: 2,
+          padding: '1px 0',
+          borderBottom: `2px solid ${colors.accent}`,
+        }}>
+          {text.slice(clampedStart, clampedEnd)}
+        </mark>
+      );
+    }
+    cursor = clampedEnd;
+  }
+  if (cursor < text.length) {
+    parts.push(<span key="tail">{text.slice(cursor)}</span>);
+  }
+
+  return <>{parts}</>;
+}
+
 export default function FindingDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [finding, setFinding] = useState<FindingDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const [archiveFiles, setArchiveFiles] = useState<ArchiveFile[]>([]);
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    fetchFinding(id).then(f => { setFinding(f); setLoading(false); });
+    fetchFinding(id).then(f => {
+      setFinding(f);
+      setLoading(false);
+      // Extract archive files from metadata if available
+      const localFiles = (f.metadata as Record<string, unknown> | undefined)?.extracted_file_contents;
+      if (Array.isArray(localFiles) && localFiles.length > 0) {
+        setArchiveFiles(localFiles.map((ef: Record<string, string>) => ({
+          filename: ef.filename || '',
+          size: (ef.content || '').length,
+          preview: (ef.content || '').slice(0, 500),
+          content: ef.content || '',
+        })));
+      } else {
+        // Fallback to API
+        fetchArchiveContents('findings', id).then(r => setArchiveFiles(r.files)).catch(() => {});
+      }
+    });
   }, [id]);
 
   const handleStatusChange = async (status: FindingStatus) => {
@@ -110,7 +193,7 @@ export default function FindingDetail() {
                         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = colors.textDim; }}
                         onClick={() => handleStatusChange(s)}
                       >
-                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                        {statusLabel(s)}
                       </div>
                     ))}
                   </div>
@@ -252,7 +335,7 @@ export default function FindingDetail() {
                 background: colors.bgSurface, padding: 16, borderRadius: 6,
                 border: `1px solid ${colors.border}`, margin: 0, maxHeight: 600, overflow: 'auto',
               }}>
-                {finding.raw_content}
+                <HighlightedContent text={finding.raw_content} matchedTerms={finding.matched_terms} />
               </pre>
               {finding.source_url && (
                 <div style={{ marginTop: 8 }}>
@@ -268,6 +351,9 @@ export default function FindingDetail() {
               )}
             </div>
           )}
+
+          {/* Archive Contents */}
+          {archiveFiles.length > 0 && <ArchiveContents files={archiveFiles} />}
 
           {/* Matched Terms */}
           {finding.matched_terms && finding.matched_terms.length > 0 && (
@@ -353,7 +439,7 @@ export default function FindingDetail() {
                   <div>
                     <div style={labelStyle}>False Positive Check</div>
                     <div style={valueStyle}>
-                      <span style={{ color: finding.enrichment.false_positive.is_fp ? colors.statusDismissed : colors.healthy }}>
+                      <span style={{ color: finding.enrichment.false_positive.is_fp ? colors.statusFalsePositive : colors.healthy }}>
                         {finding.enrichment.false_positive.is_fp ? 'Likely FP' : 'Not FP'}
                       </span>
                       <span style={{ color: colors.textMuted, marginLeft: 8 }}>
@@ -398,7 +484,7 @@ export default function FindingDetail() {
                       }} />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 12, color: colors.text, fontWeight: 500 }}>
-                          {entry.status.charAt(0).toUpperCase() + entry.status.slice(1)}
+                          {statusLabel(entry.status)}
                         </div>
                         <div style={{ fontSize: 11, color: colors.textMuted }}>
                           {new Date(entry.changed_at).toLocaleString()}

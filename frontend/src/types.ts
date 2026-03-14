@@ -1,5 +1,5 @@
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
-export type FindingStatus = 'new' | 'reviewing' | 'confirmed' | 'dismissed' | 'resolved';
+export type FindingStatus = 'new' | 'reviewing' | 'escalated' | 'false_positive' | 'resolved';
 export type SourceType = 'tor_forum' | 'paste_site' | 'telegram' | 'telegram_intel' | 'discord' | 'breach_db' | 'ransomware_blog' | 'forum' | 'marketplace' | 'stealer_log' | 'other';
 export type SourceHealth = 'healthy' | 'degraded' | 'offline';
 
@@ -56,11 +56,17 @@ export interface FindingDetail extends Finding {
   metadata?: Record<string, unknown> | null;
 }
 
+export interface HighlightSpan {
+  start: number;
+  end: number;
+}
+
 export interface MatchedTerm {
   term_id: number;
   term_type: string;
   value: string;
   context?: string;
+  highlights?: HighlightSpan[];
 }
 
 export interface EnrichmentData {

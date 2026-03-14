@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { fetchFindings, fetchInstitutions, updateFindingStatus } from '../api';
-import { colors, card, font } from '../theme';
+import { colors, card, font, statusLabel } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import type { Finding, Institution, Severity, FindingStatus } from '../types';
@@ -9,7 +9,7 @@ import { Search, ChevronDown, ExternalLink, Calendar } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allSeverities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
-const allStatuses: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
+const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'false_positive', 'resolved'];
 
 const selectStyle: CSSProperties = {
   background: colors.bgSurface,
@@ -96,7 +96,7 @@ export default function Findings() {
         </select>
         <select style={selectStyle} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="">All Statuses</option>
-          {allStatuses.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+          {allStatuses.map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
         </select>
         <select style={selectStyle} value={instFilter} onChange={e => setInstFilter(e.target.value)}>
           <option value="">All Institutions</option>
@@ -172,7 +172,7 @@ export default function Findings() {
                             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = colors.textDim; }}
                             onClick={e => { e.stopPropagation(); handleStatusChange(f.id, s); }}
                           >
-                            {s.charAt(0).toUpperCase() + s.slice(1)}
+                            {statusLabel(s)}
                           </div>
                         ))}
                       </div>

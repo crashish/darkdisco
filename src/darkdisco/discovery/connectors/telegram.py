@@ -32,7 +32,7 @@ from telethon.errors import (
     UserAlreadyParticipantError,
 )
 from telethon.tl.functions.messages import ImportChatInviteRequest
-from telethon.tl.types import Channel, Chat, Message, User
+from telethon.tl.types import Channel, Chat, Message, PeerChannel, User
 
 from darkdisco.config import settings
 from darkdisco.discovery.connectors.base import BaseConnector, RawMention
@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 HISTORY_LIMIT_DEFAULT = 100
 INTER_CHANNEL_DELAY = 1.0  # seconds between channel reads
+MAX_DOWNLOAD_SIZE = 4 * 1024 * 1024 * 1024  # 4GB file download limit
+FILE_DOWNLOAD_MAX_AGE_DAYS = 60  # Only download files from messages within this window
 
 
 class TelegramConnector(BaseConnector):
@@ -194,7 +196,11 @@ class TelegramConnector(BaseConnector):
     async def _poll_channel(
         self, channel_ref: str, since: datetime | None,
     ) -> list[RawMention]:
-        entity = await self._client.get_entity(channel_ref)
+        # Telethon needs PeerChannel for channel numeric IDs
+        if channel_ref.lstrip("-").isdigit():
+            entity = await self._client.get_entity(PeerChannel(int(channel_ref)))
+        else:
+            entity = await self._client.get_entity(channel_ref)
         channel_key = _channel_key(channel_ref, entity)
 
         # Get high-water mark for incremental reads
@@ -219,7 +225,50 @@ class TelegramConnector(BaseConnector):
             if since and message.date and message.date < since:
                 continue
 
-            mention = _message_to_mention(message, entity, channel_ref)
+            # Download file attachments if present (only for recent messages)
+            file_data = None
+            if message.file and message.file.size:
+                from datetime import timedelta
+                file_age_cutoff = datetime.now(timezone.utc) - timedelta(days=FILE_DOWNLOAD_MAX_AGE_DAYS)
+                msg_date = message.date.replace(tzinfo=timezone.utc) if message.date and message.date.tzinfo is None else message.date
+
+                if msg_date and msg_date < file_age_cutoff:
+                    logger.debug(
+                        "Skipping file download (older than %dd): %s in %s msg#%d",
+                        FILE_DOWNLOAD_MAX_AGE_DAYS,
+                        message.file.name or "unnamed",
+                        channel_ref, message.id,
+                    )
+                elif message.file.size > MAX_DOWNLOAD_SIZE:
+                    logger.info(
+                        "File too large to download: %s (%s) in %s msg#%d",
+                        message.file.name or "unnamed",
+                        f"{message.file.size / (1024*1024):.1f}MB",
+                        channel_ref, message.id,
+                    )
+                elif message.file.size > 50 * 1024 * 1024:
+                    # Large files: record metadata for async download later
+                    logger.info(
+                        "Large file recorded for async download: %s (%s) in %s msg#%d",
+                        message.file.name or "unnamed",
+                        f"{message.file.size / (1024*1024):.1f}MB",
+                        channel_ref, message.id,
+                    )
+                    if not hasattr(message, "_dd_extra_meta"):
+                        message._dd_extra_meta = {}
+                    message._dd_extra_meta["download_status"] = "pending"
+                else:
+                    try:
+                        file_data = await self._client.download_media(
+                            message, file=bytes,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Failed to download file from message %d in %s",
+                            message.id, channel_ref,
+                        )
+
+            mention = _message_to_mention(message, entity, channel_ref, file_data)
             if mention is not None:
                 mentions.append(mention)
 
@@ -285,14 +334,21 @@ def _extract_invite_hash(ref: str) -> str:
 
 
 def _message_to_mention(
-    msg: Message, entity, channel_ref: str,
+    msg: Message, entity, channel_ref: str, file_data: bytes | None = None,
 ) -> RawMention | None:
-    """Convert a Telethon Message to a RawMention."""
+    """Convert a Telethon Message to a RawMention.
+
+    When file_data is provided (downloaded attachment), the mention includes
+    the raw bytes in metadata for downstream processing (archive extraction,
+    credential scanning, etc.).
+    """
     text = msg.text or ""
     if msg.message and not text:
         text = msg.message
 
-    if not text:
+    # Skip messages with no text AND no file (downloaded or not)
+    has_file = file_data or (msg.file and msg.file.size)
+    if not text and not has_file:
         return None
 
     # Channel/chat title
@@ -323,11 +379,17 @@ def _message_to_mention(
     elif hasattr(entity, "id"):
         source_url = f"https://t.me/c/{entity.id}/{msg.id}"
 
-    # Metadata
+    # Metadata — prefer entity title over raw ref for readability
+    display_ref = channel_ref
+    if hasattr(entity, "title") and entity.title:
+        display_ref = entity.title
+    elif hasattr(entity, "username") and entity.username:
+        display_ref = entity.username
+
     metadata: dict[str, Any] = {
         "message_id": msg.id,
         "chat_id": entity.id if hasattr(entity, "id") else None,
-        "channel_ref": channel_ref,
+        "channel_ref": display_ref,
     }
 
     if msg.forward:
@@ -344,6 +406,14 @@ def _message_to_mention(
     if msg.file:
         metadata["file_name"] = msg.file.name
         metadata["file_size"] = msg.file.size
+        metadata["file_mime"] = msg.file.mime_type
+
+    if file_data:
+        metadata["file_data"] = file_data
+
+    # Merge extra metadata from large file downloads
+    if hasattr(msg, "_dd_extra_meta"):
+        metadata.update(msg._dd_extra_meta)
 
     return RawMention(
         source_name=f"telegram:{title or channel_ref}",

@@ -33,5 +33,8 @@ boto3>=1.34
 beautifulsoup4>=4.12
 lxml>=5.1
 
+# Archive extraction
+rarfile>=4.1  # RAR support (requires unrar binary)
+
 # Utilities
 python-multipart>=0.0.6

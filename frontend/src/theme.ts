@@ -31,21 +31,30 @@ export const colors = {
   offline: '#ef4444',
   offlineBg: 'rgba(239, 68, 68, 0.12)',
 
-  statusNew: '#6366f1',
-  statusReviewing: '#eab308',
-  statusConfirmed: '#ef4444',
-  statusDismissed: '#64748b',
-  statusResolved: '#22c55e',
+  statusFalsePositive: '#64748b',
 };
 
 export const severityColor = (s: string) => colors[s as keyof typeof colors] || colors.textDim;
 export const severityBg = (s: string) => colors[`${s}Bg` as keyof typeof colors] || 'transparent';
 export const healthColor = (s: string) => colors[s as keyof typeof colors] || colors.textDim;
 export const healthBg = (s: string) => colors[`${s}Bg` as keyof typeof colors] || 'transparent';
-export const statusColor = (s: string) => {
-  const key = `status${s.charAt(0).toUpperCase() + s.slice(1)}` as keyof typeof colors;
-  return colors[key] || colors.textDim;
+const statusColorMap: Record<string, string> = {
+  new: '#6366f1',
+  reviewing: '#eab308',
+  escalated: '#ef4444',
+  false_positive: '#64748b',
+  resolved: '#22c55e',
 };
+export const statusColor = (s: string) => statusColorMap[s] || colors.textDim;
+
+const statusLabelMap: Record<string, string> = {
+  new: 'New',
+  reviewing: 'Reviewing',
+  escalated: 'Escalated',
+  false_positive: 'False Positive',
+  resolved: 'Resolved',
+};
+export const statusLabel = (s: string) => statusLabelMap[s] || s;
 
 export const font = {
   sans: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",

@@ -71,8 +71,8 @@ export async function fetchFinding(id: string): Promise<FindingDetail> {
 
 export async function updateFindingStatus(id: string, status: FindingStatus): Promise<Finding> {
   const fallback = { ...mockFindings.find(f => f.id === id)!, status };
-  return apiFetch(`/findings/${id}/status`, fallback, {
-    method: 'PUT',
+  return apiFetch(`/findings/${id}/transition`, fallback, {
+    method: 'POST',
     body: JSON.stringify({ status }),
   });
 }
@@ -80,6 +80,35 @@ export async function updateFindingStatus(id: string, status: FindingStatus): Pr
 export async function fetchWatchTerms(institutionId: string): Promise<WatchTerm[]> {
   const fallback = mockWatchTerms.filter(w => w.institution_id === institutionId);
   return apiFetch(`/watch-terms?institution_id=${institutionId}`, fallback);
+}
+
+export async function createInstitution(body: { client_id: string; name: string; city: string; state: string; charter_number?: string }): Promise<Institution> {
+  return apiFetch('/institutions', {} as Institution, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateInstitution(id: string, body: Partial<{ name: string; city: string; state: string; charter_number: string }>): Promise<Institution> {
+  return apiFetch(`/institutions/${id}`, {} as Institution, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteInstitution(id: string): Promise<void> {
+  await apiFetch(`/institutions/${id}`, null, { method: 'DELETE' });
+}
+
+export async function createWatchTerm(body: { institution_id: string; term_type: string; value: string }): Promise<WatchTerm> {
+  return apiFetch('/watch-terms', {} as WatchTerm, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteWatchTerm(id: string): Promise<void> {
+  await apiFetch(`/watch-terms/${id}`, null, { method: 'DELETE' });
 }
 
 export async function fetchSources(enabled?: boolean): Promise<Source[]> {
@@ -152,17 +181,32 @@ export async function removeDiscordChannel(sourceId: string, guildId: string, ch
   });
 }
 
+export interface PaginatedMentions {
+  items: RawMention[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export async function fetchMentions(params?: {
   source_id?: string;
   source_type?: string;
   promoted?: boolean;
+  channel?: string;
+  has_media?: boolean;
   q?: string;
-}): Promise<RawMention[]> {
+  page?: number;
+  page_size?: number;
+}): Promise<PaginatedMentions> {
   const qs = new URLSearchParams();
   if (params?.source_id) qs.set('source_id', params.source_id);
   if (params?.source_type) qs.set('source_type', params.source_type);
   if (params?.promoted !== undefined) qs.set('promoted', String(params.promoted));
+  if (params?.channel) qs.set('channel', params.channel);
+  if (params?.has_media !== undefined) qs.set('has_media', String(params.has_media));
   if (params?.q) qs.set('q', params.q);
+  if (params?.page !== undefined) qs.set('page', String(params.page));
+  if (params?.page_size !== undefined) qs.set('page_size', String(params.page_size));
   const q = qs.toString();
 
   let fallback = [...mockRawMentions];
@@ -173,7 +217,56 @@ export async function fetchMentions(params?: {
       : fallback.filter(m => !m.promoted_to_finding_id);
   }
 
-  return apiFetch(`/mentions${q ? '?' + q : ''}`, fallback);
+  return apiFetch(`/mentions${q ? '?' + q : ''}`, { items: fallback, total: fallback.length, page: params?.page ?? 1, page_size: params?.page_size ?? 50 });
+}
+
+export async function fetchMentionChannels(): Promise<{ channel: string; count: number }[]> {
+  return apiFetch('/mentions/channels', []);
+}
+
+export interface MentionFileInfo {
+  type: 'original' | 'extracted';
+  filename: string;
+  size: number | null;
+  mime?: string;
+  extension?: string;
+  sha256?: string;
+  s3_key: string | null;
+  download_url: string | null;
+}
+
+export interface MentionFilesResponse {
+  mention_id: string;
+  original_file: string | null;
+  download_status: string | null;
+  passwords: string[];
+  has_credentials: boolean;
+  credential_count: number;
+  credential_samples: string[];
+  files: MentionFileInfo[];
+}
+
+export async function fetchMentionFiles(mentionId: string): Promise<MentionFilesResponse> {
+  return apiFetch(`/mentions/${mentionId}/files`, {
+    mention_id: mentionId, original_file: null, download_status: null,
+    passwords: [], has_credentials: false, credential_count: 0,
+    credential_samples: [], files: [],
+  });
+}
+
+export function getMentionFileUrl(mentionId: string): string {
+  return `/api/mentions/${mentionId}/file`;
+}
+
+export function getS3FileUrl(s3Key: string): string {
+  return `/api/files/${s3Key}`;
+}
+
+export async function fetchArchiveContents(
+  type: 'mentions' | 'findings',
+  id: string,
+): Promise<{ files: { filename: string; size: number; preview: string; content: string }[]; total: number }> {
+  return apiFetch(`/${type}/${id}/archive-contents`, { files: [], total: 0 });
 }
 
 export async function promoteMention(mentionId: string, body: {
