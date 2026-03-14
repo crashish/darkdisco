@@ -41,15 +41,13 @@ app.conf.update(
             "task": "darkdisco.pipeline.worker.schedule_polls",
             "schedule": 300.0,  # 5 minutes
         },
-<<<<<<< Updated upstream
-        "sync-trapline-watchlist": {
-            "task": "darkdisco.pipeline.worker.sync_trapline_watchlist",
-            "schedule": 3600.0,  # 1 hour
-=======
         "download-pending-files": {
             "task": "darkdisco.pipeline.worker.download_pending_files",
             "schedule": 600.0,  # 10 minutes
->>>>>>> Stashed changes
+        },
+        "sync-trapline-watchlist": {
+            "task": "darkdisco.pipeline.worker.sync_trapline_watchlist",
+            "schedule": 3600.0,  # 1 hour
         },
     },
 )
@@ -181,8 +179,7 @@ def schedule_polls():
         session.close()
 
 
-@app.task(name="darkdisco.pipeline.worker.poll_source", bind=True, max_retries=3,
-         soft_time_limit=900, time_limit=1200)
+@app.task(name="darkdisco.pipeline.worker.poll_source", bind=True, max_retries=3)
 def poll_source(self, source_id: str):
     """Poll a single source for new mentions, then fan out to matching."""
     from darkdisco.common.models import Source
@@ -210,11 +207,6 @@ def poll_source(self, source_id: str):
             logger.exception("Failed to poll source %s", source.name)
             raise self.retry(exc=exc, countdown=60 * (self.request.retries + 1))
 
-        # Persist updated config (e.g. high-water marks from connectors)
-        # flag_modified is needed because SQLAlchemy doesn't detect in-place JSONB mutations
-        from sqlalchemy.orm.attributes import flag_modified
-        flag_modified(source, "config")
-
         # Update poll timestamp and clear errors
         source.last_polled_at = datetime.now(timezone.utc)
         source.last_error = None
@@ -225,9 +217,6 @@ def poll_source(self, source_id: str):
         if mentions:
             # Process file attachments before serialization
             mentions = _process_file_mentions(mentions)
-
-            # Persist all mentions to raw_mentions table for browsing
-            _persist_raw_mentions(session, source_id, mentions)
 
             # Serialize mentions for the matching task
             # (file_data bytes are removed — text content extracted above)
@@ -251,56 +240,6 @@ def poll_source(self, source_id: str):
         return {"source": source.name, "mentions": len(mentions)}
     finally:
         session.close()
-
-
-def _persist_raw_mentions(session: Session, source_id: str, mentions: list) -> None:
-    """Store all collected mentions in raw_mentions table for browsing."""
-    from darkdisco.common.models import RawMention as RawMentionModel
-    from uuid import uuid4
-
-    for m in mentions:
-        content_hash = hashlib.sha256(
-            f"{m.source_name}:{m.content}".encode()
-        ).hexdigest()
-
-        # Skip if we already have this exact content
-        existing = session.execute(
-            select(RawMentionModel.id).where(
-                RawMentionModel.content_hash == content_hash
-            )
-        ).scalar_one_or_none()
-        if existing:
-            continue
-
-        # Strip file_data bytes from metadata before storing
-        clean_metadata = {
-            k: v for k, v in m.metadata.items()
-            if k != "file_data"
-        } if m.metadata else {}
-
-        # Extract passwords from message content for archive mentions
-        if m.content and clean_metadata.get("has_media"):
-            from darkdisco.pipeline.files import extract_passwords
-            passwords = extract_passwords(m.content)
-            if passwords:
-                clean_metadata["extracted_passwords"] = passwords
-
-        row = RawMentionModel(
-            id=str(uuid4()),
-            source_id=source_id,
-            content=m.content or "",
-            content_hash=content_hash,
-            source_url=m.source_url,
-            metadata_=clean_metadata,
-            collected_at=m.discovered_at or datetime.now(timezone.utc),
-        )
-        session.add(row)
-
-    try:
-        session.commit()
-    except Exception:
-        session.rollback()
-        logger.exception("Failed to persist raw mentions")
 
 
 async def _poll_async(connector, since):
@@ -802,9 +741,139 @@ def _rule_matches(rule, finding, severity_rank: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-<<<<<<< Updated upstream
 # Trapline watchlist sync
 # ---------------------------------------------------------------------------
+
+
+@app.task(name="darkdisco.pipeline.worker.download_pending_files",
+          soft_time_limit=3600, time_limit=3900)
+def download_pending_files(batch_size: int = 10):
+    """Download large files from mentions marked as download_status=pending.
+
+    Uses a Redis lock to prevent concurrent download tasks from contending
+    over the Telethon SQLite session file.
+    """
+    import redis as _redis
+    from darkdisco.config import settings
+    from darkdisco.common.models import RawMention as RawMentionModel, Source
+
+    # Acquire exclusive lock
+    r = _redis.from_url(settings.celery_broker_url)
+    lock = r.lock("darkdisco:download_files_lock", timeout=3600, blocking=False)
+    if not lock.acquire(blocking=False):
+        logger.info("Another download task is already running, skipping")
+        return {"skipped": True}
+
+    session = _get_sync_session()
+    try:
+        stmt = (
+            select(RawMentionModel)
+            .where(RawMentionModel.metadata["download_status"].astext == "pending")
+            .limit(batch_size)
+        )
+        mentions = session.execute(stmt).scalars().all()
+
+        if not mentions:
+            return {"downloaded": 0, "pending": 0}
+
+        logger.info("Found %d mentions with pending file downloads", len(mentions))
+
+        by_source: dict[str, list] = {}
+        for m in mentions:
+            by_source.setdefault(m.source_id, []).append(m)
+
+        downloaded = 0
+        failed = 0
+
+        for source_id, source_mentions in by_source.items():
+            source = session.get(Source, source_id)
+            if not source or source.source_type.value != "telegram":
+                continue
+
+            try:
+                connector = _load_connector_for_download(source)
+
+                async def _do_downloads():
+                    try:
+                        await connector.setup()
+                        results = {"downloaded": 0, "failed": 0}
+                        for mention in source_mentions:
+                            try:
+                                meta = mention.metadata or {}
+                                msg_id = meta.get("message_id")
+                                if not msg_id:
+                                    continue
+                                file_data = await connector.download_media(int(msg_id))
+                                if file_data:
+                                    # Upload to S3
+                                    import hashlib
+                                    sha256 = hashlib.sha256(file_data).hexdigest()
+                                    filename = meta.get("file_name", "unknown")
+                                    s3_key = f"files/{sha256[:8]}/{filename}"
+
+                                    from darkdisco.pipeline.files import get_s3_client
+                                    s3 = get_s3_client()
+                                    from io import BytesIO
+                                    s3.upload_fileobj(BytesIO(file_data), settings.s3_bucket, s3_key)
+
+                                    meta["s3_key"] = s3_key
+                                    meta["file_sha256"] = sha256
+                                    meta["file_size"] = len(file_data)
+                                    meta["download_status"] = "stored"
+
+                                    # Extract archive if applicable
+                                    from darkdisco.pipeline.files import extract_archive, analyze_extracted_files
+                                    fname = filename.lower()
+                                    if any(fname.endswith(ext) for ext in (".zip", ".rar", ".tar", ".tar.gz", ".tar.bz2", ".7z")):
+                                        passwords = meta.get("extracted_passwords", [])
+                                        extracted = extract_archive(file_data, filename, passwords=passwords)
+                                        if extracted:
+                                            analysis = analyze_extracted_files(extracted)
+                                            meta["file_analysis"] = analysis.to_dict()
+                                            # Append extracted text to mention content
+                                            if analysis.text_content:
+                                                mention.content = (mention.content or "") + "\n\n" + analysis.text_content
+                                            # Upload extracted files to S3
+                                            for ef in extracted:
+                                                ef_key = f"files/{sha256[:8]}/extracted/{ef.sha256[:8]}/{ef.filename}"
+                                                s3.upload_fileobj(BytesIO(ef.content), settings.s3_bucket, ef_key)
+
+                                    mention.metadata = meta
+                                    session.commit()
+                                    results["downloaded"] += 1
+                                    logger.info("Downloaded %s for mention %s", filename, mention.id)
+                                else:
+                                    meta["download_status"] = "error"
+                                    meta["download_error"] = "No file data returned"
+                                    mention.metadata = meta
+                                    session.commit()
+                                    results["failed"] += 1
+                            except Exception:
+                                logger.exception("Failed to download file for mention %s", mention.id)
+                                meta = mention.metadata or {}
+                                meta["download_status"] = "error"
+                                meta["download_error"] = "Download exception"
+                                mention.metadata = meta
+                                session.commit()
+                                results["failed"] += 1
+                        return results
+                    finally:
+                        await connector.teardown()
+
+                results = asyncio.run(_do_downloads())
+                downloaded += results["downloaded"]
+                failed += results["failed"]
+            except Exception:
+                logger.exception("Failed to download files for source %s", source_id)
+                failed += len(source_mentions)
+
+        return {"downloaded": downloaded, "failed": failed}
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass
+        session.close()
 
 
 @app.task(name="darkdisco.pipeline.worker.sync_trapline_watchlist")
@@ -911,307 +980,3 @@ def backfill_extracted_files(batch_size: int = 100):
         return {"created": total_created, "mentions_processed": len(mentions)}
     finally:
         session.close()
-=======
-# Async file download task — downloads large files from pending mentions
-# ---------------------------------------------------------------------------
-
-@app.task(name="darkdisco.pipeline.worker.download_pending_files",
-          soft_time_limit=3600, time_limit=3900)
-def download_pending_files(batch_size: int = 10):
-    """Download large files from mentions marked as download_status=pending.
-
-    Runs periodically to fetch files that were too large for inline download
-    during polling. Downloads to temp disk, uploads to S3, updates mention metadata.
-
-    Uses a Redis lock to prevent concurrent download tasks from contending
-    over the Telethon SQLite session file.
-    """
-    import redis as _redis
-    from darkdisco.config import settings
-    from darkdisco.common.models import RawMention as RawMentionModel, Source
-
-    # Acquire exclusive lock — skip if another download task is already running
-    r = _redis.from_url(settings.celery_broker_url)
-    lock = r.lock("darkdisco:download_files_lock", timeout=3600, blocking=False)
-    if not lock.acquire(blocking=False):
-        logger.info("Another download task is already running, skipping")
-        return {"skipped": True}
-
-    session = _get_sync_session()
-    try:
-        # Find mentions with pending downloads
-        stmt = (
-            select(RawMentionModel)
-            .where(RawMentionModel.metadata_["download_status"].astext == "pending")
-            .limit(batch_size)
-        )
-        mentions = session.execute(stmt).scalars().all()
-
-        if not mentions:
-            return {"downloaded": 0, "pending": 0}
-
-        logger.info("Found %d mentions with pending file downloads", len(mentions))
-
-        # Group by source to reuse Telegram connections
-        by_source: dict[str, list] = {}
-        for m in mentions:
-            by_source.setdefault(m.source_id, []).append(m)
-
-        downloaded = 0
-        failed = 0
-
-        for source_id, source_mentions in by_source.items():
-            source = session.get(Source, source_id)
-            if not source or source.source_type.value != "telegram":
-                continue
-
-            try:
-                connector = _load_connector_for_download(source)
-                results = asyncio.run(_download_files_async(
-                    connector, source_mentions, session
-                ))
-                downloaded += results["downloaded"]
-                failed += results["failed"]
-            except Exception:
-                logger.exception("Failed to download files for source %s", source_id)
-                failed += len(source_mentions)
-
-        return {"downloaded": downloaded, "failed": failed}
-    finally:
-        session.close()
-        try:
-            lock.release()
-        except Exception:
-            pass
-
-
-def _match_extracted_content(mention, text_content: str, source_id: str, session):
-    """Match extracted archive text against watch terms and create findings."""
-    if not text_content or len(text_content) < 10:
-        return
-
-    from darkdisco.common.models import Finding, WatchTerm
-    from darkdisco.discovery.connectors.base import RawMention as RawMentionDTO
-    from darkdisco.discovery.matcher import match_mention
-    from sqlalchemy.orm.attributes import flag_modified
-
-    try:
-        watch_terms = session.execute(
-            select(WatchTerm).where(WatchTerm.enabled.is_(True))
-        ).scalars().all()
-
-        if not watch_terms:
-            return
-
-        # Create a synthetic RawMention for the matcher
-        synthetic = RawMentionDTO(
-            source_name="archive_extraction",
-            title=f"Archive contents: {mention.metadata_.get('file_name', 'unknown')}",
-            content=text_content[:200000],  # Cap for matching
-            source_url=mention.source_url,
-            metadata=mention.metadata_ or {},
-        )
-
-        match_results = match_mention(synthetic, watch_terms)
-
-        if not match_results:
-            return
-
-        logger.info(
-            "Archive content matched %d institution(s) for mention %s",
-            len(match_results), mention.id,
-        )
-
-        for result in match_results:
-            # Check for duplicate finding
-            content_hash = hashlib.sha256(
-                f"{source_id}:{mention.id}:{result.institution_id}".encode()
-            ).hexdigest()
-
-            existing = session.execute(
-                select(Finding).where(Finding.content_hash == content_hash)
-            ).scalar_one_or_none()
-
-            if existing:
-                continue
-
-            finding = Finding(
-                institution_id=result.institution_id,
-                source_id=source_id,
-                severity=result.severity_hint,
-                title=f"Watch term match in archive: {mention.metadata_.get('file_name', 'unknown')}",
-                summary=f"Matched terms: {', '.join(t['value'] for t in result.matched_terms[:5])}",
-                raw_content=text_content[:10000],
-                content_hash=content_hash,
-                metadata_={
-                    "match_source": "archive_extraction",
-                    "mention_id": mention.id,
-                    "matched_terms": result.matched_terms,
-                    "file_name": mention.metadata_.get("file_name"),
-                    "file_sha256": mention.metadata_.get("file_sha256"),
-                },
-            )
-            session.add(finding)
-            logger.info(
-                "Created finding from archive content: institution=%s terms=%s",
-                result.institution_id,
-                ", ".join(t["value"] for t in result.matched_terms[:3]),
-            )
-
-        session.commit()
-
-    except Exception:
-        logger.exception("Watch term matching on extracted content failed for mention %s", mention.id)
-
-
-async def _download_files_async(connector, mentions, session):
-    """Download pending files using the Telegram connector."""
-    import tempfile
-    import hashlib as _hashlib
-    import boto3
-    from botocore.config import Config as BotoConfig
-    from pathlib import Path
-    from sqlalchemy.orm.attributes import flag_modified
-
-    from darkdisco.config import settings
-
-    await connector.setup()
-    try:
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=settings.s3_endpoint,
-            aws_access_key_id=settings.s3_access_key,
-            aws_secret_access_key=settings.s3_secret_key,
-            config=BotoConfig(signature_version="s3v4"),
-        )
-
-        downloaded = 0
-        failed = 0
-
-        for mention in mentions:
-            meta = mention.metadata_ or {}
-            chat_id = meta.get("chat_id")
-            message_id = meta.get("message_id")
-
-            if not chat_id or not message_id:
-                logger.warning("Mention %s missing chat_id/message_id for download", mention.id)
-                meta["download_status"] = "error"
-                meta["download_error"] = "missing chat_id or message_id"
-                mention.metadata_ = meta
-                flag_modified(mention, "metadata_")
-                failed += 1
-                continue
-
-            tmp_path = None
-            try:
-                from telethon.tl.types import PeerChannel
-                entity = await connector._client.get_entity(PeerChannel(int(chat_id)))
-                msgs = await connector._client.get_messages(entity, ids=[int(message_id)])
-                msg = msgs[0] if msgs else None
-
-                if not msg or not msg.file:
-                    meta["download_status"] = "error"
-                    meta["download_error"] = "message or file not found"
-                    mention.metadata_ = meta
-                    flag_modified(mention, "metadata_")
-                    failed += 1
-                    continue
-
-                with tempfile.NamedTemporaryFile(delete=False, dir="/tmp") as tmp:
-                    tmp_path = tmp.name
-
-                dl_path = await connector._client.download_media(msg, file=tmp_path)
-                if not dl_path:
-                    raise RuntimeError("download_media returned None")
-
-                # Stream SHA256
-                sha = _hashlib.sha256()
-                with open(dl_path, "rb") as fh:
-                    while chunk := fh.read(8 * 1024 * 1024):
-                        sha.update(chunk)
-                file_sha = sha.hexdigest()
-
-                fname = meta.get("file_name") or msg.file.name or "unnamed"
-                s3_key = f"files/{file_sha[:8]}/{fname}"
-
-                s3.upload_file(dl_path, settings.s3_bucket, s3_key)
-
-                meta["s3_key"] = s3_key
-                meta["file_sha256"] = file_sha
-                meta["download_status"] = "stored"
-                mention.metadata_ = meta
-                flag_modified(mention, "metadata_")
-                session.commit()
-
-                # Archive extraction post-download
-                try:
-                    from darkdisco.pipeline.files import (
-                        is_archive,
-                        extract_archive_from_path,
-                        analyze_extracted_files,
-                        upload_to_s3,
-                    )
-
-                    if is_archive(fname):
-                        passwords = meta.get("extracted_passwords", [])
-                        extracted = extract_archive_from_path(dl_path, fname, passwords)
-                        if extracted:
-                            analysis = analyze_extracted_files(extracted)
-                            sha_prefix = file_sha[:8]
-                            for ef in extracted:
-                                if ef.is_text:
-                                    ef_key = f"files/{sha_prefix}/extracted/{ef.sha256[:8]}/{ef.filename}"
-                                    upload_to_s3(ef_key, ef.content)
-                            meta["file_analysis"] = analysis.to_dict()
-
-                            # Store searchable text on the mention content
-                            # so the q= search parameter works on archive contents
-                            if analysis.text_content:
-                                # Strip null bytes — PostgreSQL text columns can't store \x00
-                                search_text = analysis.text_content[:50000].replace("\x00", "")
-                                mention.content = (mention.content or "") + "\n\n--- Extracted archive content ---\n" + search_text
-
-                            mention.metadata_ = meta
-                            flag_modified(mention, "metadata_")
-                            session.commit()
-                            logger.info(
-                                "Extracted %d files from archive %s (%d text uploaded)",
-                                len(extracted), fname,
-                                sum(1 for ef in extracted if ef.is_text),
-                            )
-
-                            # Run watch term matching on extracted content
-                            _match_extracted_content(
-                                mention, analysis.text_content, mention.source_id, session
-                            )
-                except Exception:
-                    logger.exception("Archive extraction failed for %s", fname)
-
-                downloaded += 1
-                logger.info(
-                    "Downloaded file: %s (%s) -> s3://%s/%s",
-                    fname,
-                    f"{msg.file.size / (1024*1024):.1f}MB" if msg.file.size else "?",
-                    settings.s3_bucket, s3_key,
-                )
-
-            except Exception:
-                logger.exception(
-                    "Failed to download file for mention %s (chat=%s msg=%s)",
-                    mention.id, chat_id, message_id,
-                )
-                meta["download_status"] = "error"
-                mention.metadata_ = meta
-                flag_modified(mention, "metadata_")
-                session.commit()
-                failed += 1
-            finally:
-                if tmp_path:
-                    Path(tmp_path).unlink(missing_ok=True)
-
-            await asyncio.sleep(2)  # Rate limit between downloads
-
-        return {"downloaded": downloaded, "failed": failed}
-    finally:
-        await connector.teardown()
->>>>>>> Stashed changes

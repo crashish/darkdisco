@@ -1,12 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-<<<<<<< Updated upstream
 import { fetchFinding, updateFindingStatus, fetchArchiveContents } from '../api';
 import { colors, card, font, statusColor } from '../theme';
-=======
-import { fetchFinding, updateFindingStatus } from '../api';
-import { colors, card, font, statusColor, statusLabel } from '../theme';
->>>>>>> Stashed changes
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import ArchiveContents from '../components/ArchiveContents';
@@ -15,7 +10,7 @@ import type { FindingDetail as FindingDetailType, FindingStatus, HighlightSpan }
 import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
-const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'false_positive', 'resolved'];
+const allStatuses: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
 
 const sectionStyle: CSSProperties = {
   ...card,
@@ -193,7 +188,7 @@ export default function FindingDetail() {
                         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = colors.textDim; }}
                         onClick={() => handleStatusChange(s)}
                       >
-                        {statusLabel(s)}
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
                       </div>
                     ))}
                   </div>
@@ -439,7 +434,7 @@ export default function FindingDetail() {
                   <div>
                     <div style={labelStyle}>False Positive Check</div>
                     <div style={valueStyle}>
-                      <span style={{ color: finding.enrichment.false_positive.is_fp ? colors.statusFalsePositive : colors.healthy }}>
+                      <span style={{ color: finding.enrichment.false_positive.is_fp ? colors.statusDismissed : colors.healthy }}>
                         {finding.enrichment.false_positive.is_fp ? 'Likely FP' : 'Not FP'}
                       </span>
                       <span style={{ color: colors.textMuted, marginLeft: 8 }}>
@@ -484,7 +479,7 @@ export default function FindingDetail() {
                       }} />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 12, color: colors.text, fontWeight: 500 }}>
-                          {statusLabel(entry.status)}
+                          {entry.status.charAt(0).toUpperCase() + entry.status.slice(1)}
                         </div>
                         <div style={{ fontSize: 11, color: colors.textMuted }}>
                           {new Date(entry.changed_at).toLocaleString()}
