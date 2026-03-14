@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchArchiveContents } from '../api';
+// fetchArchiveContents used inline via fetch() for query param support
 import { colors, card, font } from '../theme';
 import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader } from 'lucide-react';
 
@@ -45,6 +45,8 @@ export default function Files() {
   const [fileContent, setFileContent] = useState<Record<string, string>>({});
   const [contentLoading, setContentLoading] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [contentSearch, setContentSearch] = useState('');
+  const [contentSearchActive, setContentSearchActive] = useState('');
 
   // Load mentions that have files
   useEffect(() => {
@@ -81,20 +83,26 @@ export default function Files() {
   }, []);
 
   // Load files for selected mention
-  const loadFiles = useCallback(async (mentionId: string) => {
+  const loadFiles = useCallback(async (mentionId: string, q?: string) => {
     setFilesLoading(true);
     setFiles([]);
     setExpandedFile(null);
     try {
-      const data = await fetchArchiveContents('mentions', mentionId);
+      const token = localStorage.getItem('dd_token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+      const res = await fetch(`${BASE}/mentions/${mentionId}/archive-contents${qs}`, { headers });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
       setFiles(data.files || []);
     } catch { /* ignore */ }
     setFilesLoading(false);
   }, []);
 
   useEffect(() => {
-    if (selectedMention) loadFiles(selectedMention);
-  }, [selectedMention, loadFiles]);
+    if (selectedMention) loadFiles(selectedMention, contentSearchActive || undefined);
+  }, [selectedMention, contentSearchActive, loadFiles]);
 
   // Fetch file content on demand from S3
   async function loadFileContent(file: ExtractedFile) {
@@ -132,6 +140,23 @@ export default function Files() {
   const filtered = search.trim()
     ? files.filter(f => f.filename.toLowerCase().includes(search.toLowerCase()))
     : files;
+
+  function highlightText(text: string, needle: string) {
+    if (!needle) return text;
+    const parts: (string | JSX.Element)[] = [];
+    const lower = text.toLowerCase();
+    const n = needle.toLowerCase();
+    let last = 0, idx = lower.indexOf(n);
+    let key = 0;
+    while (idx !== -1) {
+      if (idx > last) parts.push(text.slice(last, idx));
+      parts.push(<span key={key++} style={{ background: 'rgba(234, 179, 8, 0.4)', borderRadius: 2, padding: '0 1px' }}>{text.slice(idx, idx + n.length)}</span>);
+      last = idx + n.length;
+      idx = lower.indexOf(n, last);
+    }
+    if (last < text.length) parts.push(text.slice(last));
+    return <>{parts}</>;
+  }
 
   const selectedInfo = mentions.find(m => m.id === selectedMention);
 
@@ -208,19 +233,43 @@ export default function Files() {
               )}
 
               {/* Search */}
-              <div style={{ position: 'relative', marginBottom: 12 }}>
-                <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: colors.textMuted }} />
-                <input
-                  type="text"
-                  placeholder="Filter files by name..."
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  style={{
-                    width: '100%', padding: '8px 10px 8px 32px', fontSize: 13,
-                    background: colors.bgSurface, border: `1px solid ${colors.border}`,
-                    borderRadius: 6, color: colors.text, outline: 'none',
-                  }}
-                />
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <div style={{ position: 'relative', flex: 1 }}>
+                  <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: colors.textMuted }} />
+                  <input
+                    type="text"
+                    placeholder="Filter by filename..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    style={{
+                      width: '100%', padding: '8px 10px 8px 32px', fontSize: 13,
+                      background: colors.bgSurface, border: `1px solid ${colors.border}`,
+                      borderRadius: 6, color: colors.text, outline: 'none',
+                    }}
+                  />
+                </div>
+                <form onSubmit={e => { e.preventDefault(); setContentSearchActive(contentSearch); }} style={{ position: 'relative', flex: 1, display: 'flex', gap: 4 }}>
+                  <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: colors.textMuted }} />
+                  <input
+                    type="text"
+                    placeholder="Search file contents..."
+                    value={contentSearch}
+                    onChange={e => setContentSearch(e.target.value)}
+                    style={{
+                      flex: 1, padding: '8px 10px 8px 32px', fontSize: 13,
+                      background: colors.bgSurface, border: `1px solid ${colors.border}`,
+                      borderRadius: 6, color: colors.text, outline: 'none',
+                    }}
+                  />
+                  <button type="submit" style={{ padding: '6px 12px', fontSize: 12, background: colors.accent, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
+                    Search
+                  </button>
+                  {contentSearchActive && (
+                    <button type="button" onClick={() => { setContentSearch(''); setContentSearchActive(''); }} style={{ padding: '6px 8px', fontSize: 12, background: 'none', border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.textDim, cursor: 'pointer' }}>
+                      Clear
+                    </button>
+                  )}
+                </form>
               </div>
 
               {/* File list */}
@@ -273,7 +322,7 @@ export default function Files() {
                               border: `1px solid ${colors.border}`,
                               maxHeight: 500, overflow: 'auto', margin: 0,
                             }}>
-                              {content}
+                              {contentSearchActive ? highlightText(content, contentSearchActive) : content}
                             </pre>
                           ) : isText ? (
                             <div style={{ padding: 12, color: colors.textMuted, fontSize: 12, fontStyle: 'italic' }}>
