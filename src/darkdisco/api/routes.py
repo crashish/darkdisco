@@ -206,17 +206,19 @@ def _parse_extracted_sections(content: str) -> dict[str, str]:
     """Parse '--- filename ---' delimited sections from concatenated mention content."""
     import re
     sections: dict[str, str] = {}
-    # Split on the section delimiter pattern
-    parts = re.split(r'\n\s*--- (.+?) ---\s*\n', content)
-    # parts[0] is the original message text (before first delimiter)
-    # Then alternating: filename, content, filename, content...
-    i = 1
-    while i + 1 < len(parts):
-        filename = parts[i].strip()
-        text = parts[i + 1].strip()
-        if filename and filename != "Extracted archive content":
+    # Find all section headers and their positions
+    header_pattern = re.compile(r'^--- (.+?) ---\s*$', re.MULTILINE)
+    headers = list(header_pattern.finditer(content))
+    for i, match in enumerate(headers):
+        filename = match.group(1).strip()
+        if filename == "Extracted archive content":
+            continue
+        # Content runs from end of this header to start of next header (or end of string)
+        start = match.end()
+        end = headers[i + 1].start() if i + 1 < len(headers) else len(content)
+        text = content[start:end].strip()
+        if filename:
             sections[filename] = text
-        i += 2
     return sections
 
 

@@ -33,10 +33,14 @@ export default function Mentions() {
   const [promoteForm, setPromoteForm] = useState({ institution_id: '', title: '', severity: 'medium' as Severity, summary: '' });
   const [promoting, setPromoting] = useState(false);
   const [archiveFilesMap, setArchiveFilesMap] = useState<Record<string, ArchiveFile[]>>({});
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const PAGE_SIZE = 50;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const loadMentions = useCallback(async () => {
     setLoading(true);
-    const params: Record<string, unknown> = {};
+    const params: Record<string, unknown> = { page, page_size: PAGE_SIZE };
     if (sourceFilter) params.source_id = sourceFilter;
     if (channelFilter) params.channel = channelFilter;
     if (mediaFilter === 'media') params.has_media = true;
@@ -46,8 +50,9 @@ export default function Mentions() {
     if (searchQuery.trim()) params.q = searchQuery.trim();
     const data = await fetchMentions(params as Parameters<typeof fetchMentions>[0]);
     setMentions(data.items);
+    setTotal(data.total);
     setLoading(false);
-  }, [sourceFilter, channelFilter, mediaFilter, promotedFilter, searchQuery]);
+  }, [page, sourceFilter, channelFilter, mediaFilter, promotedFilter, searchQuery]);
 
   useEffect(() => {
     loadMentions();
@@ -480,6 +485,29 @@ export default function Mentions() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 16 }}>
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            style={{ padding: '6px 14px', fontSize: 13, background: colors.bgSurface, border: `1px solid ${colors.border}`, borderRadius: 6, color: page <= 1 ? colors.textMuted : colors.text, cursor: page <= 1 ? 'default' : 'pointer' }}
+          >
+            Previous
+          </button>
+          <span style={{ fontSize: 13, color: colors.textDim }}>
+            Page {page} of {totalPages} ({total} total)
+          </span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+            style={{ padding: '6px 14px', fontSize: 13, background: colors.bgSurface, border: `1px solid ${colors.border}`, borderRadius: 6, color: page >= totalPages ? colors.textMuted : colors.text, cursor: page >= totalPages ? 'default' : 'pointer' }}
+          >
+            Next
+          </button>
         </div>
       )}
     </div>
