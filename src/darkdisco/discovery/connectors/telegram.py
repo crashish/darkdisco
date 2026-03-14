@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 HISTORY_LIMIT_DEFAULT = 100
 INTER_CHANNEL_DELAY = 1.0  # seconds between channel reads
+# Default max file size to download (50 MB — matches S3 upload limit in files.py)
+_DEFAULT_MAX_FILE_SIZE = 50 * 1024 * 1024
 
 
 class TelegramConnector(BaseConnector):
@@ -64,6 +66,10 @@ class TelegramConnector(BaseConnector):
     @property
     def _history_limit(self) -> int:
         return self.config.get("history_limit", HISTORY_LIMIT_DEFAULT)
+
+    @property
+    def _max_file_size(self) -> int:
+        return self.config.get("max_file_size", _DEFAULT_MAX_FILE_SIZE)
 
     async def setup(self) -> None:
         if not settings.telegram_api_id or not settings.telegram_api_hash:
@@ -221,6 +227,26 @@ class TelegramConnector(BaseConnector):
 
             mention = _message_to_mention(message, entity, channel_ref)
             if mention is not None:
+                # Download file attachment if present and within size limit
+                if message.file and message.file.size:
+                    if message.file.size <= self._max_file_size:
+                        try:
+                            file_data = await self._client.download_media(
+                                message, file=bytes,
+                            )
+                            if file_data:
+                                mention.metadata["file_data"] = file_data
+                        except Exception:
+                            logger.warning(
+                                "Failed to download file from message %d in %s",
+                                message.id, channel_ref,
+                            )
+                    else:
+                        logger.debug(
+                            "Skipping oversized file %s (%d bytes) in %s",
+                            message.file.name, message.file.size, channel_ref,
+                        )
+
                 mentions.append(mention)
 
         # Update bookmark
@@ -292,7 +318,8 @@ def _message_to_mention(
     if msg.message and not text:
         text = msg.message
 
-    if not text:
+    # Allow messages through if they have file attachments even without text
+    if not text and not msg.file:
         return None
 
     # Channel/chat title
