@@ -26,6 +26,8 @@ export default function Mentions() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
+  const [channelFilter, setChannelFilter] = useState('');
+  const [mediaFilter, setMediaFilter] = useState('');
   const [promotedFilter, setPromotedFilter] = useState<string>('unmatched');
   const [promoteId, setPromoteId] = useState<string | null>(null);
   const [promoteForm, setPromoteForm] = useState({ institution_id: '', title: '', severity: 'medium' as Severity, summary: '' });
@@ -36,13 +38,16 @@ export default function Mentions() {
     setLoading(true);
     const params: Record<string, unknown> = {};
     if (sourceFilter) params.source_id = sourceFilter;
+    if (channelFilter) params.channel = channelFilter;
+    if (mediaFilter === 'media') params.has_media = true;
+    else if (mediaFilter === 'text') params.has_media = false;
     if (promotedFilter === 'unmatched') params.promoted = false;
     else if (promotedFilter === 'promoted') params.promoted = true;
     if (searchQuery.trim()) params.q = searchQuery.trim();
     const data = await fetchMentions(params as Parameters<typeof fetchMentions>[0]);
     setMentions(data.items);
     setLoading(false);
-  }, [sourceFilter, promotedFilter, searchQuery]);
+  }, [sourceFilter, channelFilter, mediaFilter, promotedFilter, searchQuery]);
 
   useEffect(() => {
     loadMentions();
@@ -145,6 +150,31 @@ export default function Mentions() {
           {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
 
+        <input
+          type="text"
+          placeholder="Filter by channel..."
+          value={channelFilter}
+          onChange={e => setChannelFilter(e.target.value)}
+          style={{
+            padding: '7px 10px', fontSize: 13, background: colors.bgSurface,
+            border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.text, outline: 'none',
+            width: 160,
+          }}
+        />
+
+        <select
+          value={mediaFilter}
+          onChange={e => setMediaFilter(e.target.value)}
+          style={{
+            padding: '7px 10px', fontSize: 13, background: colors.bgSurface,
+            border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.text, outline: 'none',
+          }}
+        >
+          <option value="">All Types</option>
+          <option value="media">Has Media</option>
+          <option value="text">Text Only</option>
+        </select>
+
         <select
           value={promotedFilter}
           onChange={e => setPromotedFilter(e.target.value)}
@@ -158,9 +188,9 @@ export default function Mentions() {
           <option value="">All</option>
         </select>
 
-        {(searchQuery || sourceFilter || promotedFilter !== 'unmatched') && (
+        {(searchQuery || sourceFilter || channelFilter || mediaFilter || promotedFilter !== 'unmatched') && (
           <button
-            onClick={() => { setSearchQuery(''); setSourceFilter(''); setPromotedFilter('unmatched'); }}
+            onClick={() => { setSearchQuery(''); setSourceFilter(''); setChannelFilter(''); setMediaFilter(''); setPromotedFilter('unmatched'); }}
             style={{
               background: 'none', border: 'none', color: colors.accent,
               fontSize: 12, cursor: 'pointer', padding: '4px 8px',
@@ -202,6 +232,16 @@ export default function Mentions() {
                   <span style={{ fontSize: 13, color: colors.textDim, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {mention.content.slice(0, 120)}{mention.content.length > 120 ? '...' : ''}
                   </span>
+                  {meta?.channel_ref && (
+                    <span style={{ fontSize: 11, color: colors.accent, whiteSpace: 'nowrap', fontFamily: font.mono }}>
+                      #{String(meta.channel_ref)}
+                    </span>
+                  )}
+                  {meta?.file_name && (
+                    <span style={{ fontSize: 11, color: colors.textDim, whiteSpace: 'nowrap' }}>
+                      📎 {String(meta.file_name)}
+                    </span>
+                  )}
                   <span style={{ fontSize: 11, color: colors.textMuted, whiteSpace: 'nowrap' }}>
                     {mention.source_name}
                   </span>
@@ -225,34 +265,43 @@ export default function Mentions() {
                     {/* Metadata context */}
                     {meta && (
                       <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
-                        {meta.channel_name && (
+                        {meta.channel_ref && (
                           <div style={{ fontSize: 11 }}>
                             <span style={{ color: colors.textMuted }}>Channel: </span>
-                            <span style={{ color: colors.text }}>{String(meta.channel_name)}</span>
+                            <span style={{ color: colors.text }}>{String(meta.channel_ref)}</span>
                           </div>
                         )}
-                        {meta.forum_name && (
+                        {meta.chat_id && (
                           <div style={{ fontSize: 11 }}>
-                            <span style={{ color: colors.textMuted }}>Forum: </span>
-                            <span style={{ color: colors.text }}>{String(meta.forum_name)}</span>
+                            <span style={{ color: colors.textMuted }}>Chat ID: </span>
+                            <span style={{ color: colors.text, fontFamily: font.mono }}>{String(meta.chat_id)}</span>
                           </div>
                         )}
-                        {meta.post_author && (
+                        {meta.forwarded_from && (
                           <div style={{ fontSize: 11 }}>
-                            <span style={{ color: colors.textMuted }}>Author: </span>
-                            <span style={{ color: colors.text, fontFamily: font.mono }}>{String(meta.post_author)}</span>
+                            <span style={{ color: colors.textMuted }}>Forwarded from: </span>
+                            <span style={{ color: colors.text }}>{String(meta.forwarded_from)}</span>
                           </div>
                         )}
-                        {meta.sender_name && (
+                        {meta.file_name && (
                           <div style={{ fontSize: 11 }}>
-                            <span style={{ color: colors.textMuted }}>Sender: </span>
-                            <span style={{ color: colors.text, fontFamily: font.mono }}>{String(meta.sender_name)}</span>
+                            <span style={{ color: colors.textMuted }}>File: </span>
+                            <span style={{ color: colors.text, fontFamily: font.mono }}>{String(meta.file_name)}</span>
+                            {meta.file_size && <span style={{ color: colors.textMuted }}> ({(Number(meta.file_size) / 1024).toFixed(0)} KB)</span>}
                           </div>
                         )}
-                        {meta.message_date && (
+                        {meta.media_type && (
                           <div style={{ fontSize: 11 }}>
-                            <span style={{ color: colors.textMuted }}>Message date: </span>
-                            <span style={{ color: colors.text }}>{new Date(String(meta.message_date)).toLocaleString()}</span>
+                            <span style={{ color: colors.textMuted }}>Media: </span>
+                            <span style={{ color: colors.text }}>{String(meta.media_type)}</span>
+                          </div>
+                        )}
+                        {meta.download_status && (
+                          <div style={{ fontSize: 11 }}>
+                            <span style={{ color: colors.textMuted }}>Download: </span>
+                            <span style={{ color: meta.download_status === 'stored' ? colors.healthy : meta.download_status === 'error' ? colors.critical : colors.textDim }}>
+                              {String(meta.download_status)}
+                            </span>
                           </div>
                         )}
                       </div>
