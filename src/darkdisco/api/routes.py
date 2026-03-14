@@ -100,30 +100,59 @@ _VALID_TRANSITIONS: dict[FindingStatus, set[FindingStatus]] = {
 def _extract_archive_file_list(
     metadata: dict | None, search: str | None = None
 ) -> list[dict]:
-    """Pull extracted_file_contents from metadata, optionally filter by search term.
+    """Pull file inventory from metadata, optionally filter by search term.
 
     Legacy fallback: used when ExtractedFile rows don't exist for a mention.
+    Checks extracted_file_contents first, then file_analysis.files.
     """
     if not metadata:
         return []
-    files = metadata.get("extracted_file_contents")
-    if not files or not isinstance(files, list):
-        return []
 
-    result = []
-    needle = search.lower() if search else None
-    for f in files:
-        filename = f.get("filename", "")
-        content = f.get("content", "")
-        if needle and needle not in filename.lower() and needle not in content.lower():
-            continue
-        result.append({
-            "filename": filename,
-            "size": len(content),
-            "preview": content[:500] if content else "",
-            "content": content,
-        })
-    return result
+    # Try new-style extracted_file_contents (has content)
+    files = metadata.get("extracted_file_contents")
+    if files and isinstance(files, list):
+        result = []
+        needle = search.lower() if search else None
+        for f in files:
+            filename = f.get("filename", "")
+            content = f.get("content", "")
+            if needle and needle not in filename.lower() and needle not in content.lower():
+                continue
+            result.append({
+                "filename": filename,
+                "size": len(content),
+                "preview": content[:500] if content else "",
+                "content": content,
+            })
+        return result
+
+    # Fallback to file_analysis.files (inventory only, no content)
+    analysis = metadata.get("file_analysis")
+    if analysis and isinstance(analysis, dict):
+        file_list = analysis.get("files", [])
+        if not isinstance(file_list, list):
+            return []
+        result = []
+        needle = search.lower() if search else None
+        file_sha256 = metadata.get("file_sha256", "")[:8]
+        for f in file_list:
+            filename = f.get("filename", "")
+            if needle and needle not in filename.lower():
+                continue
+            s3_key = f"files/{file_sha256}/extracted/{f.get('sha256', '')[:8]}/{filename}" if file_sha256 else None
+            result.append({
+                "filename": filename,
+                "size": f.get("size", 0),
+                "preview": "",
+                "content": "",
+                "s3_key": s3_key,
+                "sha256": f.get("sha256", ""),
+                "extension": f.get("extension", ""),
+                "is_text": f.get("extension", "") in (".txt", ".csv", ".log", ".json", ".xml", ".html", ".sql", ".cfg", ".conf", ".ini", ".env", ".yml", ".yaml"),
+            })
+        return result
+
+    return []
 
 
 # ---- Health ----------------------------------------------------------------
