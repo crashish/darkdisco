@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Search, Building2, Radio, Disc3, LogOut, MessageSquare } from 'lucide-react';
+import { LayoutDashboard, Search, Building2, Radio, Disc3, LogOut, MessageSquare, FolderOpen } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { colors, font } from '../theme';
 import type { CSSProperties } from 'react';
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/findings', icon: Search, label: 'Findings' },
   { to: '/mentions', icon: MessageSquare, label: 'Mentions' },
+  { to: '/files', icon: FolderOpen, label: 'Files' },
   { to: '/institutions', icon: Building2, label: 'Institutions' },
   { to: '/sources', icon: Radio, label: 'Sources' },
 ];
