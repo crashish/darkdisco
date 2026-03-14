@@ -1,29 +1,20 @@
 import { useState, useEffect, useCallback } from 'react';
-// fetchArchiveContents used inline via fetch() for query param support
 import { colors, card, font } from '../theme';
 import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader } from 'lucide-react';
 
 const BASE = '/api';
 
-interface ExtractedFile {
+interface SearchResult {
+  id: string;
+  mention_id: string;
   filename: string;
   size: number;
+  extension: string;
+  is_text: boolean;
   preview: string;
-  content: string;
-  s3_key?: string;
-  sha256?: string;
-  extension?: string;
-  is_text?: boolean;
-}
-
-interface MentionSummary {
-  id: string;
-  source_name: string;
-  file_name: string;
-  file_size: number;
-  download_status: string;
-  collected_at: string;
-  file_count?: number;
+  s3_key: string;
+  archive_name: string;
+  source: string;
 }
 
 function formatSize(bytes: number): string {
@@ -33,85 +24,70 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+function highlightText(text: string, needle: string) {
+  if (!needle) return text;
+  const parts: (string | JSX.Element)[] = [];
+  const lower = text.toLowerCase();
+  const n = needle.toLowerCase();
+  let last = 0, idx = lower.indexOf(n);
+  let key = 0;
+  while (idx !== -1) {
+    if (idx > last) parts.push(text.slice(last, idx));
+    parts.push(<span key={key++} style={{ background: 'rgba(234, 179, 8, 0.4)', borderRadius: 2, padding: '0 1px' }}>{text.slice(idx, idx + n.length)}</span>);
+    last = idx + n.length;
+    idx = lower.indexOf(n, last);
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
 const textExts = new Set(['.txt', '.csv', '.log', '.json', '.xml', '.html', '.sql', '.cfg', '.conf', '.ini', '.env', '.yml', '.yaml', '.py', '.js', '.php']);
 
 export default function Files() {
-  const [mentions, setMentions] = useState<MentionSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedMention, setSelectedMention] = useState<string | null>(null);
-  const [files, setFiles] = useState<ExtractedFile[]>([]);
-  const [filesLoading, setFilesLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeQuery, setActiveQuery] = useState('');
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<Record<string, string>>({});
   const [contentLoading, setContentLoading] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [contentSearch, setContentSearch] = useState('');
-  const [contentSearchActive, setContentSearchActive] = useState('');
 
-  // Load mentions that have files
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      const token = localStorage.getItem('dd_token');
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      try {
-        const res = await fetch(`${BASE}/mentions?has_media=true&page_size=200`, { headers });
-        if (!res.ok) throw new Error(`${res.status}`);
-        const data = await res.json();
-        const items = (data.items || [])
-          .filter((m: Record<string, unknown>) => {
-            const meta = m.metadata as Record<string, unknown> | undefined;
-            return meta?.download_status === 'stored';
-          })
-          .map((m: Record<string, unknown>) => {
-            const meta = m.metadata as Record<string, unknown> | undefined;
-            return {
-              id: m.id as string,
-              source_name: m.source_name as string || '',
-              file_name: (meta?.file_name as string) || '',
-              file_size: (meta?.file_size as number) || 0,
-              download_status: (meta?.download_status as string) || '',
-              collected_at: m.collected_at as string || '',
-            };
-          });
-        setMentions(items);
-      } catch { /* ignore */ }
-      setLoading(false);
+  const doSearch = useCallback(async (q: string) => {
+    if (!q.trim()) {
+      setResults([]);
+      setTotal(0);
+      return;
     }
-    load();
-  }, []);
-
-  // Load files for selected mention
-  const loadFiles = useCallback(async (mentionId: string, q?: string) => {
-    setFilesLoading(true);
-    setFiles([]);
+    setLoading(true);
     setExpandedFile(null);
     try {
       const token = localStorage.getItem('dd_token');
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      const qs = q ? `?q=${encodeURIComponent(q)}` : '';
-      const res = await fetch(`${BASE}/mentions/${mentionId}/archive-contents${qs}`, { headers });
+      const res = await fetch(`${BASE}/extracted-files/search?q=${encodeURIComponent(q)}&limit=100`, { headers });
       if (!res.ok) throw new Error(`${res.status}`);
       const data = await res.json();
-      setFiles(data.files || []);
-    } catch { /* ignore */ }
-    setFilesLoading(false);
+      setResults(data.files || []);
+      setTotal(data.total || 0);
+    } catch { setResults([]); setTotal(0); }
+    setLoading(false);
   }, []);
 
-  useEffect(() => {
-    if (selectedMention) loadFiles(selectedMention, contentSearchActive || undefined);
-  }, [selectedMention, contentSearchActive, loadFiles]);
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setActiveQuery(query);
+    doSearch(query);
+  }
 
   // Fetch file content on demand from S3
-  async function loadFileContent(file: ExtractedFile) {
-    if (file.content) {
-      setFileContent(prev => ({ ...prev, [file.filename]: file.content }));
-      return;
+  async function loadFileContent(file: SearchResult) {
+    if (file.preview && file.source === 'extracted_files') {
+      // Use preview from API (already has content snippet)
+      setFileContent(prev => ({ ...prev, [file.id]: file.preview }));
     }
     if (!file.s3_key) return;
-    setContentLoading(file.filename);
+    setContentLoading(file.id);
     try {
       const token = localStorage.getItem('dd_token');
       const headers: Record<string, string> = {};
@@ -119,172 +95,130 @@ export default function Files() {
       const res = await fetch(`${BASE}/files/${file.s3_key}`, { headers });
       if (!res.ok) throw new Error(`${res.status}`);
       const text = await res.text();
-      setFileContent(prev => ({ ...prev, [file.filename]: text }));
+      setFileContent(prev => ({ ...prev, [file.id]: text }));
     } catch {
-      setFileContent(prev => ({ ...prev, [file.filename]: '[Failed to load content]' }));
+      setFileContent(prev => ({ ...prev, [file.id]: file.preview || '[Failed to load]' }));
     }
     setContentLoading(null);
   }
 
-  function handleExpandFile(file: ExtractedFile) {
-    if (expandedFile === file.filename) {
+  function handleExpandFile(file: SearchResult) {
+    if (expandedFile === file.id) {
       setExpandedFile(null);
       return;
     }
-    setExpandedFile(file.filename);
-    if (!fileContent[file.filename] && (file.is_text || textExts.has(file.extension || ''))) {
+    setExpandedFile(file.id);
+    const isText = file.is_text || textExts.has('.' + (file.extension || ''));
+    if (!fileContent[file.id] && isText) {
       loadFileContent(file);
     }
   }
 
-  const filtered = search.trim()
-    ? files.filter(f => f.filename.toLowerCase().includes(search.toLowerCase()))
-    : files;
-
-  function highlightText(text: string, needle: string) {
-    if (!needle) return text;
-    const parts: (string | JSX.Element)[] = [];
-    const lower = text.toLowerCase();
-    const n = needle.toLowerCase();
-    let last = 0, idx = lower.indexOf(n);
-    let key = 0;
-    while (idx !== -1) {
-      if (idx > last) parts.push(text.slice(last, idx));
-      parts.push(<span key={key++} style={{ background: 'rgba(234, 179, 8, 0.4)', borderRadius: 2, padding: '0 1px' }}>{text.slice(idx, idx + n.length)}</span>);
-      last = idx + n.length;
-      idx = lower.indexOf(n, last);
-    }
-    if (last < text.length) parts.push(text.slice(last));
-    return <>{parts}</>;
-  }
-
-  const selectedInfo = mentions.find(m => m.id === selectedMention);
+  // Group results by archive
+  const grouped = results.reduce<Record<string, { archive: string; files: SearchResult[] }>>((acc, file) => {
+    const key = file.mention_id;
+    if (!acc[key]) acc[key] = { archive: file.archive_name || 'Unknown archive', files: [] };
+    acc[key].files.push(file);
+    return acc;
+  }, {});
 
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>File Browser</h1>
         <p style={{ fontSize: 13, color: colors.textMuted, margin: 0 }}>
-          Browse and search extracted archive contents from collected mentions.
+          Search across all extracted archive contents — filenames and file content.
         </p>
       </div>
 
-      <div style={{ display: 'flex', gap: 16, minHeight: 'calc(100vh - 160px)' }}>
-        {/* Left panel: archive list */}
-        <div style={{ width: 340, flexShrink: 0 }}>
-          <div style={{ ...card, padding: 0, maxHeight: 'calc(100vh - 180px)', overflow: 'auto' }}>
-            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${colors.border}`, fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <Archive size={12} style={{ marginRight: 6, verticalAlign: -1 }} />
-              Archives ({mentions.length})
-            </div>
-            {loading ? (
-              <div style={{ padding: 20, textAlign: 'center', color: colors.textMuted }}>Loading...</div>
-            ) : mentions.length === 0 ? (
-              <div style={{ padding: 20, textAlign: 'center', color: colors.textMuted, fontSize: 13 }}>No stored archives found</div>
-            ) : (
-              mentions.map(m => (
-                <div
-                  key={m.id}
-                  onClick={() => setSelectedMention(m.id)}
-                  style={{
-                    padding: '10px 16px',
-                    cursor: 'pointer',
-                    borderBottom: `1px solid ${colors.border}`,
-                    background: selectedMention === m.id ? colors.bgHover : 'transparent',
-                    transition: 'background 0.1s',
-                  }}
-                  onMouseEnter={e => { if (selectedMention !== m.id) (e.currentTarget as HTMLElement).style.background = colors.bgSurface; }}
-                  onMouseLeave={e => { if (selectedMention !== m.id) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                >
-                  <div style={{ fontSize: 13, fontFamily: font.mono, color: colors.text, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {m.file_name}
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, fontSize: 11, color: colors.textMuted }}>
-                    <span>{formatSize(m.file_size)}</span>
-                    <span>{m.source_name}</span>
-                    <span>{new Date(m.collected_at).toLocaleDateString()}</span>
-                  </div>
-                </div>
-              ))
-            )}
+      {/* Global search */}
+      <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        <div style={{ position: 'relative', flex: 1 }}>
+          <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: colors.textMuted }} />
+          <input
+            type="text"
+            placeholder="Search filenames and file contents across all archives..."
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            style={{
+              width: '100%', padding: '10px 14px 10px 36px', fontSize: 14,
+              background: colors.bgSurface, border: `1px solid ${colors.border}`,
+              borderRadius: 8, color: colors.text, outline: 'none',
+            }}
+          />
+        </div>
+        <button type="submit" style={{
+          padding: '10px 20px', fontSize: 14, fontWeight: 600,
+          background: colors.accent, color: 'white', border: 'none',
+          borderRadius: 8, cursor: 'pointer',
+        }}>
+          Search
+        </button>
+        {activeQuery && (
+          <button type="button" onClick={() => { setQuery(''); setActiveQuery(''); setResults([]); setTotal(0); }} style={{
+            padding: '10px 14px', fontSize: 13, background: 'none',
+            border: `1px solid ${colors.border}`, borderRadius: 8,
+            color: colors.textDim, cursor: 'pointer',
+          }}>
+            Clear
+          </button>
+        )}
+      </form>
+
+      {/* Results */}
+      {loading ? (
+        <div style={{ ...card, padding: 40, textAlign: 'center', color: colors.textMuted }}>
+          <Loader size={20} style={{ animation: 'spin 1s linear infinite', marginBottom: 8 }} />
+          <div>Searching...</div>
+        </div>
+      ) : !activeQuery ? (
+        <div style={{ ...card, padding: 60, textAlign: 'center', color: colors.textMuted }}>
+          <Search size={32} style={{ marginBottom: 12, opacity: 0.3 }} />
+          <div style={{ fontSize: 15, marginBottom: 4 }}>Search extracted archive contents</div>
+          <div style={{ fontSize: 12 }}>
+            Enter a search term to find files by name or content across all collected archives.
+            <br />Try searching for domains, email addresses, passwords, or credential patterns.
           </div>
         </div>
+      ) : results.length === 0 ? (
+        <div style={{ ...card, padding: 40, textAlign: 'center', color: colors.textMuted }}>
+          <div style={{ fontSize: 14 }}>No results for &ldquo;{activeQuery}&rdquo;</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Try a different search term or check if archives have been extracted.</div>
+        </div>
+      ) : (
+        <div>
+          <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 12 }}>
+            {total} result{total !== 1 ? 's' : ''} across {Object.keys(grouped).length} archive{Object.keys(grouped).length !== 1 ? 's' : ''}
+          </div>
 
-        {/* Right panel: file contents */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {!selectedMention ? (
-            <div style={{ ...card, padding: 40, textAlign: 'center', color: colors.textMuted }}>
-              <Archive size={32} style={{ marginBottom: 8, opacity: 0.3 }} />
-              <div style={{ fontSize: 14 }}>Select an archive to browse its contents</div>
-            </div>
-          ) : filesLoading ? (
-            <div style={{ ...card, padding: 40, textAlign: 'center', color: colors.textMuted }}>
-              <Loader size={20} style={{ animation: 'spin 1s linear infinite', marginBottom: 8 }} />
-              <div>Loading files...</div>
-            </div>
-          ) : (
-            <div>
-              {/* Header */}
-              {selectedInfo && (
-                <div style={{ marginBottom: 12, fontSize: 13, color: colors.textDim }}>
-                  <span style={{ fontFamily: font.mono, color: colors.text, fontWeight: 600 }}>{selectedInfo.file_name}</span>
-                  {' '}&mdash;{' '}{files.length} file{files.length !== 1 ? 's' : ''} extracted
-                </div>
-              )}
-
-              {/* Search */}
-              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                <div style={{ position: 'relative', flex: 1 }}>
-                  <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: colors.textMuted }} />
-                  <input
-                    type="text"
-                    placeholder="Filter by filename..."
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    style={{
-                      width: '100%', padding: '8px 10px 8px 32px', fontSize: 13,
-                      background: colors.bgSurface, border: `1px solid ${colors.border}`,
-                      borderRadius: 6, color: colors.text, outline: 'none',
-                    }}
-                  />
-                </div>
-                <form onSubmit={e => { e.preventDefault(); setContentSearchActive(contentSearch); }} style={{ position: 'relative', flex: 1, display: 'flex', gap: 4 }}>
-                  <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: colors.textMuted }} />
-                  <input
-                    type="text"
-                    placeholder="Search file contents..."
-                    value={contentSearch}
-                    onChange={e => setContentSearch(e.target.value)}
-                    style={{
-                      flex: 1, padding: '8px 10px 8px 32px', fontSize: 13,
-                      background: colors.bgSurface, border: `1px solid ${colors.border}`,
-                      borderRadius: 6, color: colors.text, outline: 'none',
-                    }}
-                  />
-                  <button type="submit" style={{ padding: '6px 12px', fontSize: 12, background: colors.accent, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
-                    Search
-                  </button>
-                  {contentSearchActive && (
-                    <button type="button" onClick={() => { setContentSearch(''); setContentSearchActive(''); }} style={{ padding: '6px 8px', fontSize: 12, background: 'none', border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.textDim, cursor: 'pointer' }}>
-                      Clear
-                    </button>
-                  )}
-                </form>
+          {Object.entries(grouped).map(([mentionId, group]) => (
+            <div key={mentionId} style={{ ...card, marginBottom: 12, padding: 0 }}>
+              {/* Archive header */}
+              <div style={{
+                padding: '10px 16px', borderBottom: `1px solid ${colors.border}`,
+                display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: 12, color: colors.textDim,
+              }}>
+                <Archive size={13} />
+                <span style={{ fontFamily: font.mono, color: colors.text, fontWeight: 600 }}>
+                  {group.archive}
+                </span>
+                <span>— {group.files.length} match{group.files.length !== 1 ? 'es' : ''}</span>
               </div>
 
-              {/* File list */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                {filtered.map(file => {
-                  const isExpanded = expandedFile === file.filename;
-                  const isText = file.is_text || textExts.has(file.extension || '');
-                  const content = fileContent[file.filename] || file.content || '';
-                  const isLoadingContent = contentLoading === file.filename;
+              {/* Files in this archive */}
+              <div style={{ padding: '4px 8px' }}>
+                {group.files.map(file => {
+                  const isExpanded = expandedFile === file.id;
+                  const isText = file.is_text || textExts.has('.' + (file.extension || ''));
+                  const content = fileContent[file.id] || '';
+                  const isLoadingContent = contentLoading === file.id;
 
                   return (
-                    <div key={file.s3_key || file.filename}>
+                    <div key={file.id}>
                       <div
                         style={{
-                          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+                          display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px',
                           background: isExpanded ? colors.bgHover : 'transparent',
                           borderRadius: 4, cursor: 'pointer', transition: 'background 0.1s',
                         }}
@@ -295,21 +229,24 @@ export default function Files() {
                         {isExpanded ? <ChevronDown size={12} color={colors.textMuted} /> : <ChevronRight size={12} color={colors.textMuted} />}
                         <FileText size={13} color={isText ? colors.accent : colors.textDim} />
                         <span style={{ fontSize: 12, fontFamily: font.mono, color: colors.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {file.filename}
+                          {highlightText(file.filename, activeQuery)}
                         </span>
                         <span style={{ fontSize: 11, color: colors.textMuted, whiteSpace: 'nowrap' }}>{formatSize(file.size)}</span>
                         {file.s3_key && (
-                          <a
-                            href={`${BASE}/files/${file.s3_key}`}
-                            onClick={e => e.stopPropagation()}
-                            style={{ color: colors.textMuted, display: 'flex' }}
-                            title="Download"
-                          >
+                          <a href={`${BASE}/files/${file.s3_key}`} onClick={e => e.stopPropagation()} style={{ color: colors.textMuted, display: 'flex' }} title="Download">
                             <Download size={12} />
                           </a>
                         )}
                       </div>
 
+                      {/* Preview snippet */}
+                      {!isExpanded && file.preview && (
+                        <div style={{ marginLeft: 40, marginBottom: 4, fontSize: 11, color: colors.textMuted, fontFamily: font.mono, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>
+                          {highlightText(file.preview.slice(0, 120), activeQuery)}
+                        </div>
+                      )}
+
+                      {/* Full content */}
                       {isExpanded && (
                         <div style={{ marginLeft: 32, marginTop: 4, marginBottom: 8 }}>
                           {isLoadingContent ? (
@@ -322,7 +259,7 @@ export default function Files() {
                               border: `1px solid ${colors.border}`,
                               maxHeight: 500, overflow: 'auto', margin: 0,
                             }}>
-                              {contentSearchActive ? highlightText(content, contentSearchActive) : content}
+                              {highlightText(content, activeQuery)}
                             </pre>
                           ) : isText ? (
                             <div style={{ padding: 12, color: colors.textMuted, fontSize: 12, fontStyle: 'italic' }}>
@@ -330,7 +267,7 @@ export default function Files() {
                             </div>
                           ) : (
                             <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>
-                              Binary file ({file.extension || 'unknown type'}) — {file.s3_key ? 'download to view' : 'not available'}
+                              Binary file ({file.extension || 'unknown'}) — {file.s3_key ? 'download to view' : 'not available'}
                             </div>
                           )}
                         </div>
@@ -338,17 +275,11 @@ export default function Files() {
                     </div>
                   );
                 })}
-
-                {filtered.length === 0 && files.length > 0 && (
-                  <div style={{ padding: 20, textAlign: 'center', color: colors.textMuted, fontSize: 12 }}>
-                    No files match "{search}"
-                  </div>
-                )}
               </div>
             </div>
-          )}
+          ))}
         </div>
-      </div>
+      )}
 
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>

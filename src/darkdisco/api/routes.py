@@ -1151,45 +1151,108 @@ async def mention_archive_contents(
 @protected.get("/extracted-files/search")
 async def search_extracted_files(
     q: str = Query(..., min_length=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_session),
 ):
-    """Full-text search across all extracted file contents using PostgreSQL tsquery."""
+    """Global search across all extracted file contents and filenames.
+
+    Searches both the ExtractedFile table (FTS + filename ILIKE) and
+    falls back to raw_mentions content for archives without ExtractedFile rows.
+    Results include the parent mention's archive info for grouping.
+    """
+    files_result: list[dict] = []
+    total = 0
+
+    # 1. Search ExtractedFile table (FTS on content + ILIKE on filename)
+    content_match = ExtractedFile.content_tsvector.match(q)
+    name_match = ExtractedFile.filename.ilike(f"%{q}%")
     stmt = (
-        select(ExtractedFile)
-        .where(ExtractedFile.content_tsvector.match(q))
+        select(ExtractedFile, RawMention.metadata_.label("mention_meta"))
+        .join(RawMention, RawMention.id == ExtractedFile.mention_id)
+        .where(or_(content_match, name_match))
         .order_by(ExtractedFile.created_at.desc())
         .offset(offset)
         .limit(limit)
     )
     result = await db.execute(stmt)
-    rows = result.scalars().all()
+    rows = result.all()
 
     count_stmt = (
         select(func.count())
         .select_from(ExtractedFile)
-        .where(ExtractedFile.content_tsvector.match(q))
+        .where(or_(content_match, name_match))
     )
     total = (await db.execute(count_stmt)).scalar() or 0
+
+    for row in rows:
+        ef = row[0]
+        mention_meta = row[1] or {}
+        files_result.append({
+            "id": ef.id,
+            "mention_id": ef.mention_id,
+            "filename": ef.filename,
+            "size": ef.size or 0,
+            "extension": ef.extension,
+            "is_text": ef.is_text,
+            "preview": (ef.text_content or "")[:500],
+            "s3_key": ef.s3_key,
+            "archive_name": mention_meta.get("file_name", ""),
+            "source": "extracted_files",
+        })
+
+    # 2. Fallback: search raw_mentions content for archives without ExtractedFile rows
+    # (only if we haven't hit the limit from ExtractedFile results)
+    if len(files_result) < limit:
+        remaining = limit - len(files_result)
+        mention_ids_with_ef = select(ExtractedFile.mention_id).distinct().scalar_subquery()
+        mention_stmt = (
+            select(RawMention)
+            .where(
+                RawMention.content.ilike(f"%{q}%"),
+                RawMention.metadata_["s3_key"].astext.isnot(None),
+                RawMention.id.notin_(mention_ids_with_ef),
+            )
+            .order_by(RawMention.collected_at.desc())
+            .limit(remaining)
+        )
+        mention_result = await db.execute(mention_stmt)
+        for mention in mention_result.scalars().all():
+            meta = mention.metadata_ or {}
+            files_result.append({
+                "id": mention.id,
+                "mention_id": mention.id,
+                "filename": meta.get("file_name", "unknown"),
+                "size": meta.get("file_size", 0),
+                "extension": "",
+                "is_text": True,
+                "preview": _extract_context(mention.content or "", q, 250),
+                "s3_key": meta.get("s3_key", ""),
+                "archive_name": meta.get("file_name", ""),
+                "source": "mention_content",
+            })
+            total += 1
 
     return {
         "query": q,
         "total": total,
-        "files": [
-            {
-                "id": ef.id,
-                "mention_id": ef.mention_id,
-                "filename": ef.filename,
-                "size": ef.size or 0,
-                "extension": ef.extension,
-                "is_text": ef.is_text,
-                "preview": (ef.text_content or "")[:500],
-                "s3_key": ef.s3_key,
-            }
-            for ef in rows
-        ],
+        "files": files_result,
     }
+
+
+def _extract_context(text: str, query: str, context_chars: int = 250) -> str:
+    """Extract a snippet around the first match of query in text."""
+    idx = text.lower().find(query.lower())
+    if idx == -1:
+        return text[:context_chars]
+    start = max(0, idx - context_chars // 2)
+    end = min(len(text), idx + len(query) + context_chars // 2)
+    snippet = text[start:end]
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet = snippet + "..."
+    return snippet
 
 
 @protected.post("/mentions/{mention_id}/promote", response_model=FindingOut)
