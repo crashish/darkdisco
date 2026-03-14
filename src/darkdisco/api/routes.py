@@ -173,29 +173,35 @@ def _list_s3_extracted_files(s3_key: str) -> list[dict]:
 
     s3 = boto3.client(
         "s3",
-        endpoint_url=settings.s3_endpoint_url,
+        endpoint_url=settings.s3_endpoint,
         aws_access_key_id=settings.s3_access_key,
         aws_secret_access_key=settings.s3_secret_key,
     )
 
+    text_exts = {".txt", ".csv", ".log", ".json", ".xml", ".html", ".sql", ".cfg", ".conf", ".ini", ".env", ".yml", ".yaml"}
     result = []
     try:
-        resp = s3.list_objects_v2(Bucket=settings.s3_bucket, Prefix=prefix, MaxKeys=500)
-        for obj in resp.get("Contents", []):
-            key = obj["Key"]
-            filename = key.split("/")[-1] if "/" in key else key
-            ext = "." + filename.rsplit(".", 1)[1] if "." in filename else ""
-            text_exts = {".txt", ".csv", ".log", ".json", ".xml", ".html", ".sql", ".cfg", ".conf", ".ini", ".env", ".yml", ".yaml"}
-            result.append({
-                "filename": filename,
-                "size": obj.get("Size", 0),
-                "preview": "",
-                "content": "",
-                "s3_key": key,
-                "sha256": "",
-                "extension": ext,
-                "is_text": ext in text_exts,
-            })
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                # Preserve path relative to extracted/ prefix
+                rel_path = key[len(prefix):] if key.startswith(prefix) else key
+                # rel_path is like "sha256prefix/BR_i4iAB/passwords.txt"
+                # Skip the sha256 prefix dir, show the inner archive path
+                parts = rel_path.split("/", 1)
+                filename = parts[1] if len(parts) > 1 else parts[0]
+                ext = "." + filename.rsplit(".", 1)[1] if "." in filename else ""
+                result.append({
+                    "filename": filename,
+                    "size": obj.get("Size", 0),
+                    "preview": "",
+                    "content": "",
+                    "s3_key": key,
+                    "sha256": "",
+                    "extension": ext,
+                    "is_text": ext in text_exts,
+                })
     except Exception:
         pass
 
@@ -1116,23 +1122,28 @@ async def mention_archive_contents(
             for ef in extracted_rows
         ]
     else:
-        # Fallback to legacy JSONB metadata
+        # Fallback to legacy JSONB metadata (parse content sections)
         files = _extract_archive_file_list(mention.metadata_, q, content_blob=mention.content or "")
 
-        # If still no files but we have a stored archive, list S3 extracted dir
-        if not files and mention.metadata_:
-            meta = mention.metadata_
-            if meta.get("download_status") == "stored" and meta.get("s3_key"):
-                try:
-                    import asyncio
-                    s3_files = await asyncio.get_event_loop().run_in_executor(
-                        None, _list_s3_extracted_files, meta["s3_key"]
-                    )
-                    if q:
-                        s3_files = [f for f in s3_files if q.lower() in f["filename"].lower()]
-                    files = s3_files
-                except Exception:
-                    logger.debug("Failed to list S3 extracted files", exc_info=True)
+    # Always supplement with S3 listing for stored archives
+    # This catches files beyond the 100-item inventory cap and
+    # mentions that were stored but never extracted in-memory
+    meta = mention.metadata_ or {}
+    if meta.get("download_status") == "stored" and meta.get("s3_key"):
+        try:
+            import asyncio
+            s3_files = await asyncio.get_event_loop().run_in_executor(
+                None, _list_s3_extracted_files, meta["s3_key"]
+            )
+            # Merge: add S3 files not already in the list (by filename)
+            existing_names = {f["filename"] for f in files}
+            for sf in s3_files:
+                if sf["filename"] not in existing_names:
+                    if q and q.lower() not in sf["filename"].lower():
+                        continue
+                    files.append(sf)
+        except Exception:
+            logger.debug("Failed to list S3 extracted files", exc_info=True)
 
     return {"mention_id": mention_id, "files": files, "total": len(files)}
 
