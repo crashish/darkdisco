@@ -41,6 +41,10 @@ app.conf.update(
             "task": "darkdisco.pipeline.worker.schedule_polls",
             "schedule": 300.0,  # 5 minutes
         },
+        "sync-trapline-watchlist": {
+            "task": "darkdisco.pipeline.worker.sync_trapline_watchlist",
+            "schedule": 3600.0,  # 1 hour
+        },
     },
 )
 
@@ -621,3 +625,40 @@ def _rule_matches(rule, finding, severity_rank: dict) -> bool:
             return False
 
     return True
+
+
+# ---------------------------------------------------------------------------
+# Trapline watchlist sync
+# ---------------------------------------------------------------------------
+
+
+@app.task(name="darkdisco.pipeline.worker.sync_trapline_watchlist")
+def sync_trapline_watchlist():
+    """Periodic: sync all active institutions to trapline's client watchlist."""
+    from darkdisco.pipeline.trapline import sync_all_institutions
+
+    session = _get_sync_session()
+    try:
+        return sync_all_institutions(session)
+    finally:
+        session.close()
+
+
+@app.task(name="darkdisco.pipeline.worker.sync_institution_to_trapline")
+def sync_institution_to_trapline(institution_id: str):
+    """Sync a single institution to trapline after create/update."""
+    from darkdisco.common.models import Institution
+    from darkdisco.pipeline.trapline import sync_institution
+
+    session = _get_sync_session()
+    try:
+        inst = session.get(Institution, institution_id)
+        if inst is None:
+            logger.error("Institution %s not found for trapline sync", institution_id)
+            return {"error": "institution_not_found"}
+        if not inst.active:
+            logger.info("Institution %s is inactive, skipping trapline sync", inst.name)
+            return {"skipped": True}
+        return sync_institution(inst)
+    finally:
+        session.close()

@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     s3_secret_key: str = "darkdisco-secret"
     s3_bucket: str = "darkdisco-attachments"
 
+    # Trapline integration (client watchlist sync)
+    trapline_api_url: str = ""  # e.g. https://trapline.example.com
+    trapline_api_key: str = ""
+
     # Celery tuning
     celery_task_soft_time_limit: int = 300
     celery_task_time_limit: int = 600

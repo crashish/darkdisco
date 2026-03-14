@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -71,6 +72,8 @@ from darkdisco.common.models import (
     User,
     WatchTerm,
 )
+
+logger = logging.getLogger(__name__)
 
 # Public routes (no auth required) — health check and login only
 router = APIRouter()
@@ -313,6 +316,18 @@ async def delete_client(
     await db.commit()
 
 
+# ---- Trapline sync helper --------------------------------------------------
+
+
+def _trigger_trapline_sync(institution_id: str) -> None:
+    """Dispatch a Celery task to sync an institution to trapline's watchlist."""
+    try:
+        from darkdisco.pipeline.worker import sync_institution_to_trapline
+        sync_institution_to_trapline.delay(institution_id)
+    except Exception:
+        logger.warning("Failed to dispatch trapline sync for %s", institution_id, exc_info=True)
+
+
 # ---- Institutions ----------------------------------------------------------
 
 @protected.get("/institutions", response_model=list[InstitutionOut])
@@ -343,6 +358,7 @@ async def create_institution(
     db.add(inst)
     await db.commit()
     await db.refresh(inst)
+    _trigger_trapline_sync(inst.id)
     return inst
 
 
@@ -370,6 +386,7 @@ async def update_institution(
         setattr(inst, key, val)
     await db.commit()
     await db.refresh(inst)
+    _trigger_trapline_sync(inst.id)
     return inst
 
 
