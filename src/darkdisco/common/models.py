@@ -10,7 +10,9 @@ from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
+    Computed,
     DateTime,
     Enum,
     Float,
@@ -21,7 +23,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -251,6 +253,39 @@ class RawMention(Base):
     __table_args__ = (
         Index("ix_raw_mentions_source_collected", "source_id", "collected_at"),
         Index("ix_raw_mentions_promoted", "promoted_to_finding_id"),
+    )
+
+
+class ExtractedFile(Base):
+    """A file extracted from an archive attachment on a raw mention.
+
+    Normalizes the per-file data previously stored in JSONB metadata
+    (extracted_file_contents) into a proper relational table with
+    full-text search on text_content.
+    """
+
+    __tablename__ = "extracted_files"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    mention_id: Mapped[str] = mapped_column(ForeignKey("raw_mentions.id"), index=True, nullable=False)
+    filename: Mapped[str] = mapped_column(String(1024), nullable=False)
+    s3_key: Mapped[str | None] = mapped_column(String(512))
+    sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    size: Mapped[int | None] = mapped_column(BigInteger)
+    extension: Mapped[str | None] = mapped_column(String(32))
+    is_text: Mapped[bool] = mapped_column(Boolean, default=False)
+    text_content: Mapped[str | None] = mapped_column(Text)
+    content_tsvector = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('english', COALESCE(text_content, ''))", persisted=True),
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    mention: Mapped[RawMention] = relationship()
+
+    __table_args__ = (
+        Index("ix_extracted_files_content_fts", "content_tsvector", postgresql_using="gin"),
+        Index("ix_extracted_files_mention_filename", "mention_id", "filename"),
     )
 
 

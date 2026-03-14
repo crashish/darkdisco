@@ -356,10 +356,61 @@ def _attributed_raw_content(mention, matched_terms: list[dict]) -> str:
     return "".join(parts)
 
 
+def _store_extracted_files(session: Session, mention_id: str, metadata: dict) -> int:
+    """Create ExtractedFile rows from mention metadata.
+
+    Reads extracted_file_contents and file hashes from metadata and
+    persists them as normalized ExtractedFile rows linked to the mention.
+
+    Returns the number of rows created.
+    """
+    from darkdisco.common.models import ExtractedFile
+
+    extracted = metadata.get("extracted_file_contents")
+    if not extracted or not isinstance(extracted, list):
+        return 0
+
+    file_sha256 = metadata.get("file_sha256", "")
+    count = 0
+    for ef in extracted:
+        filename = ef.get("filename", "")
+        content = ef.get("content", "")
+        ext = ""
+        if "." in filename:
+            ext = filename.rsplit(".", 1)[-1].lower()
+
+        s3_key = None
+        sha = ef.get("sha256")
+        if file_sha256 and filename:
+            # Match the S3 key pattern from _process_file_mentions
+            if sha:
+                s3_key = f"files/{file_sha256[:8]}/extracted/{sha[:8]}/{filename}"
+            else:
+                s3_key = f"files/{file_sha256[:8]}/extracted/{filename}"
+
+        is_text = bool(content)
+
+        row = ExtractedFile(
+            mention_id=mention_id,
+            filename=filename,
+            s3_key=s3_key,
+            sha256=sha,
+            size=len(content.encode("utf-8")) if content else ef.get("size"),
+            extension=ext or None,
+            is_text=is_text,
+            text_content=content if content else None,
+        )
+        session.add(row)
+        count += 1
+
+    return count
+
+
 @app.task(name="darkdisco.pipeline.worker.run_matching")
 def run_matching(source_id: str, raw_mentions: list[dict]):
     """Match raw mentions against all active watch terms, enrich, filter, create findings."""
     from darkdisco.common.models import Finding, Source, WatchTerm
+    from darkdisco.common.models import RawMention as RawMentionModel
     from darkdisco.discovery.connectors.base import RawMention
     from darkdisco.discovery.matcher import match_mention, recompute_highlights
     from darkdisco.enrichment import enrich_and_filter
@@ -420,6 +471,23 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
             if existing:
                 logger.debug("Duplicate finding (hash=%s), skipping", content_hash[:12])
                 continue
+
+            # Persist as a raw_mentions row for browsing and ExtractedFile linkage
+            db_mention = RawMentionModel(
+                source_id=source_id,
+                content=mention.content or "",
+                content_hash=content_hash,
+                source_url=mention.source_url,
+                metadata_=mention.metadata,
+                collected_at=mention.discovered_at,
+            )
+            session.add(db_mention)
+            session.flush()  # assign ID before creating ExtractedFile rows
+
+            # Create ExtractedFile rows from metadata
+            ef_count = _store_extracted_files(session, db_mention.id, mention.metadata)
+            if ef_count:
+                logger.debug("Created %d extracted_files for mention %s", ef_count, db_mention.id)
 
             # Match against watch terms
             match_results = match_mention(mention, watch_terms)
@@ -504,6 +572,9 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 )
                 session.add(finding)
                 findings_created += 1
+
+                # Link the raw mention to this finding
+                db_mention.promoted_to_finding_id = finding.id
 
         session.commit()
 
@@ -660,5 +731,79 @@ def sync_institution_to_trapline(institution_id: str):
             logger.info("Institution %s is inactive, skipping trapline sync", inst.name)
             return {"skipped": True}
         return sync_institution(inst)
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Extracted file backfill & download
+# ---------------------------------------------------------------------------
+
+
+async def _download_files_async(s3_keys: list[str]) -> dict[str, bytes]:
+    """Download files from S3 and return {s3_key: content_bytes}.
+
+    Used to populate text_content on ExtractedFile rows when the content
+    wasn't stored inline (e.g. backfill of older mentions).
+    """
+    import aioboto3
+
+    from darkdisco.config import settings
+
+    results: dict[str, bytes] = {}
+    s3_session = aioboto3.Session()
+    async with s3_session.client(
+        "s3",
+        endpoint_url=settings.s3_endpoint,
+        aws_access_key_id=settings.s3_access_key,
+        aws_secret_access_key=settings.s3_secret_key,
+    ) as s3:
+        for key in s3_keys:
+            try:
+                resp = await s3.get_object(Bucket=settings.s3_bucket, Key=key)
+                data = await resp["Body"].read()
+                results[key] = data
+            except Exception:
+                logger.warning("Failed to download S3 key: %s", key)
+    return results
+
+
+@app.task(name="darkdisco.pipeline.worker.backfill_extracted_files")
+def backfill_extracted_files(batch_size: int = 100):
+    """Backfill ExtractedFile rows from existing raw_mentions with file_analysis metadata.
+
+    Iterates raw_mentions that have extracted_file_contents in metadata but
+    no corresponding extracted_files rows yet.
+    """
+    from darkdisco.common.models import ExtractedFile
+    from darkdisco.common.models import RawMention as RawMentionModel
+
+    session = _get_sync_session()
+    try:
+        # Find mentions with metadata but no ExtractedFile rows yet
+        already_backfilled = select(ExtractedFile.mention_id).distinct().scalar_subquery()
+        mentions = session.execute(
+            select(RawMentionModel).where(
+                RawMentionModel.metadata_.isnot(None),
+                RawMentionModel.id.notin_(already_backfilled),
+            ).limit(batch_size)
+        ).scalars().all()
+
+        total_created = 0
+        for mention in mentions:
+            meta = mention.metadata_ or {}
+            if not meta.get("extracted_file_contents"):
+                continue
+            count = _store_extracted_files(session, mention.id, meta)
+            total_created += count
+
+        session.commit()
+        logger.info("Backfill: created %d extracted_files from %d mentions", total_created, len(mentions))
+
+        # If we processed a full batch, there may be more — chain another run
+        if len(mentions) >= batch_size:
+            backfill_extracted_files.delay(batch_size)
+
+        return {"created": total_created, "mentions_processed": len(mentions)}
     finally:
         session.close()

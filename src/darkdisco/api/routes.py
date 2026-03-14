@@ -61,6 +61,7 @@ from darkdisco.common.database import get_session
 from darkdisco.common.models import (
     AlertRule,
     Client,
+    ExtractedFile,
     Finding,
     FindingStatus,
     Institution,
@@ -98,7 +99,10 @@ _VALID_TRANSITIONS: dict[FindingStatus, set[FindingStatus]] = {
 def _extract_archive_file_list(
     metadata: dict | None, search: str | None = None
 ) -> list[dict]:
-    """Pull extracted_file_contents from metadata, optionally filter by search term."""
+    """Pull extracted_file_contents from metadata, optionally filter by search term.
+
+    Legacy fallback: used when ExtractedFile rows don't exist for a mention.
+    """
     if not metadata:
         return []
     files = metadata.get("extracted_file_contents")
@@ -940,7 +944,11 @@ async def mention_archive_contents(
     q: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
-    """Return per-file extracted archive contents from a mention's metadata."""
+    """Return per-file extracted archive contents for a mention.
+
+    Queries the extracted_files table first (with FTS for search), falling back
+    to legacy JSONB metadata if no ExtractedFile rows exist.
+    """
     result = await db.execute(
         select(RawMention).where(RawMention.id == mention_id)
     )
@@ -948,8 +956,81 @@ async def mention_archive_contents(
     if not mention:
         raise HTTPException(404, "Mention not found")
 
-    files = _extract_archive_file_list(mention.metadata_, q)
+    # Try normalized ExtractedFile table first
+    stmt = select(ExtractedFile).where(ExtractedFile.mention_id == mention_id)
+    if q:
+        stmt = stmt.where(
+            or_(
+                ExtractedFile.filename.ilike(f"%{q}%"),
+                ExtractedFile.content_tsvector.match(q),
+            )
+        )
+    ef_result = await db.execute(stmt)
+    extracted_rows = ef_result.scalars().all()
+
+    if extracted_rows:
+        files = [
+            {
+                "filename": ef.filename,
+                "size": ef.size or 0,
+                "preview": (ef.text_content or "")[:500],
+                "content": ef.text_content or "",
+                "s3_key": ef.s3_key,
+                "sha256": ef.sha256,
+                "extension": ef.extension,
+                "is_text": ef.is_text,
+            }
+            for ef in extracted_rows
+        ]
+    else:
+        # Fallback to legacy JSONB metadata
+        files = _extract_archive_file_list(mention.metadata_, q)
+
     return {"mention_id": mention_id, "files": files, "total": len(files)}
+
+
+@protected.get("/extracted-files/search")
+async def search_extracted_files(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_session),
+):
+    """Full-text search across all extracted file contents using PostgreSQL tsquery."""
+    stmt = (
+        select(ExtractedFile)
+        .where(ExtractedFile.content_tsvector.match(q))
+        .order_by(ExtractedFile.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    count_stmt = (
+        select(func.count())
+        .select_from(ExtractedFile)
+        .where(ExtractedFile.content_tsvector.match(q))
+    )
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    return {
+        "query": q,
+        "total": total,
+        "files": [
+            {
+                "id": ef.id,
+                "mention_id": ef.mention_id,
+                "filename": ef.filename,
+                "size": ef.size or 0,
+                "extension": ef.extension,
+                "is_text": ef.is_text,
+                "preview": (ef.text_content or "")[:500],
+                "s3_key": ef.s3_key,
+            }
+            for ef in rows
+        ],
+    }
 
 
 @protected.post("/mentions/{mention_id}/promote", response_model=FindingOut)
@@ -1086,11 +1167,50 @@ async def finding_archive_contents(
     q: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
-    """Return per-file extracted archive contents from a finding's metadata."""
+    """Return per-file extracted archive contents for a finding.
+
+    Looks up the linked raw_mention via promoted_to_finding_id and queries
+    ExtractedFile rows, falling back to legacy JSONB metadata.
+    """
     finding = await db.get(Finding, finding_id)
     if not finding:
         raise HTTPException(404, "Finding not found")
 
+    # Find the raw_mention that was promoted to this finding
+    mention_result = await db.execute(
+        select(RawMention).where(RawMention.promoted_to_finding_id == finding_id)
+    )
+    linked_mention = mention_result.scalar_one_or_none()
+
+    if linked_mention:
+        stmt = select(ExtractedFile).where(ExtractedFile.mention_id == linked_mention.id)
+        if q:
+            stmt = stmt.where(
+                or_(
+                    ExtractedFile.filename.ilike(f"%{q}%"),
+                    ExtractedFile.content_tsvector.match(q),
+                )
+            )
+        ef_result = await db.execute(stmt)
+        extracted_rows = ef_result.scalars().all()
+
+        if extracted_rows:
+            files = [
+                {
+                    "filename": ef.filename,
+                    "size": ef.size or 0,
+                    "preview": (ef.text_content or "")[:500],
+                    "content": ef.text_content or "",
+                    "s3_key": ef.s3_key,
+                    "sha256": ef.sha256,
+                    "extension": ef.extension,
+                    "is_text": ef.is_text,
+                }
+                for ef in extracted_rows
+            ]
+            return {"finding_id": finding_id, "files": files, "total": len(files)}
+
+    # Fallback to legacy JSONB metadata
     files = _extract_archive_file_list(finding.metadata_, q)
     return {"finding_id": finding_id, "files": files, "total": len(files)}
 
