@@ -1,5 +1,5 @@
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
-export type FindingStatus = 'new' | 'reviewing' | 'escalated' | 'false_positive' | 'resolved';
+export type FindingStatus = 'new' | 'reviewing' | 'escalated' | 'confirmed' | 'dismissed' | 'false_positive' | 'resolved';
 export type SourceType = 'tor_forum' | 'paste_site' | 'telegram' | 'telegram_intel' | 'discord' | 'breach_db' | 'ransomware_blog' | 'forum' | 'marketplace' | 'stealer_log' | 'other';
 export type SourceHealth = 'healthy' | 'degraded' | 'offline';
 

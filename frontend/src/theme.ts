@@ -32,6 +32,8 @@ export const colors = {
   offlineBg: 'rgba(239, 68, 68, 0.12)',
 
   statusFalsePositive: '#64748b',
+  statusDismissed: '#64748b',
+  statusConfirmed: '#22c55e',
 };
 
 export const severityColor = (s: string) => colors[s as keyof typeof colors] || colors.textDim;

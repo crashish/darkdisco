@@ -40,7 +40,7 @@ export default function Mentions() {
     else if (promotedFilter === 'promoted') params.promoted = true;
     if (searchQuery.trim()) params.q = searchQuery.trim();
     const data = await fetchMentions(params as Parameters<typeof fetchMentions>[0]);
-    setMentions(data);
+    setMentions(data.items);
     setLoading(false);
   }, [sourceFilter, promotedFilter, searchQuery]);
 
