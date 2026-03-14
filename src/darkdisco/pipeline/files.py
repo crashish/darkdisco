@@ -96,8 +96,10 @@ class FileAnalysis:
 # ---------------------------------------------------------------------------
 
 
-def is_archive(filename: str) -> bool:
+def is_archive(filename: str | None) -> bool:
     """Check if a filename looks like a supported archive format."""
+    if not filename:
+        return False
     lower = filename.lower()
     return any(lower.endswith(ext) for ext in _ARCHIVE_EXTENSIONS)
 
