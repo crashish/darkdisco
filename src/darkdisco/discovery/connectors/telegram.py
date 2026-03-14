@@ -106,16 +106,25 @@ class TelegramConnector(BaseConnector):
             self._client = None
 
     async def poll(self, since: datetime | None = None) -> list[RawMention]:
-        if not self._channels:
-            logger.warning("No channels configured for Telegram connector")
-            return []
-
         if self._client is None:
             await self.setup()
 
+        # Build channel list: start from all joined channels/groups,
+        # supplemented by any explicitly configured channels
+        channels_to_poll = await self._get_joined_channels()
+        # Add any configured channels not already in the joined list
+        joined_ids = {str(c) for c in channels_to_poll}
+        for ch in self._channels:
+            if str(ch) not in joined_ids:
+                channels_to_poll.append(str(ch))
+
+        if not channels_to_poll:
+            logger.warning("No channels found (none joined, none configured)")
+            return []
+
         all_mentions: list[RawMention] = []
 
-        for channel_ref in self._channels:
+        for channel_ref in channels_to_poll:
             try:
                 mentions = await self._poll_channel(channel_ref, since)
                 all_mentions.extend(mentions)
@@ -140,9 +149,23 @@ class TelegramConnector(BaseConnector):
 
         logger.info(
             "Telegram poll complete: %d total mentions from %d channels",
-            len(all_mentions), len(self._channels),
+            len(all_mentions), len(channels_to_poll),
         )
         return all_mentions
+
+    async def _get_joined_channels(self) -> list[str]:
+        """Get all channels/groups the account is currently joined to."""
+        try:
+            dialogs = await self._client.get_dialogs()
+            channels = []
+            for d in dialogs:
+                if d.is_channel or d.is_group:
+                    channels.append(str(d.entity.id))
+            logger.info("Found %d joined channels/groups", len(channels))
+            return channels
+        except Exception:
+            logger.warning("Failed to enumerate joined channels, falling back to config")
+            return list(self._channels)
 
     async def health_check(self) -> dict:
         if self._client is None:
