@@ -171,7 +171,7 @@ export default function Mentions() {
           }}
         >
           <option value="">All Types</option>
-          <option value="media">Has Media</option>
+          <option value="media">Has Files</option>
           <option value="text">Text Only</option>
         </select>
 
@@ -238,8 +238,26 @@ export default function Mentions() {
                     </span>
                   )}
                   {meta?.file_name && (
-                    <span style={{ fontSize: 11, color: colors.textDim, whiteSpace: 'nowrap' }}>
-                      📎 {String(meta.file_name)}
+                    <span style={{ fontSize: 11, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ color: colors.textDim }}>📎 {String(meta.file_name)}</span>
+                      {meta.file_size && (
+                        <span style={{ color: colors.textMuted }}>
+                          ({Number(meta.file_size) >= 1048576
+                            ? (Number(meta.file_size) / 1048576).toFixed(1) + ' MB'
+                            : (Number(meta.file_size) / 1024).toFixed(0) + ' KB'})
+                        </span>
+                      )}
+                      {meta.download_status && (
+                        <span style={{
+                          fontSize: 9, fontWeight: 600, padding: '1px 5px', borderRadius: 3,
+                          color: 'white',
+                          background: meta.download_status === 'stored' ? colors.healthy
+                            : meta.download_status === 'error' ? colors.critical
+                            : colors.textMuted,
+                        }}>
+                          {String(meta.download_status).toUpperCase()}
+                        </span>
+                      )}
                     </span>
                   )}
                   <span style={{ fontSize: 11, color: colors.textMuted, whiteSpace: 'nowrap' }}>
