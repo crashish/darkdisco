@@ -270,7 +270,13 @@ export default function Mentions() {
 
                     {/* Archive Contents (if present) */}
                     {archiveFilesMap[mention.id] && archiveFilesMap[mention.id].length > 0 && (
-                      <ArchiveContents files={archiveFilesMap[mention.id]} />
+                      <ArchiveContents
+                        files={archiveFilesMap[mention.id]}
+                        onServerSearch={async (q) => {
+                          const data = await fetchArchiveContents('mentions', mention.id, q);
+                          return data.files as ArchiveFile[];
+                        }}
+                      />
                     )}
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: colors.textMuted }}>

@@ -348,7 +348,15 @@ export default function FindingDetail() {
           )}
 
           {/* Archive Contents */}
-          {archiveFiles.length > 0 && <ArchiveContents files={archiveFiles} />}
+          {archiveFiles.length > 0 && (
+            <ArchiveContents
+              files={archiveFiles}
+              onServerSearch={async (q) => {
+                const data = await fetchArchiveContents('findings', id!, q);
+                return data.files as ArchiveFile[];
+              }}
+            />
+          )}
 
           {/* Matched Terms */}
           {finding.matched_terms && finding.matched_terms.length > 0 && (

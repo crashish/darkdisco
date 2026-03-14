@@ -989,6 +989,27 @@ async def mention_archive_contents(
     return {"mention_id": mention_id, "files": files, "total": len(files)}
 
 
+@protected.get("/extracted-files/{file_id}/preview")
+async def extracted_file_preview(
+    file_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """Return text content preview for a single extracted file."""
+    ef = await db.get(ExtractedFile, file_id)
+    if not ef:
+        raise HTTPException(404, "Extracted file not found")
+    return {
+        "id": ef.id,
+        "mention_id": ef.mention_id,
+        "filename": ef.filename,
+        "size": ef.size or 0,
+        "extension": ef.extension,
+        "is_text": ef.is_text,
+        "sha256": ef.sha256,
+        "content": ef.text_content or "",
+    }
+
+
 @protected.get("/extracted-files/search")
 async def search_extracted_files(
     q: str = Query(..., min_length=1),

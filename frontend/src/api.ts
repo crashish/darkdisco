@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, ExtractedFile, ExtractedFileSearchResult } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -179,8 +179,10 @@ export async function fetchMentions(params?: {
 export async function fetchArchiveContents(
   type: 'mentions' | 'findings',
   id: string,
-): Promise<{ files: { filename: string; size: number; preview: string; content: string }[]; total: number }> {
-  return apiFetch(`/${type}/${id}/archive-contents`, { files: [], total: 0 });
+  q?: string,
+): Promise<{ files: { filename: string; size: number; preview: string; content: string; extension?: string; sha256?: string; is_text?: boolean; s3_key?: string }[]; total: number }> {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+  return apiFetch(`/${type}/${id}/archive-contents${qs}`, { files: [], total: 0 });
 }
 
 export async function promoteMention(mentionId: string, body: {
@@ -194,4 +196,19 @@ export async function promoteMention(mentionId: string, body: {
     method: 'POST',
     body: JSON.stringify(body),
   });
+}
+
+export async function fetchExtractedFilePreview(fileId: string): Promise<ExtractedFile> {
+  return apiFetch(`/extracted-files/${fileId}/preview`, { filename: '', size: 0, content: '' } as ExtractedFile);
+}
+
+export async function searchExtractedFiles(params: {
+  q: string;
+  limit?: number;
+  offset?: number;
+}): Promise<ExtractedFileSearchResult> {
+  const qs = new URLSearchParams({ q: params.q });
+  if (params.limit) qs.set('limit', String(params.limit));
+  if (params.offset) qs.set('offset', String(params.offset));
+  return apiFetch(`/extracted-files/search?${qs}`, { query: params.q, total: 0, files: [] });
 }

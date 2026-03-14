@@ -131,6 +131,25 @@ export interface FindingTrend {
   count: number;
 }
 
+export interface ExtractedFile {
+  id?: string;
+  mention_id?: string;
+  filename: string;
+  size: number;
+  extension?: string | null;
+  is_text?: boolean;
+  sha256?: string | null;
+  s3_key?: string | null;
+  preview?: string;
+  content?: string;
+}
+
+export interface ExtractedFileSearchResult {
+  query: string;
+  total: number;
+  files: ExtractedFile[];
+}
+
 export interface DashboardStats {
   total_findings: number;
   findings_by_severity: Record<Severity, number>;
