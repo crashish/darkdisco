@@ -56,6 +56,8 @@ from darkdisco.api.schemas import (
     BinRoutingEntry,
     BinRoutingResult,
     BinRoutingSummary,
+    DiscoveredChannelOut,
+    DiscoveredChannelUpdate,
     WatchTermCreate,
     WatchTermOut,
     WatchTermUpdate,
@@ -64,6 +66,8 @@ from darkdisco.common.database import get_session
 from darkdisco.common.models import (
     AlertRule,
     Client,
+    DiscoveredChannel,
+    DiscoveryStatus,
     ExtractedFile,
     Finding,
     FindingStatus,
@@ -1858,4 +1862,142 @@ async def trigger_extract_mention_archive(
         "mention_id": mention_id,
         "archive_filename": meta.get("file_name", "unknown"),
     }
+
+
+# ---- Discovered Channels ---------------------------------------------------
+
+@protected.get(
+    "/discovered-channels",
+    response_model=list[DiscoveredChannelOut],
+)
+async def list_discovered_channels(
+    status: DiscoveryStatus | None = None,
+    source_id: str | None = None,
+    limit: int = Query(default=100, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_session),
+):
+    """List discovered channel links, optionally filtered by status or source."""
+    q = select(DiscoveredChannel).order_by(DiscoveredChannel.discovered_at.desc())
+    if status is not None:
+        q = q.where(DiscoveredChannel.status == status)
+    if source_id is not None:
+        q = q.where(DiscoveredChannel.source_id == source_id)
+    q = q.offset(offset).limit(limit)
+    rows = (await db.execute(q)).scalars().all()
+    return [DiscoveredChannelOut.model_validate(r) for r in rows]
+
+
+@protected.get(
+    "/discovered-channels/{channel_id}",
+    response_model=DiscoveredChannelOut,
+)
+async def get_discovered_channel(
+    channel_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    ch = await db.get(DiscoveredChannel, channel_id)
+    if not ch:
+        raise HTTPException(404, "Discovered channel not found")
+    return DiscoveredChannelOut.model_validate(ch)
+
+
+@protected.put(
+    "/discovered-channels/{channel_id}",
+    response_model=DiscoveredChannelOut,
+)
+async def update_discovered_channel(
+    channel_id: str,
+    body: DiscoveredChannelUpdate,
+    db: AsyncSession = Depends(get_session),
+):
+    """Update a discovered channel's status (approve, ignore, etc.).
+
+    When status is set to 'approved', the channel will be picked up by the
+    periodic process_channel_discoveries task for auto-joining.
+    """
+    ch = await db.get(DiscoveredChannel, channel_id)
+    if not ch:
+        raise HTTPException(404, "Discovered channel not found")
+
+    ch.status = body.status
+    if body.notes is not None:
+        ch.notes = body.notes
+    if body.target_source_id is not None:
+        ch.added_to_source_id = body.target_source_id
+
+    await db.commit()
+    await db.refresh(ch)
+    return DiscoveredChannelOut.model_validate(ch)
+
+
+@protected.post(
+    "/discovered-channels/{channel_id}/join",
+    response_model=DiscoveredChannelOut,
+)
+async def join_discovered_channel(
+    channel_id: str,
+    target_source_id: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_session),
+):
+    """Immediately join a discovered channel and add it to a source."""
+    ch = await db.get(DiscoveredChannel, channel_id)
+    if not ch:
+        raise HTTPException(404, "Discovered channel not found")
+
+    if ch.status == DiscoveryStatus.joined:
+        raise HTTPException(409, "Channel already joined")
+
+    # Determine target source
+    target_sid = target_source_id or ch.added_to_source_id or ch.source_id
+    target_source = await db.get(Source, target_sid)
+    if not target_source:
+        raise HTTPException(404, "Target source not found")
+    if target_source.source_type not in (SourceType.telegram, SourceType.telegram_intel):
+        raise HTTPException(400, "Target source must be a Telegram source")
+
+    # Join via Telegram API
+    from darkdisco.discovery.connectors.telegram import TelegramConnector
+
+    cfg = dict(target_source.config or {})
+    connector = TelegramConnector(cfg)
+    try:
+        await connector.setup()
+        joined = await connector.join_channel(ch.url)
+    finally:
+        await connector.teardown()
+
+    if not joined:
+        ch.status = DiscoveryStatus.failed
+        ch.notes = (ch.notes or "") + "\nJoin failed"
+        await db.commit()
+        await db.refresh(ch)
+        raise HTTPException(502, "Failed to join channel")
+
+    # Add to source config
+    channels: list[str] = list(cfg.get("channels", []))
+    if ch.url not in channels:
+        channels.append(ch.url)
+        cfg["channels"] = channels
+        target_source.config = cfg
+    ch.status = DiscoveryStatus.joined
+    ch.added_to_source_id = target_sid
+    ch.joined_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(ch)
+    return DiscoveredChannelOut.model_validate(ch)
+
+
+@protected.delete("/discovered-channels/{channel_id}")
+async def delete_discovered_channel(
+    channel_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    ch = await db.get(DiscoveredChannel, channel_id)
+    if not ch:
+        raise HTTPException(404, "Discovered channel not found")
+    await db.delete(ch)
+    await db.commit()
+    return {"deleted": channel_id}
 

@@ -289,6 +289,45 @@ class ExtractedFile(Base):
     )
 
 
+class DiscoveryStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    joined = "joined"
+    failed = "failed"
+    ignored = "ignored"
+
+
+class DiscoveredChannel(Base):
+    """A Telegram channel link discovered in monitored message content.
+
+    Tracks t.me/ links found during polling so admins can review and
+    auto-join promising channels.
+    """
+
+    __tablename__ = "discovered_channels"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    url: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id"), index=True, nullable=False)
+    source_channel: Mapped[str | None] = mapped_column(String(255))  # which channel it was found in
+    message_id: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[DiscoveryStatus] = mapped_column(
+        Enum(DiscoveryStatus), default=DiscoveryStatus.pending, index=True,
+    )
+    added_to_source_id: Mapped[str | None] = mapped_column(ForeignKey("sources.id"))
+    notes: Mapped[str | None] = mapped_column(Text)
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    source: Mapped[Source] = relationship(foreign_keys=[source_id])
+
+    __table_args__ = (
+        Index("ix_discovered_channels_url", "url"),
+        Index("ix_discovered_channels_status", "status"),
+        Index("ix_discovered_channels_source_status", "source_id", "status"),
+    )
+
+
 class FindingAttachment(Base):
     """File or screenshot attached to a finding."""
 

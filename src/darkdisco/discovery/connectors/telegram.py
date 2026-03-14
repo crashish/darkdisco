@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -381,6 +382,54 @@ def _message_to_mention(
         discovered_at=discovered,
         metadata=metadata,
     )
+
+
+# ------------------------------------------------------------------
+# Channel link extraction
+# ------------------------------------------------------------------
+
+# Matches t.me links including optional trailing /digits for message links.
+# Group 1 = the channel/invite part, group 2 = optional /message_id suffix.
+_TME_LINK_RE = re.compile(
+    r"(?:https?://)?t\.me/((?:\+[A-Za-z0-9_-]+|joinchat/[A-Za-z0-9_-]+|[A-Za-z][A-Za-z0-9_]{3,}))(/\d+)?",
+)
+
+# Paths that are Telegram features, not channels
+_TME_IGNORE_PATHS = frozenset({
+    "proxy", "socks", "addstickers", "addtheme",
+    "share", "iv", "confirmphone", "setlanguage",
+})
+
+
+def extract_channel_links(text: str) -> list[str]:
+    """Extract unique t.me channel/group links from message text.
+
+    Returns normalized https://t.me/... URLs for channels and invite links.
+    Skips message-specific links (t.me/channel/123) and Telegram feature paths.
+    """
+    if not text:
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for match in _TME_LINK_RE.finditer(text):
+        channel_part = match.group(1)
+        msg_suffix = match.group(2)  # e.g. "/12345" for message links
+
+        # Skip message links — we want the channel, not a specific message
+        if msg_suffix:
+            continue
+
+        # Skip known non-channel paths
+        first_segment = channel_part.split("/")[0].lower()
+        if first_segment in _TME_IGNORE_PATHS:
+            continue
+
+        url = f"https://t.me/{channel_part}"
+        low = url.lower()
+        if low not in seen:
+            seen.add(low)
+            result.append(url)
+    return result
 
 
 # ------------------------------------------------------------------

@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from darkdisco.common.models import (
+    DiscoveryStatus,
     FindingStatus,
     Severity,
     SourceType,
@@ -482,6 +483,31 @@ class DryRunResult(BaseModel):
     matches: list[DryRunMatch]
     fp_analysis: dict | None = None
     would_create_finding: bool
+
+
+# ---------------------------------------------------------------------------
+# Discovered Channels
+# ---------------------------------------------------------------------------
+
+class DiscoveredChannelOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    url: str
+    source_id: str
+    source_channel: str | None = None
+    message_id: int | None = None
+    status: DiscoveryStatus
+    added_to_source_id: str | None = None
+    notes: str | None = None
+    discovered_at: datetime
+    joined_at: datetime | None = None
+
+
+class DiscoveredChannelUpdate(BaseModel):
+    status: DiscoveryStatus
+    target_source_id: str | None = None
+    notes: str | None = None
 
 
 # ---------------------------------------------------------------------------
