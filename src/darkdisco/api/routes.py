@@ -98,7 +98,7 @@ _VALID_TRANSITIONS: dict[FindingStatus, set[FindingStatus]] = {
 
 
 def _extract_archive_file_list(
-    metadata: dict | None, search: str | None = None
+    metadata: dict | None, search: str | None = None, content_blob: str = ""
 ) -> list[dict]:
     """Pull file inventory from metadata, optionally filter by search term.
 
@@ -126,7 +126,7 @@ def _extract_archive_file_list(
             })
         return result
 
-    # Fallback to file_analysis.files (inventory only, no content)
+    # Fallback to file_analysis.files with content parsed from mention text
     analysis = metadata.get("file_analysis")
     if analysis and isinstance(analysis, dict):
         file_list = analysis.get("files", [])
@@ -135,24 +135,89 @@ def _extract_archive_file_list(
         result = []
         needle = search.lower() if search else None
         file_sha256 = metadata.get("file_sha256", "")[:8]
+
+        # Parse per-file content from the concatenated mention content
+        content_by_file = _parse_extracted_sections(content_blob) if content_blob else {}
+
+        text_exts = {".txt", ".csv", ".log", ".json", ".xml", ".html", ".sql", ".cfg", ".conf", ".ini", ".env", ".yml", ".yaml"}
         for f in file_list:
             filename = f.get("filename", "")
-            if needle and needle not in filename.lower():
-                continue
+            file_content = content_by_file.get(filename, "")
+            if needle:
+                if needle not in filename.lower() and needle not in file_content.lower():
+                    continue
             s3_key = f"files/{file_sha256}/extracted/{f.get('sha256', '')[:8]}/{filename}" if file_sha256 else None
             result.append({
                 "filename": filename,
                 "size": f.get("size", 0),
-                "preview": "",
-                "content": "",
+                "preview": file_content[:500] if file_content else "",
+                "content": file_content,
                 "s3_key": s3_key,
                 "sha256": f.get("sha256", ""),
                 "extension": f.get("extension", ""),
-                "is_text": f.get("extension", "") in (".txt", ".csv", ".log", ".json", ".xml", ".html", ".sql", ".cfg", ".conf", ".ini", ".env", ".yml", ".yaml"),
+                "is_text": f.get("extension", "") in text_exts,
             })
         return result
 
     return []
+
+
+def _list_s3_extracted_files(s3_key: str) -> list[dict]:
+    """List extracted files in S3 under the archive's prefix."""
+    import boto3
+    from darkdisco.config import settings
+
+    # s3_key is like "files/804e57ef/@Trident_Cloud.zip"
+    # extracted files are at "files/804e57ef/extracted/..."
+    prefix = s3_key.rsplit("/", 1)[0] + "/extracted/"
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=settings.s3_endpoint_url,
+        aws_access_key_id=settings.s3_access_key,
+        aws_secret_access_key=settings.s3_secret_key,
+    )
+
+    result = []
+    try:
+        resp = s3.list_objects_v2(Bucket=settings.s3_bucket, Prefix=prefix, MaxKeys=500)
+        for obj in resp.get("Contents", []):
+            key = obj["Key"]
+            filename = key.split("/")[-1] if "/" in key else key
+            ext = "." + filename.rsplit(".", 1)[1] if "." in filename else ""
+            text_exts = {".txt", ".csv", ".log", ".json", ".xml", ".html", ".sql", ".cfg", ".conf", ".ini", ".env", ".yml", ".yaml"}
+            result.append({
+                "filename": filename,
+                "size": obj.get("Size", 0),
+                "preview": "",
+                "content": "",
+                "s3_key": key,
+                "sha256": "",
+                "extension": ext,
+                "is_text": ext in text_exts,
+            })
+    except Exception:
+        pass
+
+    return result
+
+
+def _parse_extracted_sections(content: str) -> dict[str, str]:
+    """Parse '--- filename ---' delimited sections from concatenated mention content."""
+    import re
+    sections: dict[str, str] = {}
+    # Split on the section delimiter pattern
+    parts = re.split(r'\n\s*--- (.+?) ---\s*\n', content)
+    # parts[0] is the original message text (before first delimiter)
+    # Then alternating: filename, content, filename, content...
+    i = 1
+    while i + 1 < len(parts):
+        filename = parts[i].strip()
+        text = parts[i + 1].strip()
+        if filename and filename != "Extracted archive content":
+            sections[filename] = text
+        i += 2
+    return sections
 
 
 # ---- Health ----------------------------------------------------------------
@@ -1050,7 +1115,22 @@ async def mention_archive_contents(
         ]
     else:
         # Fallback to legacy JSONB metadata
-        files = _extract_archive_file_list(mention.metadata_, q)
+        files = _extract_archive_file_list(mention.metadata_, q, content_blob=mention.content or "")
+
+        # If still no files but we have a stored archive, list S3 extracted dir
+        if not files and mention.metadata_:
+            meta = mention.metadata_
+            if meta.get("download_status") == "stored" and meta.get("s3_key"):
+                try:
+                    import asyncio
+                    s3_files = await asyncio.get_event_loop().run_in_executor(
+                        None, _list_s3_extracted_files, meta["s3_key"]
+                    )
+                    if q:
+                        s3_files = [f for f in s3_files if q.lower() in f["filename"].lower()]
+                    files = s3_files
+                except Exception:
+                    logger.debug("Failed to list S3 extracted files", exc_info=True)
 
     return {"mention_id": mention_id, "files": files, "total": len(files)}
 
@@ -1438,7 +1518,7 @@ async def finding_archive_contents(
             return {"finding_id": finding_id, "files": files, "total": len(files)}
 
     # Fallback to legacy JSONB metadata
-    files = _extract_archive_file_list(finding.metadata_, q)
+    files = _extract_archive_file_list(finding.metadata_, q, content_blob=finding.raw_content or "")
     return {"finding_id": finding_id, "files": files, "total": len(files)}
 
 
