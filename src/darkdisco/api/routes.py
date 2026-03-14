@@ -53,6 +53,9 @@ from darkdisco.api.schemas import (
     StatusCount,
     TokenRequest,
     TokenResponse,
+    BinRoutingEntry,
+    BinRoutingResult,
+    BinRoutingSummary,
     WatchTermCreate,
     WatchTermOut,
     WatchTermUpdate,
@@ -72,6 +75,7 @@ from darkdisco.common.models import (
     SourceType,
     User,
     WatchTerm,
+    WatchTermType,
 )
 
 logger = logging.getLogger(__name__)
@@ -404,6 +408,116 @@ async def delete_institution(
         raise HTTPException(404, "Institution not found")
     await db.delete(inst)
     await db.commit()
+
+
+@protected.post("/institutions/populate-bins-routing", response_model=BinRoutingSummary)
+async def populate_bins_routing(
+    entries: list[BinRoutingEntry],
+    db: AsyncSession = Depends(get_session),
+):
+    """Bulk-populate BIN ranges and routing numbers for institutions.
+
+    Merges new values with existing data (no duplicates). Automatically creates
+    watch terms for each newly-added BIN prefix and routing number so the
+    matcher can flag them in Telegram chats and data dumps.
+    """
+    from uuid import uuid4
+
+    # Build institution lookup by lowercase name / short_name
+    result = await db.execute(select(Institution))
+    all_insts = result.scalars().all()
+    inst_by_name: dict[str, Institution] = {}
+    for inst in all_insts:
+        inst_by_name[inst.name.lower()] = inst
+        if inst.short_name:
+            inst_by_name[inst.short_name.lower()] = inst
+
+    results: list[BinRoutingResult] = []
+    summary = {
+        "matched": 0, "not_found": 0, "institutions_updated": 0,
+        "bins_added": 0, "routing_added": 0, "watch_terms_created": 0,
+    }
+
+    for entry in entries:
+        inst = inst_by_name.get(entry.name.lower())
+        if not inst:
+            summary["not_found"] += 1
+            results.append(BinRoutingResult(name=entry.name, status="not_found"))
+            continue
+
+        summary["matched"] += 1
+
+        existing_bins = set(inst.bin_ranges or [])
+        added_bins = [b for b in entry.bin_ranges if b not in existing_bins]
+
+        existing_rtns = set(inst.routing_numbers or [])
+        added_rtns = [r for r in entry.routing_numbers if r not in existing_rtns]
+
+        if not added_bins and not added_rtns:
+            results.append(BinRoutingResult(name=entry.name, status="up_to_date"))
+            continue
+
+        # Get existing watch term values to avoid duplicates
+        existing_terms_result = await db.execute(
+            select(WatchTerm.value).where(
+                WatchTerm.institution_id == inst.id,
+                WatchTerm.term_type.in_([
+                    WatchTermType.routing_number,
+                    WatchTermType.bin_range,
+                ]),
+            )
+        )
+        existing_term_values = {row[0] for row in existing_terms_result.all()}
+
+        wt_count = 0
+
+        if added_bins:
+            inst.bin_ranges = list(existing_bins | set(entry.bin_ranges))
+            summary["bins_added"] += len(added_bins)
+            for b in added_bins:
+                if b not in existing_term_values:
+                    db.add(WatchTerm(
+                        id=str(uuid4()),
+                        institution_id=inst.id,
+                        term_type=WatchTermType.bin_range,
+                        value=b,
+                        enabled=True,
+                        case_sensitive=False,
+                        notes=f"Card BIN prefix ({len(b)}-digit)",
+                    ))
+                    wt_count += 1
+
+        if added_rtns:
+            inst.routing_numbers = list(existing_rtns | set(entry.routing_numbers))
+            summary["routing_added"] += len(added_rtns)
+            for r in added_rtns:
+                if r not in existing_term_values:
+                    db.add(WatchTerm(
+                        id=str(uuid4()),
+                        institution_id=inst.id,
+                        term_type=WatchTermType.routing_number,
+                        value=r,
+                        enabled=True,
+                        case_sensitive=False,
+                        notes="ABA routing number (FDIC/NCUA public data)",
+                    ))
+                    wt_count += 1
+
+        summary["watch_terms_created"] += wt_count
+        summary["institutions_updated"] += 1
+
+        _trigger_trapline_sync(inst.id)
+
+        results.append(BinRoutingResult(
+            name=entry.name,
+            status="updated",
+            bins_added=len(added_bins),
+            routing_added=len(added_rtns),
+            watch_terms_created=wt_count,
+        ))
+
+    await db.commit()
+    return BinRoutingSummary(**summary, results=results)
 
 
 # ---- Watch Terms -----------------------------------------------------------
