@@ -1794,3 +1794,68 @@ async def mark_all_notifications_read(
     )
     await db.commit()
 
+
+# ---------------------------------------------------------------------------
+# Stored archive extraction backfill
+# ---------------------------------------------------------------------------
+
+
+@protected.post("/pipeline/backfill-stored-archives")
+async def trigger_backfill_stored_archives(
+    batch_size: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_session),
+):
+    """Trigger extraction of stored-but-unextracted archives from S3.
+
+    Finds mentions with archives uploaded to S3 that were never extracted
+    (typically because they were too large for in-memory processing) and
+    dispatches streaming extraction tasks for each.
+    """
+    from darkdisco.pipeline.worker import backfill_stored_archives
+
+    # Count eligible mentions for context
+    from darkdisco.common.models import ExtractedFile
+
+    already_extracted = select(ExtractedFile.mention_id).distinct().scalar_subquery()
+    total_stored = (await db.execute(
+        select(func.count(RawMention.id)).where(
+            RawMention.metadata_.isnot(None),
+            RawMention.id.notin_(already_extracted),
+        )
+    )).scalar() or 0
+
+    task = backfill_stored_archives.delay(batch_size)
+
+    return {
+        "status": "dispatched",
+        "task_id": task.id,
+        "batch_size": batch_size,
+        "estimated_eligible": total_stored,
+    }
+
+
+@protected.post("/pipeline/extract-mention-archive/{mention_id}")
+async def trigger_extract_mention_archive(
+    mention_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """Trigger streaming extraction for a single mention's stored archive."""
+    mention = await db.get(RawMention, mention_id)
+    if not mention:
+        raise HTTPException(404, "Mention not found")
+
+    meta = mention.metadata_ or {}
+    if not meta.get("s3_key"):
+        raise HTTPException(400, "Mention has no stored archive (no s3_key)")
+
+    from darkdisco.pipeline.worker import extract_stored_archive
+
+    task = extract_stored_archive.delay(mention_id)
+
+    return {
+        "status": "dispatched",
+        "task_id": task.id,
+        "mention_id": mention_id,
+        "archive_filename": meta.get("file_name", "unknown"),
+    }
+

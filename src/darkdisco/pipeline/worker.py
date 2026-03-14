@@ -807,3 +807,231 @@ def backfill_extracted_files(batch_size: int = 100):
         return {"created": total_created, "mentions_processed": len(mentions)}
     finally:
         session.close()
+
+
+@app.task(
+    name="darkdisco.pipeline.worker.extract_stored_archive",
+    bind=True,
+    max_retries=2,
+    soft_time_limit=1800,
+    time_limit=3600,
+)
+def extract_stored_archive(self, mention_id: str):
+    """Stream-extract a single stored archive from S3 for a mention.
+
+    Downloads the archive to temp disk, extracts files, uploads extracted
+    files back to S3, creates ExtractedFile rows, and updates mention metadata
+    with file_analysis results.
+    """
+    from darkdisco.common.models import ExtractedFile
+    from darkdisco.common.models import RawMention as RawMentionModel
+    from darkdisco.pipeline.files import (
+        analyze_extracted_files,
+        extract_passwords,
+        is_archive,
+        stream_extract_from_s3,
+        upload_to_s3,
+    )
+
+    session = _get_sync_session()
+    try:
+        mention = session.get(RawMentionModel, mention_id)
+        if mention is None:
+            logger.error("Mention %s not found for archive extraction", mention_id)
+            return {"error": "mention_not_found"}
+
+        meta = mention.metadata_ or {}
+        s3_key = meta.get("s3_key")
+        filename = meta.get("file_name", "archive.zip")
+        file_sha256 = meta.get("file_sha256", "")
+
+        if not s3_key:
+            logger.warning("Mention %s has no s3_key in metadata", mention_id)
+            return {"error": "no_s3_key"}
+
+        if not is_archive(filename):
+            logger.info("Mention %s file %s is not an archive, skipping", mention_id, filename)
+            return {"skipped": True, "reason": "not_archive"}
+
+        # Check if already extracted (has ExtractedFile rows)
+        existing = session.execute(
+            select(ExtractedFile.id).where(
+                ExtractedFile.mention_id == mention_id
+            ).limit(1)
+        ).scalar_one_or_none()
+        if existing:
+            logger.info("Mention %s already has extracted files, skipping", mention_id)
+            return {"skipped": True, "reason": "already_extracted"}
+
+        # Extract passwords from the mention content
+        passwords = extract_passwords(mention.content or "")
+        passwords.extend(meta.get("extracted_passwords", []))
+
+        # Stream-extract from S3 to temp disk
+        try:
+            extracted = stream_extract_from_s3(s3_key, filename, passwords)
+        except Exception as exc:
+            logger.exception("Stream extraction failed for mention %s", mention_id)
+            raise self.retry(exc=exc, countdown=120 * (self.request.retries + 1))
+
+        if not extracted:
+            logger.info("No files extracted from %s for mention %s", filename, mention_id)
+            meta["file_analysis"] = {"total_files": 0, "extraction_attempted": True}
+            mention.metadata_ = {**meta}
+            session.commit()
+            return {"extracted": 0, "mention_id": mention_id}
+
+        # Analyze extracted files
+        analysis = analyze_extracted_files(extracted)
+        meta["file_analysis"] = analysis.to_dict()
+
+        # Upload extracted files to S3 and create ExtractedFile rows
+        per_file_texts = []
+        ef_count = 0
+        for ef in extracted:
+            # Upload to S3
+            ef_s3_key = f"files/{file_sha256[:8]}/extracted/{ef.sha256[:8]}/{ef.filename}"
+            upload_to_s3(ef_s3_key, ef.content)
+
+            # Determine text content
+            text_content = None
+            if ef.is_text and ef.content:
+                try:
+                    text_content = ef.content.decode("utf-8", errors="replace")
+                except Exception:
+                    text_content = None
+
+            # Create ExtractedFile row
+            ext = ""
+            if "." in ef.filename:
+                ext = ef.filename.rsplit(".", 1)[-1].lower()
+
+            row = ExtractedFile(
+                mention_id=mention_id,
+                filename=ef.filename,
+                s3_key=ef_s3_key,
+                sha256=ef.sha256,
+                size=ef.size,
+                extension=ext or None,
+                is_text=ef.is_text,
+                text_content=text_content,
+            )
+            session.add(row)
+            ef_count += 1
+
+            if text_content and text_content.strip():
+                per_file_texts.append({"filename": ef.filename, "content": text_content})
+
+        # Store per-file text content in metadata for matching
+        if per_file_texts:
+            meta["extracted_file_contents"] = per_file_texts
+
+        if analysis.credential_indicators:
+            meta["has_credentials"] = True
+            meta["credential_count"] = len(analysis.credential_indicators)
+
+        # Persist updated metadata
+        mention.metadata_ = {**meta}
+        session.commit()
+
+        logger.info(
+            "Stream-extracted mention %s: %d files (%d text, %d credential indicators)",
+            mention_id,
+            ef_count,
+            sum(1 for f in extracted if f.is_text),
+            len(analysis.credential_indicators),
+        )
+
+        return {
+            "mention_id": mention_id,
+            "extracted": ef_count,
+            "text_files": sum(1 for f in extracted if f.is_text),
+            "credential_indicators": len(analysis.credential_indicators),
+        }
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@app.task(name="darkdisco.pipeline.worker.backfill_stored_archives")
+def backfill_stored_archives(batch_size: int = 10):
+    """Find mentions with stored archives but no extraction, and dispatch extraction tasks.
+
+    Identifies raw_mentions that have:
+    - An s3_key in metadata (file uploaded to S3)
+    - A file_name that is an archive
+    - No file_analysis in metadata (never extracted)
+    - No ExtractedFile rows
+
+    Dispatches extract_stored_archive tasks for each, with rate limiting
+    to avoid overwhelming S3 and disk.
+    """
+    from darkdisco.common.models import ExtractedFile
+    from darkdisco.common.models import RawMention as RawMentionModel
+    from darkdisco.pipeline.files import is_archive
+
+    session = _get_sync_session()
+    try:
+        # Find mentions with s3_key but no ExtractedFile rows
+        already_extracted = select(ExtractedFile.mention_id).distinct().scalar_subquery()
+        mentions = session.execute(
+            select(RawMentionModel).where(
+                RawMentionModel.metadata_.isnot(None),
+                RawMentionModel.id.notin_(already_extracted),
+            ).order_by(RawMentionModel.collected_at.desc())
+            .limit(batch_size * 5)  # Fetch extra since we filter in Python
+        ).scalars().all()
+
+        dispatched = 0
+        skipped = 0
+        for mention in mentions:
+            meta = mention.metadata_ or {}
+
+            # Must have an s3_key (file stored in S3)
+            if not meta.get("s3_key"):
+                continue
+
+            # Must be an archive file
+            filename = meta.get("file_name", "")
+            if not is_archive(filename):
+                continue
+
+            # Skip if already has file_analysis (already extracted)
+            if meta.get("file_analysis"):
+                skipped += 1
+                continue
+
+            # Skip if already has extracted_file_contents
+            if meta.get("extracted_file_contents"):
+                skipped += 1
+                continue
+
+            # Dispatch extraction task with a countdown stagger
+            # to avoid hammering S3 with concurrent large downloads
+            extract_stored_archive.apply_async(
+                args=[mention.id],
+                countdown=dispatched * 30,  # 30s stagger between tasks
+            )
+            dispatched += 1
+
+            if dispatched >= batch_size:
+                break
+
+        logger.info(
+            "Backfill stored archives: dispatched %d extraction tasks (%d skipped)",
+            dispatched,
+            skipped,
+        )
+
+        # If we hit the batch limit, chain another run after all tasks complete
+        if dispatched >= batch_size:
+            backfill_stored_archives.apply_async(
+                args=[batch_size],
+                countdown=dispatched * 30 + 60,  # Wait for current batch + buffer
+            )
+
+        return {"dispatched": dispatched, "skipped": skipped}
+    finally:
+        session.close()
