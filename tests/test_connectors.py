@@ -118,7 +118,12 @@ class TestConnectorLoading:
     def test_connector_map_contains_all_types(self):
         from darkdisco.pipeline.worker import _CONNECTOR_MAP
 
-        expected = {"paste_site", "forum", "telegram", "breach_db", "ransomware_blog", "stealer_log"}
+        expected = {
+            "paste_site", "forum", "telegram", "telegram_intel",
+            "discord", "breach_db", "ransomware_blog",
+            "ransomware_aggregator", "stealer_log", "ct_monitor",
+            "urlscan", "phishtank",
+        }
         assert set(_CONNECTOR_MAP.keys()) == expected
 
     def test_load_connector_by_type(self):
@@ -421,3 +426,305 @@ class TestStealerLogConnector:
 
         assert "stealer_log" in _CONNECTOR_MAP
         assert "StealerLogConnector" in _CONNECTOR_MAP["stealer_log"]
+
+
+# ---------------------------------------------------------------------------
+# URLScan connector tests
+# ---------------------------------------------------------------------------
+
+
+class TestURLScanConnector:
+    def test_connector_attributes(self):
+        from darkdisco.discovery.connectors.urlscan import URLScanConnector
+
+        conn = URLScanConnector()
+        assert conn.name == "urlscan"
+        assert conn.source_type == "urlscan"
+
+    def test_connector_in_worker_map(self):
+        from darkdisco.pipeline.worker import _CONNECTOR_MAP
+
+        assert "urlscan" in _CONNECTOR_MAP
+        assert "URLScanConnector" in _CONNECTOR_MAP["urlscan"]
+
+    @pytest.mark.asyncio
+    async def test_poll_no_queries_warns(self):
+        from darkdisco.discovery.connectors.urlscan import URLScanConnector
+
+        conn = URLScanConnector(config={})
+        mentions = await conn.poll()
+        assert mentions == []
+
+    @pytest.mark.asyncio
+    async def test_poll_with_mock_results(self):
+        from darkdisco.discovery.connectors.urlscan import URLScanConnector
+
+        conn = URLScanConnector(config={
+            "search_queries": ["Example Bank"],
+            "seen_ids": [],
+            "verdicts_only": False,
+            "min_score": 0,
+        })
+
+        mock_response = {
+            "results": [
+                {
+                    "_id": "scan-uuid-001",
+                    "task": {
+                        "url": "https://evil-example-bank.com/login",
+                        "time": "2026-03-15T12:00:00Z",
+                    },
+                    "page": {
+                        "domain": "evil-example-bank.com",
+                        "ip": "1.2.3.4",
+                        "country": "RU",
+                        "title": "Example Bank - Login",
+                    },
+                    "stats": {"requests": 10, "ips": 2, "domains": 3},
+                    "verdicts": {
+                        "overall": {
+                            "score": 85,
+                            "malicious": True,
+                            "categories": ["phishing"],
+                            "brands": ["Example Bank"],
+                        }
+                    },
+                    "screenshot": "https://urlscan.io/screenshots/scan-uuid-001.png",
+                },
+            ]
+        }
+
+        mock_session = AsyncMock()
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value=mock_response)
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get = MagicMock(return_value=mock_resp)
+        conn._session = mock_session
+
+        mentions = await conn.poll()
+        assert len(mentions) == 1
+        m = mentions[0]
+        assert "evil-example-bank.com" in m.title
+        assert m.metadata["scan_id"] == "scan-uuid-001"
+        assert m.metadata["score"] == 85
+        assert "scan-uuid-001" in conn.config["seen_ids"]
+
+    @pytest.mark.asyncio
+    async def test_poll_deduplicates_seen_ids(self):
+        from darkdisco.discovery.connectors.urlscan import URLScanConnector
+
+        conn = URLScanConnector(config={
+            "search_queries": ["Test"],
+            "seen_ids": ["already-seen-001"],
+            "verdicts_only": False,
+            "min_score": 0,
+        })
+
+        mock_response = {
+            "results": [
+                {
+                    "_id": "already-seen-001",
+                    "task": {"url": "https://x.com", "time": ""},
+                    "page": {"domain": "x.com", "ip": "", "country": "", "title": ""},
+                    "stats": {},
+                    "verdicts": {"overall": {"score": 90, "categories": [], "brands": []}},
+                },
+            ]
+        }
+
+        mock_session = AsyncMock()
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value=mock_response)
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get = MagicMock(return_value=mock_resp)
+        conn._session = mock_session
+
+        mentions = await conn.poll()
+        assert len(mentions) == 0
+
+    @pytest.mark.asyncio
+    async def test_health_check(self):
+        from darkdisco.discovery.connectors.urlscan import URLScanConnector
+
+        conn = URLScanConnector(config={})
+        mock_session = AsyncMock()
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get = MagicMock(return_value=mock_resp)
+        conn._session = mock_session
+
+        result = await conn.health_check()
+        assert result["healthy"] is True
+        assert result["message"] == "urlscan:ok"
+
+
+# ---------------------------------------------------------------------------
+# PhishTank connector tests
+# ---------------------------------------------------------------------------
+
+
+class TestPhishTankConnector:
+    def test_connector_attributes(self):
+        from darkdisco.discovery.connectors.phishtank import PhishTankConnector
+
+        conn = PhishTankConnector()
+        assert conn.name == "phishtank"
+        assert conn.source_type == "phishtank"
+
+    def test_connector_in_worker_map(self):
+        from darkdisco.pipeline.worker import _CONNECTOR_MAP
+
+        assert "phishtank" in _CONNECTOR_MAP
+        assert "PhishTankConnector" in _CONNECTOR_MAP["phishtank"]
+
+    @pytest.mark.asyncio
+    async def test_poll_no_config_warns(self):
+        from darkdisco.discovery.connectors.phishtank import PhishTankConnector
+
+        conn = PhishTankConnector(config={})
+        mentions = await conn.poll()
+        assert mentions == []
+
+    @pytest.mark.asyncio
+    async def test_poll_with_mock_feed(self):
+        from darkdisco.discovery.connectors.phishtank import PhishTankConnector
+
+        conn = PhishTankConnector(config={
+            "watch_domains": ["firstnational.com"],
+            "watch_brands": ["First National Bank"],
+            "seen_ids": [],
+        })
+
+        mock_feed = [
+            {
+                "phish_id": "99001",
+                "url": "https://firstnational-login.evil.com/secure",
+                "target": "First National Bank",
+                "submission_time": "2026-03-15T10:00:00+00:00",
+                "verified": "yes",
+                "verification_time": "2026-03-15T10:30:00+00:00",
+                "online": "yes",
+                "phish_detail_url": "https://phishtank.org/phish_detail.php?phish_id=99001",
+            },
+            {
+                "phish_id": "99002",
+                "url": "https://some-other-bank.evil.com",
+                "target": "Other Bank",
+                "submission_time": "2026-03-15T11:00:00+00:00",
+                "verified": "yes",
+                "verification_time": "2026-03-15T11:30:00+00:00",
+                "online": "yes",
+                "phish_detail_url": "",
+            },
+        ]
+
+        mock_session = AsyncMock()
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value=mock_feed)
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get = MagicMock(return_value=mock_resp)
+        conn._session = mock_session
+
+        mentions = await conn.poll()
+        assert len(mentions) == 1  # Only the first matches
+        m = mentions[0]
+        assert "First National Bank" in m.title
+        assert m.metadata["phish_id"] == "99001"
+        assert m.metadata["matched_brand"] == "first national bank"
+        assert "99001" in conn.config["seen_ids"]
+
+    @pytest.mark.asyncio
+    async def test_poll_domain_matching(self):
+        from darkdisco.discovery.connectors.phishtank import PhishTankConnector
+
+        conn = PhishTankConnector(config={
+            "watch_domains": ["example-bank.com"],
+            "watch_brands": [],
+            "seen_ids": [],
+        })
+
+        mock_feed = [
+            {
+                "phish_id": "88001",
+                "url": "https://www.example-bank.com.evil.ru/login",
+                "target": "Unknown",
+                "submission_time": "2026-03-15T08:00:00+00:00",
+                "verified": "yes",
+                "verification_time": "2026-03-15T08:30:00+00:00",
+                "online": "yes",
+                "phish_detail_url": "",
+            },
+        ]
+
+        mock_session = AsyncMock()
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value=mock_feed)
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get = MagicMock(return_value=mock_resp)
+        conn._session = mock_session
+
+        mentions = await conn.poll()
+        assert len(mentions) == 1
+        assert mentions[0].metadata["matched_domain"] == "example-bank.com"
+
+    @pytest.mark.asyncio
+    async def test_poll_deduplicates_seen_ids(self):
+        from darkdisco.discovery.connectors.phishtank import PhishTankConnector
+
+        conn = PhishTankConnector(config={
+            "watch_domains": ["test.com"],
+            "watch_brands": [],
+            "seen_ids": ["77001"],
+        })
+
+        mock_feed = [
+            {
+                "phish_id": "77001",
+                "url": "https://test.com.evil.com",
+                "target": "",
+                "submission_time": "2026-03-15T08:00:00+00:00",
+                "verified": "yes",
+                "verification_time": "",
+                "online": "yes",
+                "phish_detail_url": "",
+            },
+        ]
+
+        mock_session = AsyncMock()
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value=mock_feed)
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get = MagicMock(return_value=mock_resp)
+        conn._session = mock_session
+
+        mentions = await conn.poll()
+        assert len(mentions) == 0
+
+    @pytest.mark.asyncio
+    async def test_health_check(self):
+        from darkdisco.discovery.connectors.phishtank import PhishTankConnector
+
+        conn = PhishTankConnector(config={})
+        mock_session = AsyncMock()
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        mock_session.head = MagicMock(return_value=mock_resp)
+        conn._session = mock_session
+
+        result = await conn.health_check()
+        assert result["healthy"] is True
+        assert result["message"] == "phishtank:ok"

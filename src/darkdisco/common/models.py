@@ -61,6 +61,9 @@ class SourceType(str, enum.Enum):
     ransomware_blog = "ransomware_blog"
     ransomware_aggregator = "ransomware_aggregator"
     stealer_log = "stealer_log"
+    ct_monitor = "ct_monitor"
+    urlscan = "urlscan"
+    phishtank = "phishtank"
     other = "other"
 
 

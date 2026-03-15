@@ -91,6 +91,9 @@ _CONNECTOR_MAP = {
     "ransomware_blog": "darkdisco.discovery.connectors.ransomware_blog:RansomwareBlogConnector",
     "ransomware_aggregator": "darkdisco.discovery.connectors.ransomware_aggregator:RansomwareAggregatorConnector",
     "stealer_log": "darkdisco.discovery.connectors.stealer_log:StealerLogConnector",
+    "ct_monitor": "darkdisco.discovery.connectors.ct_monitor:CTMonitorConnector",
+    "urlscan": "darkdisco.discovery.connectors.urlscan:URLScanConnector",
+    "phishtank": "darkdisco.discovery.connectors.phishtank:PhishTankConnector",
 }
 
 
