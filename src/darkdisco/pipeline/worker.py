@@ -768,7 +768,7 @@ def download_pending_files(batch_size: int = 10):
     try:
         stmt = (
             select(RawMentionModel)
-            .where(RawMentionModel.metadata["download_status"].astext == "pending")
+            .where(RawMentionModel.metadata_["download_status"].astext == "pending")
             .limit(batch_size)
         )
         mentions = session.execute(stmt).scalars().all()
