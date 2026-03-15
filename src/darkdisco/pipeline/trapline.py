@@ -23,7 +23,7 @@ def _client() -> httpx.Client:
     return httpx.Client(
         base_url=settings.trapline_api_url.rstrip("/"),
         headers={
-            "Authorization": f"Bearer {settings.trapline_api_key}",
+            "X-API-Key": settings.trapline_api_key,
             "Content-Type": "application/json",
         },
         timeout=_TIMEOUT,
