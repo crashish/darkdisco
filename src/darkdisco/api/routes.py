@@ -179,10 +179,11 @@ def _list_s3_extracted_files(s3_key: str) -> list[dict]:
     )
 
     text_exts = {".txt", ".csv", ".log", ".json", ".xml", ".html", ".sql", ".cfg", ".conf", ".ini", ".env", ".yml", ".yaml"}
+    MAX_FILES = 500  # Cap to prevent slow responses on huge archives
     result = []
     try:
         paginator = s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=prefix):
+        for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=prefix, PaginationConfig={"MaxItems": MAX_FILES}):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
                 # Preserve path relative to extracted/ prefix
@@ -1112,8 +1113,8 @@ async def mention_archive_contents(
             {
                 "filename": ef.filename,
                 "size": ef.size or 0,
-                "preview": (ef.text_content or "")[:500],
-                "content": ef.text_content or "",
+                "preview": (ef.text_content or "")[:200] if q else "",
+                "content": "",  # Content loaded on-demand via /files/{s3_key}
                 "s3_key": ef.s3_key,
                 "sha256": ef.sha256,
                 "extension": ef.extension,
