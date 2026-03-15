@@ -100,7 +100,7 @@ def sync_institution(institution) -> dict:
                 "brand": institution.name,
             }
             try:
-                resp = client.post("/api/client/watchlist/domains", json=payload)
+                resp = client.post("/api/v1/watchlist/domains", json=payload)
                 resp.raise_for_status()
                 result["domains"] = len(domain_entries)
                 logger.info(
@@ -116,7 +116,7 @@ def sync_institution(institution) -> dict:
         if bin_entries:
             payload = {"entries": bin_entries}
             try:
-                resp = client.post("/api/client/watchlist/bins", json=payload)
+                resp = client.post("/api/v1/watchlist/bins", json=payload)
                 resp.raise_for_status()
                 result["bins"] = len(bin_entries)
                 logger.info(
