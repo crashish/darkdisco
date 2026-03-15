@@ -114,7 +114,7 @@ def sync_institution(institution) -> dict:
 
         # Sync BIN ranges
         if bin_entries:
-            payload = {"entries": bin_entries}
+            payload = {"bins": [{"bin_prefix": e.get("bin", e.get("bin_prefix", "")), "issuer": e.get("institution_name", "")} for e in bin_entries]}
             try:
                 resp = client.post("/api/v1/watchlist/bins", json=payload)
                 resp.raise_for_status()
