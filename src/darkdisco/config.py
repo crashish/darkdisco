@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     telegram_session_name: str = "darkdisco_monitor"
     discord_bot_token: str = ""
     pastebin_api_key: str = ""
+    urlscan_api_key: str = ""
+    phishtank_api_key: str = ""
 
     # Email (SMTP) notifications
     smtp_host: str = ""
