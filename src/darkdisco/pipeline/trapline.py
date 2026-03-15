@@ -36,19 +36,22 @@ def _build_domain_entries(institution) -> list[dict]:
 
     if institution.primary_domain:
         entries.append({
-            "domain": institution.primary_domain,
-            "institution_id": institution.id,
-            "institution_name": institution.name,
-            "type": "primary",
+            "type": "domain",
+            "value": institution.primary_domain,
+        })
+
+    # Also add institution name as a brand entry
+    if institution.name:
+        entries.append({
+            "type": "brand",
+            "value": institution.name.lower(),
         })
 
     for domain in institution.additional_domains or []:
         if isinstance(domain, str) and domain.strip():
             entries.append({
-                "domain": domain.strip(),
-                "institution_id": institution.id,
-                "institution_name": institution.name,
-                "type": "additional",
+                "type": "domain",
+                "value": domain.strip(),
             })
 
     return entries
