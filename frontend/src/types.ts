@@ -150,6 +150,29 @@ export interface ExtractedFileSearchResult {
   files: ExtractedFile[];
 }
 
+export interface DownloadTaskInfo {
+  task_id: string;
+  mention_id: string | null;
+  filename: string | null;
+  status: 'active' | 'pending' | 'success' | 'error' | 'retry';
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  files_extracted: number | null;
+}
+
+export interface DownloadQueueStatus {
+  current: DownloadTaskInfo | null;
+  pending: DownloadTaskInfo[];
+  recent: DownloadTaskInfo[];
+  stats: {
+    total_pending: number;
+    total_stored: number;
+    total_errors: number;
+    total_extracted: number;
+  };
+}
+
 export interface DashboardStats {
   total_findings: number;
   findings_by_severity: Record<Severity, number>;

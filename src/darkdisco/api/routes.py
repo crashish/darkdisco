@@ -58,6 +58,8 @@ from darkdisco.api.schemas import (
     BinRoutingSummary,
     DiscoveredChannelOut,
     DiscoveredChannelUpdate,
+    DownloadQueueStatus,
+    DownloadTaskInfo,
     WatchTermCreate,
     WatchTermOut,
     WatchTermUpdate,
@@ -1862,6 +1864,156 @@ async def trigger_extract_mention_archive(
         "mention_id": mention_id,
         "archive_filename": meta.get("file_name", "unknown"),
     }
+
+
+# ---- Download Queue Status -------------------------------------------------
+
+
+@protected.get("/pipeline/download-status", response_model=DownloadQueueStatus)
+async def download_status(
+    recent_limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_session),
+):
+    """Show download queue: active extraction, pending archives, recent completions."""
+    from darkdisco.common.models import ExtractedFile
+    from darkdisco.pipeline.worker import app as celery_app
+
+    # --- Query Celery for active/reserved extraction tasks ---
+    current_task: DownloadTaskInfo | None = None
+    pending_tasks: list[DownloadTaskInfo] = []
+
+    try:
+        inspect = celery_app.control.inspect(timeout=2.0)
+        active = inspect.active() or {}
+        reserved = inspect.reserved() or {}
+
+        # Extract extraction tasks from active workers
+        for _worker, tasks in active.items():
+            for t in tasks:
+                task_name = t.get("name", "")
+                if "extract_stored_archive" not in task_name:
+                    continue
+                args = t.get("args", [])
+                mention_id = args[0] if args else None
+                info = DownloadTaskInfo(
+                    task_id=t.get("id", ""),
+                    mention_id=mention_id,
+                    filename=None,
+                    status="active",
+                    started_at=None,
+                )
+                if current_task is None:
+                    current_task = info
+                else:
+                    pending_tasks.append(info)
+
+        # Reserved = queued but not yet started
+        for _worker, tasks in reserved.items():
+            for t in tasks:
+                task_name = t.get("name", "")
+                if "extract_stored_archive" not in task_name:
+                    continue
+                args = t.get("args", [])
+                mention_id = args[0] if args else None
+                pending_tasks.append(DownloadTaskInfo(
+                    task_id=t.get("id", ""),
+                    mention_id=mention_id,
+                    filename=None,
+                    status="pending",
+                ))
+    except Exception:
+        # Celery inspect may fail if broker is down — continue with DB data
+        logger.warning("Failed to inspect Celery workers for download status")
+
+    # Enrich tasks with mention filenames if we have mention_ids
+    all_mention_ids = []
+    if current_task and current_task.mention_id:
+        all_mention_ids.append(current_task.mention_id)
+    for t in pending_tasks:
+        if t.mention_id:
+            all_mention_ids.append(t.mention_id)
+
+    if all_mention_ids:
+        mentions_rows = (await db.execute(
+            select(RawMention.id, RawMention.metadata_).where(
+                RawMention.id.in_(all_mention_ids)
+            )
+        )).all()
+        mention_filenames = {
+            r.id: (r.metadata_ or {}).get("file_name", "unknown")
+            for r in mentions_rows
+        }
+        if current_task and current_task.mention_id:
+            current_task.filename = mention_filenames.get(current_task.mention_id)
+        for t in pending_tasks:
+            if t.mention_id:
+                t.filename = mention_filenames.get(t.mention_id)
+
+    # --- Recent completions: mentions that have extracted files ---
+    recent_extracted = (await db.execute(
+        select(
+            RawMention.id,
+            RawMention.metadata_,
+            RawMention.collected_at,
+            func.count(ExtractedFile.id).label("file_count"),
+        )
+        .outerjoin(ExtractedFile, ExtractedFile.mention_id == RawMention.id)
+        .where(RawMention.metadata_["file_analysis"].isnot(None))
+        .group_by(RawMention.id)
+        .order_by(RawMention.collected_at.desc())
+        .limit(recent_limit)
+    )).all()
+
+    recent: list[DownloadTaskInfo] = []
+    for row in recent_extracted:
+        meta = row.metadata_ or {}
+        analysis = meta.get("file_analysis", {})
+        has_error = analysis.get("extraction_attempted") and analysis.get("total_files", 0) == 0
+        recent.append(DownloadTaskInfo(
+            task_id="",
+            mention_id=row.id,
+            filename=meta.get("file_name", "unknown"),
+            status="error" if has_error else "success",
+            completed_at=row.collected_at,
+            files_extracted=row.file_count,
+        ))
+
+    # --- Stats ---
+    # Total pending (have s3_key but no file_analysis)
+    already_extracted_sq = select(ExtractedFile.mention_id).distinct().scalar_subquery()
+    total_pending = (await db.execute(
+        select(func.count(RawMention.id)).where(
+            RawMention.metadata_.isnot(None),
+            RawMention.id.notin_(already_extracted_sq),
+        )
+    )).scalar() or 0
+
+    # Total stored files
+    total_stored = (await db.execute(
+        select(func.count(ExtractedFile.id))
+    )).scalar() or 0
+
+    # Total with errors (extraction attempted but 0 files)
+    total_errors = sum(1 for r in recent if r.status == "error")
+
+    # Total extractions done
+    total_extracted = (await db.execute(
+        select(func.count(RawMention.id)).where(
+            RawMention.metadata_["file_analysis"].isnot(None)
+        )
+    )).scalar() or 0
+
+    return DownloadQueueStatus(
+        current=current_task,
+        pending=pending_tasks,
+        recent=recent,
+        stats={
+            "total_pending": total_pending,
+            "total_stored": total_stored,
+            "total_errors": total_errors,
+            "total_extracted": total_extracted,
+        },
+    )
 
 
 # ---- Discovered Channels ---------------------------------------------------

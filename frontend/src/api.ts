@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, ExtractedFile, ExtractedFileSearchResult } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, ExtractedFile, ExtractedFileSearchResult, DownloadQueueStatus } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -211,4 +211,13 @@ export async function searchExtractedFiles(params: {
   if (params.limit) qs.set('limit', String(params.limit));
   if (params.offset) qs.set('offset', String(params.offset));
   return apiFetch(`/extracted-files/search?${qs}`, { query: params.q, total: 0, files: [] });
+}
+
+export async function fetchDownloadStatus(): Promise<DownloadQueueStatus> {
+  return apiFetch('/pipeline/download-status', {
+    current: null,
+    pending: [],
+    recent: [],
+    stats: { total_pending: 0, total_stored: 0, total_errors: 0, total_extracted: 0 },
+  });
 }

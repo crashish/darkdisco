@@ -514,6 +514,31 @@ class DiscoveredChannelUpdate(BaseModel):
 # Bulk BIN / Routing Number Population
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Download Queue Status
+# ---------------------------------------------------------------------------
+
+
+class DownloadTaskInfo(BaseModel):
+    """A single download/extraction task."""
+    task_id: str
+    mention_id: str | None = None
+    filename: str | None = None
+    status: str  # "active", "pending", "success", "error", "retry"
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
+    files_extracted: int | None = None
+
+
+class DownloadQueueStatus(BaseModel):
+    """Overall download queue status."""
+    current: DownloadTaskInfo | None = None
+    pending: list[DownloadTaskInfo]
+    recent: list[DownloadTaskInfo]
+    stats: dict  # total_pending, total_stored, total_errors, total_extracted
+
+
 class BinRoutingEntry(BaseModel):
     """A single institution's BIN/routing data for bulk population."""
     name: str
