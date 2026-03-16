@@ -267,13 +267,14 @@ async def _poll_async(connector, since):
 
 
 def _process_file_mentions(mentions: list) -> list:
-    """Process file attachments in mentions: extract archives, analyze contents.
+    """Process file attachments in mentions: extract archives, analyze contents, run OCR.
 
     For each mention with file_data in metadata:
     1. If it's an archive (ZIP/RAR), extract and analyze contents
-    2. Append extracted text to the mention content for matching
-    3. Upload original + extracted files to S3
-    4. Store file analysis metadata
+    2. If it's an image, run OCR to extract text
+    3. Append extracted text to the mention content for matching
+    4. Upload original + extracted files to S3
+    5. Store file analysis metadata
     """
     from darkdisco.pipeline.files import (
         analyze_extracted_files,
@@ -281,6 +282,11 @@ def _process_file_mentions(mentions: list) -> list:
         extract_passwords,
         is_archive,
         upload_to_s3,
+    )
+    from darkdisco.pipeline.ocr import (
+        extract_text_from_image,
+        is_image,
+        is_image_media_type,
     )
 
     for mention in mentions:
@@ -369,6 +375,18 @@ def _process_file_mentions(mentions: list) -> list:
                         mention.content = (mention.content or "") + separator + text[:200_000]
                 except Exception:
                     pass
+
+            # OCR processing for image files
+            elif is_image(filename) or is_image_media_type(mention.metadata.get("media_type")):
+                ocr_result = extract_text_from_image(file_data, filename)
+                if ocr_result and ocr_result.has_text:
+                    mention.metadata["ocr_text"] = ocr_result.text
+                    mention.metadata["ocr_confidence"] = ocr_result.confidence
+                    mention.metadata["ocr_engine"] = ocr_result.engine
+
+                    # Append OCR text to mention content for watch term matching
+                    separator = f"\n\n--- OCR text from {filename} ---\n\n"
+                    mention.content = (mention.content or "") + separator + ocr_result.text
 
     return mentions
 

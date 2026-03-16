@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     trapline_api_url: str = ""  # e.g. https://trapline.example.com
     trapline_api_key: str = ""
 
+    # OCR (image text extraction)
+    ocr_enabled: bool = True
+    ocr_min_confidence: float = 25.0  # discard results below this threshold
+
     # Celery tuning
     celery_task_soft_time_limit: int = 300
     celery_task_time_limit: int = 600
