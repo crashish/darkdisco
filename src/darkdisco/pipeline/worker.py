@@ -206,6 +206,17 @@ def poll_source(self, source_id: str):
         connector = _load_connector(source)
         since = source.last_polled_at
 
+        # Acquire Telegram session lock to prevent SQLite contention with download task
+        telegram_lock = None
+        if source.source_type.value in ("telegram", "telegram_intel"):
+            import redis as _redis
+            from darkdisco.config import settings as _settings
+            _r = _redis.from_url(_settings.celery_broker_url)
+            telegram_lock = _r.lock("darkdisco:telegram_session_lock", timeout=600, blocking_timeout=30)
+            if not telegram_lock.acquire(blocking=True):
+                logger.info("Telegram session locked by download task, skipping poll for %s", source.name)
+                return {"skipped": True, "reason": "session_locked"}
+
         try:
             # Bridge async connector to sync Celery task
             mentions = asyncio.run(_poll_async(connector, since))
@@ -213,6 +224,9 @@ def poll_source(self, source_id: str):
             source.last_error = str(exc)[:2000]
             session.commit()
             logger.exception("Failed to poll source %s", source.name)
+            if telegram_lock:
+                try: telegram_lock.release()
+                except Exception: pass
             raise self.retry(exc=exc, countdown=60 * (self.request.retries + 1))
 
         # Persist connector state (high-water marks) back to source config
@@ -255,6 +269,9 @@ def poll_source(self, source_id: str):
 
         return {"source": source.name, "mentions": len(mentions)}
     finally:
+        if telegram_lock:
+            try: telegram_lock.release()
+            except Exception: pass
         session.close()
 
 
@@ -951,12 +968,19 @@ def download_pending_files(batch_size: int = 10):
     from darkdisco.config import settings
     from darkdisco.common.models import RawMention as RawMentionModel, Source
 
-    # Acquire exclusive lock
+    # Acquire exclusive download lock + Telegram session lock
     r = _redis.from_url(settings.celery_broker_url)
     lock = r.lock("darkdisco:download_files_lock", timeout=3600, blocking=False)
     if not lock.acquire(blocking=False):
         logger.info("Another download task is already running, skipping")
         return {"skipped": True}
+
+    # Also acquire Telegram session lock to prevent SQLite contention with poll task
+    tg_lock = r.lock("darkdisco:telegram_session_lock", timeout=3600, blocking_timeout=10)
+    if not tg_lock.acquire(blocking=True):
+        logger.info("Telegram session locked by poll task, skipping downloads")
+        lock.release()
+        return {"skipped": True, "reason": "session_locked"}
 
     session = _get_sync_session()
     try:
@@ -1067,6 +1091,10 @@ def download_pending_files(batch_size: int = 10):
 
         return {"downloaded": downloaded, "failed": failed}
     finally:
+        try:
+            tg_lock.release()
+        except Exception:
+            pass
         try:
             lock.release()
         except Exception:
