@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from darkdisco.common.models import (
+    DiscoveryStatus,
     FindingStatus,
     Severity,
     SourceType,
@@ -489,3 +490,60 @@ class DryRunResult(BaseModel):
     matches: list[DryRunMatch]
     fp_analysis: dict | None = None
     would_create_finding: bool
+
+
+
+# ---------------------------------------------------------------------------
+# Discovered Channels
+# ---------------------------------------------------------------------------
+
+class DiscoveredChannelOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    url: str
+    source_id: str
+    source_channel: str | None = None
+    message_id: int | None = None
+    status: DiscoveryStatus
+    added_to_source_id: str | None = None
+    notes: str | None = None
+    discovered_at: datetime
+    joined_at: datetime | None = None
+
+
+class DiscoveredChannelUpdate(BaseModel):
+    status: DiscoveryStatus
+    target_source_id: str | None = None
+    notes: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Bulk BIN / Routing Number Population
+# ---------------------------------------------------------------------------
+
+class BinRoutingEntry(BaseModel):
+    """A single institution's BIN/routing data for bulk population."""
+    name: str
+    bin_ranges: list[str] = []
+    routing_numbers: list[str] = []
+
+
+class BinRoutingResult(BaseModel):
+    """Per-institution result from bulk population."""
+    name: str
+    status: str  # "updated", "up_to_date", "not_found"
+    bins_added: int = 0
+    routing_added: int = 0
+    watch_terms_created: int = 0
+
+
+class BinRoutingSummary(BaseModel):
+    """Summary of a bulk BIN/routing population run."""
+    matched: int
+    not_found: int
+    institutions_updated: int
+    bins_added: int
+    routing_added: int
+    watch_terms_created: int
+    results: list[BinRoutingResult]

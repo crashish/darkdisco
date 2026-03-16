@@ -49,6 +49,10 @@ app.conf.update(
             "task": "darkdisco.pipeline.worker.sync_trapline_watchlist",
             "schedule": 3600.0,  # 1 hour
         },
+        "process-channel-discoveries": {
+            "task": "darkdisco.pipeline.worker.process_channel_discoveries",
+            "schedule": 600.0,  # 10 minutes
+        },
     },
 )
 
@@ -216,6 +220,10 @@ def poll_source(self, source_id: str):
         session.commit()
 
         logger.info("Polled source %s: %d mentions", source.name, len(mentions))
+
+        # Extract t.me channel links from mention content for auto-discovery
+        if mentions:
+            _extract_channel_discoveries(session, source_id, mentions)
 
         if mentions:
             # Process file attachments before serialization
@@ -741,6 +749,161 @@ def _rule_matches(rule, finding, severity_rank: dict) -> bool:
             return False
 
     return True
+
+
+# ---------------------------------------------------------------------------
+# Channel auto-discovery
+# ---------------------------------------------------------------------------
+
+
+def _extract_channel_discoveries(
+    session: Session, source_id: str, mentions: list,
+) -> int:
+    """Scan mention content for t.me links and record new DiscoveredChannel rows."""
+    from darkdisco.common.models import DiscoveredChannel
+    from darkdisco.discovery.connectors.telegram import extract_channel_links
+
+    # Collect all existing known URLs for this source to avoid duplicates
+    existing_urls: set[str] = set()
+    rows = session.execute(
+        select(DiscoveredChannel.url).where(DiscoveredChannel.source_id == source_id)
+    ).scalars().all()
+    existing_urls.update(r.lower() for r in rows)
+
+    # Also collect all currently configured channels across all telegram sources
+    from darkdisco.common.models import Source, SourceType
+
+    tg_sources = session.execute(
+        select(Source).where(
+            Source.source_type.in_([SourceType.telegram, SourceType.telegram_intel])
+        )
+    ).scalars().all()
+    configured_channels: set[str] = set()
+    for src in tg_sources:
+        cfg = src.config or {}
+        for ch in cfg.get("channels", []):
+            configured_channels.add(ch.lower().strip("@").rstrip("/"))
+
+    created = 0
+    for mention in mentions:
+        text = mention.content or ""
+        links = extract_channel_links(text)
+        channel_ref = mention.metadata.get("channel_ref", "")
+        message_id = mention.metadata.get("message_id")
+
+        for link in links:
+            low = link.lower()
+            # Skip if already discovered or already configured
+            if low in existing_urls:
+                continue
+            # Check if this channel is already configured (by username)
+            # Extract the channel part for comparison
+            channel_part = low.split("t.me/")[-1].strip("+").rstrip("/")
+            if channel_part in configured_channels:
+                continue
+
+            dc = DiscoveredChannel(
+                url=link,
+                source_id=source_id,
+                source_channel=channel_ref,
+                message_id=message_id,
+            )
+            session.add(dc)
+            existing_urls.add(low)
+            created += 1
+
+    if created:
+        session.commit()
+        logger.info(
+            "Discovered %d new channel links from source %s",
+            created, source_id,
+        )
+
+    return created
+
+
+@app.task(name="darkdisco.pipeline.worker.process_channel_discoveries")
+def process_channel_discoveries(batch_size: int = 5):
+    """Process approved channel discoveries: join channels and add to source config.
+
+    Runs periodically via beat schedule. Only processes channels with status='approved'.
+    Rate-limits joins to avoid Telegram flood bans.
+    """
+    from darkdisco.common.models import DiscoveredChannel, DiscoveryStatus, Source
+
+    session = _get_sync_session()
+    try:
+        approved = session.execute(
+            select(DiscoveredChannel)
+            .where(DiscoveredChannel.status == DiscoveryStatus.approved)
+            .order_by(DiscoveredChannel.discovered_at.asc())
+            .limit(batch_size)
+        ).scalars().all()
+
+        if not approved:
+            return {"processed": 0}
+
+        joined = 0
+        failed = 0
+        for dc in approved:
+            target_sid = dc.added_to_source_id or dc.source_id
+            target_source = session.get(Source, target_sid)
+            if not target_source:
+                dc.status = DiscoveryStatus.failed
+                dc.notes = "Target source not found"
+                failed += 1
+                continue
+
+            cfg = dict(target_source.config or {})
+            try:
+                connector = _load_connector(target_source)
+            except ValueError:
+                dc.status = DiscoveryStatus.failed
+                dc.notes = "No connector for target source"
+                failed += 1
+                continue
+            try:
+                success = asyncio.run(_join_channel_async(connector, dc.url))
+            except Exception as exc:
+                dc.status = DiscoveryStatus.failed
+                dc.notes = f"Join error: {str(exc)[:200]}"
+                failed += 1
+                logger.exception("Failed to join discovered channel %s", dc.url)
+                continue
+
+            if success:
+                channels: list[str] = list(cfg.get("channels", []))
+                if dc.url not in channels:
+                    channels.append(dc.url)
+                    cfg["channels"] = channels
+                    target_source.config = cfg
+                dc.status = DiscoveryStatus.joined
+                dc.added_to_source_id = target_sid
+                dc.joined_at = datetime.now(timezone.utc)
+                joined += 1
+                logger.info("Auto-joined discovered channel: %s", dc.url)
+            else:
+                dc.status = DiscoveryStatus.failed
+                dc.notes = "Join returned False"
+                failed += 1
+
+        session.commit()
+        logger.info(
+            "Processed channel discoveries: %d joined, %d failed",
+            joined, failed,
+        )
+        return {"processed": len(approved), "joined": joined, "failed": failed}
+    finally:
+        session.close()
+
+
+async def _join_channel_async(connector, channel_ref: str) -> bool:
+    """Bridge async join_channel to sync context."""
+    try:
+        await connector.setup()
+        return await connector.join_channel(channel_ref)
+    finally:
+        await connector.teardown()
 
 
 # ---------------------------------------------------------------------------
