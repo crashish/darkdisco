@@ -997,7 +997,11 @@ def download_pending_files(batch_size: int = 10):
                                 msg_id = meta.get("message_id")
                                 if not msg_id:
                                     continue
-                                file_data = await connector.download_media(int(msg_id))
+                                chat_id = meta.get("chat_id")
+                                file_data = await connector.download_media(
+                                    int(msg_id),
+                                    channel_id=int(chat_id) if chat_id else None,
+                                )
                                 if file_data:
                                     # Upload to S3
                                     import hashlib

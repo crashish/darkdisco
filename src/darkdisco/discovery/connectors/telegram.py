@@ -106,6 +106,26 @@ class TelegramConnector(BaseConnector):
             await self._client.disconnect()
             self._client = None
 
+    async def download_media(self, message_id: int, channel_id: int | None = None) -> bytes | None:
+        """Download a file attachment by message ID.
+
+        Returns file bytes or None if no media/download failed.
+        """
+        if self._client is None:
+            await self.setup()
+        try:
+            if channel_id:
+                entity = await self._client.get_entity(PeerChannel(channel_id))
+                msgs = await self._client.get_messages(entity, ids=message_id)
+            else:
+                msgs = await self._client.get_messages(None, ids=message_id)
+            msg = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
+            if msg and msg.media:
+                return await self._client.download_media(msg, bytes)
+        except Exception:
+            logger.exception("Failed to download media msg#%d", message_id)
+        return None
+
     async def poll(self, since: datetime | None = None) -> list[RawMention]:
         if self._client is None:
             await self.setup()
