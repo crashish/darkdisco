@@ -280,23 +280,23 @@ def _process_file_mentions(mentions: list) -> list:
     )
 
     for mention in mentions:
-        file_data = mention.metadata_.get("file_data")
+        file_data = mention.metadata.get("file_data")
         if not file_data or not isinstance(file_data, bytes):
             continue
 
-        filename = mention.metadata_.get("file_name") or "unknown"
+        filename = mention.metadata.get("file_name") or "unknown"
         file_sha256 = hashlib.sha256(file_data).hexdigest()
 
         # Upload original file to S3
         s3_key = f"files/{file_sha256[:8]}/{filename}"
         if upload_to_s3(s3_key, file_data):
-            mention.metadata_["s3_key"] = s3_key
-        mention.metadata_["file_sha256"] = file_sha256
+            mention.metadata["s3_key"] = s3_key
+        mention.metadata["file_sha256"] = file_sha256
 
         if is_archive(filename):
             # Extract passwords from the message text
             passwords = extract_passwords(mention.content or "")
-            mention.metadata_["extracted_passwords"] = passwords
+            mention.metadata["extracted_passwords"] = passwords
 
             try:
                 extracted = extract_archive(file_data, filename, passwords)
@@ -306,7 +306,7 @@ def _process_file_mentions(mentions: list) -> list:
 
             if extracted:
                 analysis = analyze_extracted_files(extracted)
-                mention.metadata_["file_analysis"] = analysis.to_dict()
+                mention.metadata["file_analysis"] = analysis.to_dict()
 
                 # Store per-file text content for accurate finding attribution
                 per_file_texts = []
@@ -319,7 +319,7 @@ def _process_file_mentions(mentions: list) -> list:
                         if text.strip():
                             per_file_texts.append({"filename": ef.filename, "content": text})
                 if per_file_texts:
-                    mention.metadata_["extracted_file_contents"] = per_file_texts
+                    mention.metadata["extracted_file_contents"] = per_file_texts
 
                 # Append extracted text to mention content for matching (per-file separators)
                 if per_file_texts:
@@ -345,8 +345,8 @@ def _process_file_mentions(mentions: list) -> list:
 
                 # If credentials found, boost severity hint in metadata
                 if analysis.credential_indicators:
-                    mention.metadata_["has_credentials"] = True
-                    mention.metadata_["credential_count"] = len(analysis.credential_indicators)
+                    mention.metadata["has_credentials"] = True
+                    mention.metadata["credential_count"] = len(analysis.credential_indicators)
         else:
             # Non-archive file — if it's a text file, include content
             if filename.lower().endswith((".txt", ".csv", ".log", ".json", ".sql")):
@@ -377,7 +377,7 @@ def _attributed_raw_content(mention, matched_terms: list[dict]) -> str:
     headers. Falls back to the full mention.content if no per-file data or no match
     found in individual files (e.g., match was in the original message text).
     """
-    extracted_files = mention.metadata_.get("extracted_file_contents")
+    extracted_files = mention.metadata.get("extracted_file_contents")
     if not extracted_files:
         return mention.content
 
@@ -531,14 +531,14 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 content=mention.content or "",
                 content_hash=content_hash,
                 source_url=mention.source_url,
-                metadata_=mention.metadata_,
+                metadata_=mention.metadata,
                 collected_at=mention.discovered_at,
             )
             session.add(db_mention)
             session.flush()  # assign ID before creating ExtractedFile rows
 
             # Create ExtractedFile rows from metadata
-            ef_count = _store_extracted_files(session, db_mention.id, mention.metadata_)
+            ef_count = _store_extracted_files(session, db_mention.id, mention.metadata)
             if ef_count:
                 logger.debug("Created %d extracted_files for mention %s", ef_count, db_mention.id)
 
@@ -587,7 +587,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                     "content_hash": content_hash,
                     "source_url": mention.source_url,
                     "matched_terms": matched_terms_with_highlights,
-                    "metadata": mention.metadata_,
+                    "metadata": mention.metadata,
                 }
 
                 # Run enrichment pipeline (dedup scoring, FP filtering, threat intel)
@@ -605,7 +605,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 severity = enrichment.adjusted_severity or result.severity_hint
 
                 # Merge enrichment metadata into finding metadata
-                merged_metadata = dict(mention.metadata_)
+                merged_metadata = dict(mention.metadata)
                 if enrichment.enrichment_metadata:
                     merged_metadata["enrichment"] = enrichment.enrichment_metadata
 
