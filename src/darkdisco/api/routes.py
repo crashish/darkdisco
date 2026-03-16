@@ -92,13 +92,17 @@ protected = APIRouter(dependencies=[Depends(get_current_user)])
 
 # Valid status transitions: from_status -> set of allowed to_statuses
 _VALID_TRANSITIONS: dict[FindingStatus, set[FindingStatus]] = {
-    FindingStatus.new: {FindingStatus.reviewing, FindingStatus.false_positive},
+    FindingStatus.new: {FindingStatus.reviewing, FindingStatus.confirmed, FindingStatus.dismissed, FindingStatus.false_positive},
     FindingStatus.reviewing: {
         FindingStatus.escalated,
+        FindingStatus.confirmed,
+        FindingStatus.dismissed,
         FindingStatus.resolved,
         FindingStatus.false_positive,
     },
-    FindingStatus.escalated: {FindingStatus.resolved, FindingStatus.reviewing},
+    FindingStatus.escalated: {FindingStatus.resolved, FindingStatus.confirmed, FindingStatus.reviewing},
+    FindingStatus.confirmed: {FindingStatus.resolved, FindingStatus.escalated, FindingStatus.reviewing},
+    FindingStatus.dismissed: {FindingStatus.reviewing},  # reopen
     FindingStatus.resolved: {FindingStatus.reviewing},  # reopen
     FindingStatus.false_positive: {FindingStatus.reviewing},  # reopen
 }

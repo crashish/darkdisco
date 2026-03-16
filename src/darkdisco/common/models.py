@@ -47,6 +47,8 @@ class FindingStatus(str, enum.Enum):
     reviewing = "reviewing"
     escalated = "escalated"
     resolved = "resolved"
+    confirmed = "confirmed"
+    dismissed = "dismissed"
     false_positive = "false_positive"
 
 
