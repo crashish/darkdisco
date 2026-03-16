@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -41,6 +43,8 @@ from darkdisco.api.schemas import (
     InstitutionDomainExport,
     InstitutionOut,
     InstitutionUpdate,
+    TraplineWebhookPayload,
+    TraplineWebhookResponse,
     NotificationMarkRead,
     NotificationOut,
     PaginatedMentionsOut,
@@ -64,6 +68,7 @@ from darkdisco.api.schemas import (
     WatchTermUpdate,
 )
 from darkdisco.common.database import get_session
+from darkdisco.config import settings
 from darkdisco.common.models import (
     AlertRule,
     Client,
@@ -368,6 +373,145 @@ async def list_institution_domains(
         for inst in rows
         if inst.primary_domain or inst.additional_domains
     ]
+
+
+# ---- Trapline webhook receiver ---------------------------------------------
+
+
+def _verify_trapline_signature(body: bytes, signature: str) -> bool:
+    """Verify HMAC-SHA256 signature from trapline's X-Trapline-Signature header."""
+    if not settings.trapline_webhook_secret:
+        return False
+    expected = hmac.new(
+        settings.trapline_webhook_secret.encode(),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+@router.post(
+    "/integration/trapline-webhook",
+    response_model=TraplineWebhookResponse,
+    status_code=202,
+)
+async def receive_trapline_webhook(
+    request: Request,
+    x_trapline_signature: str = Header(...),
+    db: AsyncSession = Depends(get_session),
+):
+    """Receive finding.completed webhooks from trapline.
+
+    Verifies HMAC-SHA256 signature, matches the finding to a darkdisco
+    institution by domain/brand, and creates or enriches a Finding record.
+    """
+    body = await request.body()
+
+    if not _verify_trapline_signature(body, x_trapline_signature):
+        raise HTTPException(401, "Invalid signature")
+
+    payload = TraplineWebhookPayload.model_validate_json(body)
+
+    if payload.event != "finding.completed":
+        return TraplineWebhookResponse(status="ignored", message=f"unhandled event: {payload.event}")
+
+    # Match domain to an institution
+    domain_lower = payload.domain.lower().strip()
+    stmt = select(Institution).where(Institution.active.is_(True))
+    rows = (await db.execute(stmt)).scalars().all()
+
+    matched_institution = None
+    match_type = None
+
+    for inst in rows:
+        # Exact primary domain
+        if inst.primary_domain and inst.primary_domain.lower() == domain_lower:
+            matched_institution = inst
+            match_type = "exact_primary"
+            break
+        # Additional domains
+        additional = inst.additional_domains or []
+        if any(d.lower() == domain_lower for d in additional if isinstance(d, str)):
+            matched_institution = inst
+            match_type = "exact_additional"
+            break
+        # Brand name match
+        if inst.name and inst.name.lower() in [b.lower() for b in payload.brands]:
+            matched_institution = inst
+            match_type = "brand"
+            break
+
+    if not matched_institution:
+        logger.info("Trapline webhook: no institution match for domain=%s brands=%s", payload.domain, payload.brands)
+        return TraplineWebhookResponse(status="skipped", message="no matching institution")
+
+    # Build content hash for dedup
+    content_hash = hashlib.sha256(
+        f"trapline:{payload.finding_id or payload.domain}".encode()
+    ).hexdigest()
+
+    # Check for existing finding with same content_hash (idempotency)
+    existing = (
+        await db.execute(
+            select(Finding).where(Finding.content_hash == content_hash)
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        # Enrich existing finding with updated trapline data
+        meta = existing.metadata_ or {}
+        meta["trapline"] = {
+            "score": payload.score,
+            "brands": payload.brands,
+            "artifacts": payload.artifacts,
+            "screenshot_url": payload.screenshot_url,
+            "finding_id": payload.finding_id,
+            "completed_at": payload.completed_at,
+            "match_type": match_type,
+        }
+        existing.metadata_ = meta
+        await db.commit()
+        logger.info("Trapline webhook: enriched existing finding %s for %s", existing.id, payload.domain)
+        return TraplineWebhookResponse(
+            status="enriched",
+            finding_id=existing.id,
+            institution_id=matched_institution.id,
+        )
+
+    # Create new Finding
+    severity = Severity.high if payload.score >= 70 else Severity.medium if payload.score >= 40 else Severity.low
+    finding = Finding(
+        institution_id=matched_institution.id,
+        severity=severity,
+        status=FindingStatus.new,
+        title=f"Phishing site detected: {payload.domain}",
+        summary=f"Trapline detected phishing targeting {matched_institution.name} at {payload.domain} (score: {payload.score})",
+        source_url=payload.screenshot_url,
+        content_hash=content_hash,
+        matched_terms=[{"source": "trapline", "match_type": match_type, "domain": payload.domain}],
+        tags=["trapline", "phishing"],
+        metadata_={
+            "trapline": {
+                "score": payload.score,
+                "brands": payload.brands,
+                "artifacts": payload.artifacts,
+                "screenshot_url": payload.screenshot_url,
+                "finding_id": payload.finding_id,
+                "completed_at": payload.completed_at,
+                "match_type": match_type,
+            },
+        },
+    )
+    db.add(finding)
+    await db.commit()
+    await db.refresh(finding)
+
+    logger.info("Trapline webhook: created finding %s for %s (institution=%s)", finding.id, payload.domain, matched_institution.name)
+    return TraplineWebhookResponse(
+        status="created",
+        finding_id=finding.id,
+        institution_id=matched_institution.id,
+    )
 
 
 # ---- Clients ---------------------------------------------------------------

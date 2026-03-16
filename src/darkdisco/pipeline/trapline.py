@@ -170,3 +170,35 @@ def sync_all_institutions(session) -> dict:
         total["synced"], total["domains"], total["bins"], total["errors"],
     )
     return total
+
+
+def register_webhook(callback_url: str) -> dict:
+    """Register darkdisco's webhook URL with trapline for finding.completed events.
+
+    Args:
+        callback_url: The full URL trapline should POST to, e.g.
+            https://darkdisco.example.com/api/integration/trapline-webhook
+
+    Returns:
+        Response dict from trapline, or error info.
+    """
+    if not settings.trapline_api_url or not settings.trapline_api_key:
+        return {"skipped": True, "reason": "not_configured"}
+
+    payload = {
+        "url": callback_url,
+        "events": ["finding.completed"],
+        "secret": settings.trapline_webhook_secret,
+    }
+
+    with _client() as client:
+        try:
+            resp = client.post("/api/webhooks", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            logger.info("Registered webhook with trapline: %s", callback_url)
+            return {"registered": True, "webhook_id": data.get("id"), "url": callback_url}
+        except httpx.HTTPError as exc:
+            error = f"webhook registration failed: {exc}"
+            logger.warning("Trapline %s", error)
+            return {"registered": False, "error": error}

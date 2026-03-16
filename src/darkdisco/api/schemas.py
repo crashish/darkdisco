@@ -459,6 +459,25 @@ class InstitutionDomainExport(BaseModel):
     bin_ranges: list | None = None
 
 
+class TraplineWebhookPayload(BaseModel):
+    """Inbound webhook payload from trapline when a finding completes the pipeline."""
+    event: str = "finding.completed"
+    domain: str
+    score: float = 0.0
+    brands: list[str] = []
+    artifacts: dict = {}
+    screenshot_url: str | None = None
+    finding_id: str | None = None  # trapline's own finding ID
+    completed_at: str | None = None
+
+
+class TraplineWebhookResponse(BaseModel):
+    status: str
+    finding_id: str | None = None
+    institution_id: str | None = None
+    message: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Pipeline diagnostics
 # ---------------------------------------------------------------------------

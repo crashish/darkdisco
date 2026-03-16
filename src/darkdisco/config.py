@@ -61,9 +61,10 @@ class Settings(BaseSettings):
     s3_secret_key: str = "darkdisco-secret"
     s3_bucket: str = "darkdisco-attachments"
 
-    # Trapline integration (client watchlist sync)
+    # Trapline integration (client watchlist sync + webhook receiver)
     trapline_api_url: str = ""  # e.g. https://trapline.example.com
     trapline_api_key: str = ""
+    trapline_webhook_secret: str = ""  # HMAC-SHA256 secret for verifying inbound webhooks
 
     # OCR (image text extraction)
     ocr_enabled: bool = True
