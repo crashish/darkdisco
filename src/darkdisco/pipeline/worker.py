@@ -214,6 +214,10 @@ def poll_source(self, source_id: str):
             logger.exception("Failed to poll source %s", source.name)
             raise self.retry(exc=exc, countdown=60 * (self.request.retries + 1))
 
+        # Persist connector state (high-water marks) back to source config
+        if hasattr(connector, 'config') and connector.config:
+            source.config = {**(source.config or {}), **connector.config}
+
         # Update poll timestamp and clear errors
         source.last_polled_at = datetime.now(timezone.utc)
         source.last_error = None
