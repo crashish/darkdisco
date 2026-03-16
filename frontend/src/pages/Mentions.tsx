@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
-import { fetchMentions, fetchSources, fetchInstitutions, promoteMention, fetchArchiveContents } from '../api';
+import { fetchMentions, fetchSources, fetchInstitutions, promoteMention, fetchArchiveContents, fetchMentionChannels, fetchMentionFiles, getMentionFileUrl } from '../api';
+import type { MentionFilesResponse } from '../api';
 import { colors, card, font } from '../theme';
 import type { RawMention, Source, Institution, Severity } from '../types';
 import ArchiveContents from '../components/ArchiveContents';
 import type { ArchiveFile } from '../components/ArchiveContents';
-import { MessageSquare, Filter, Search, ChevronDown, ChevronUp, ExternalLink, ArrowRight, X, Check } from 'lucide-react';
+import { MessageSquare, Filter, Search, ChevronDown, ChevronUp, ExternalLink, ArrowRight, X, Check, Download, Eye } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const sourceTypeBadge = (type: string): CSSProperties => ({
@@ -17,6 +18,39 @@ const sourceTypeBadge = (type: string): CSSProperties => ({
   color: colors.accent,
   background: `${colors.accent}1a`,
 });
+
+function TextFilePreview({ s3Key }: { s3Key: string }) {
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem('dd_token');
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    fetch(`/api/files/${s3Key}`, { headers })
+      .then(r => {
+        if (!r.ok) throw new Error('Failed to load');
+        return r.text();
+      })
+      .then(text => { setContent(text.slice(0, 50000)); setLoading(false); })
+      .catch(() => { setContent(null); setLoading(false); });
+  }, [s3Key]);
+
+  if (loading) return <div style={{ fontSize: 11, color: colors.textMuted, padding: 8 }}>Loading preview...</div>;
+  if (content === null) return null;
+
+  return (
+    <pre style={{
+      fontFamily: font.mono, fontSize: 11, lineHeight: 1.5,
+      color: colors.textDim, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+      background: colors.bg, padding: 12, borderRadius: 4,
+      border: `1px solid ${colors.border}`, margin: 0,
+      maxHeight: 400, overflow: 'auto',
+    }}>
+      {content}
+    </pre>
+  );
+}
 
 export default function Mentions() {
   const [mentions, setMentions] = useState<RawMention[]>([]);
@@ -33,6 +67,8 @@ export default function Mentions() {
   const [promoteForm, setPromoteForm] = useState({ institution_id: '', title: '', severity: 'medium' as Severity, summary: '' });
   const [promoting, setPromoting] = useState(false);
   const [archiveFilesMap, setArchiveFilesMap] = useState<Record<string, ArchiveFile[]>>({});
+  const [channels, setChannels] = useState<{ channel: string; count: number }[]>([]);
+  const [mentionFilesMap, setMentionFilesMap] = useState<Record<string, MentionFilesResponse>>({});
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const PAGE_SIZE = 50;
@@ -61,6 +97,7 @@ export default function Mentions() {
   useEffect(() => {
     fetchSources().then(setSources);
     fetchInstitutions().then(setInstitutions);
+    fetchMentionChannels().then(setChannels);
   }, []);
 
   useEffect(() => {
@@ -82,6 +119,17 @@ export default function Mentions() {
     fetchArchiveContents('mentions', expandedId)
       .then(r => setArchiveFilesMap(prev => ({ ...prev, [expandedId]: r.files })))
       .catch(() => setArchiveFilesMap(prev => ({ ...prev, [expandedId]: [] })));
+  }, [expandedId]);
+
+  // Load file info for expanded mentions that have files
+  useEffect(() => {
+    if (!expandedId || mentionFilesMap[expandedId] !== undefined) return;
+    const mention = mentions.find(m => m.id === expandedId);
+    const meta = mention?.metadata as Record<string, unknown> | undefined;
+    if (!meta?.s3_key && !meta?.file_name) return;
+    fetchMentionFiles(expandedId)
+      .then(r => setMentionFilesMap(prev => ({ ...prev, [expandedId]: r })))
+      .catch(() => {});
   }, [expandedId]);
 
   const handlePromote = async (mentionId: string) => {
@@ -155,17 +203,21 @@ export default function Mentions() {
           {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
 
-        <input
-          type="text"
-          placeholder="Filter by channel..."
+        <select
           value={channelFilter}
           onChange={e => setChannelFilter(e.target.value)}
           style={{
             padding: '7px 10px', fontSize: 13, background: colors.bgSurface,
             border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.text, outline: 'none',
-            width: 160,
           }}
-        />
+        >
+          <option value="">All Channels</option>
+          {channels.map(ch => (
+            <option key={ch.channel} value={ch.channel}>
+              {ch.channel} ({ch.count})
+            </option>
+          ))}
+        </select>
 
         <select
           value={mediaFilter}
@@ -343,6 +395,94 @@ export default function Mentions() {
                     {/* Archive Contents (if present) */}
                     {archiveFilesMap[mention.id] && archiveFilesMap[mention.id].length > 0 && (
                       <ArchiveContents files={archiveFilesMap[mention.id]} />
+                    )}
+
+                    {/* Single file viewing & download */}
+                    {meta?.s3_key && (() => {
+                      const fileInfo = mentionFilesMap[mention.id];
+                      const mime = meta.file_mime ? String(meta.file_mime) : '';
+                      const fileName = meta.file_name ? String(meta.file_name) : 'file';
+                      const isImage = mime.startsWith('image/');
+                      const isText = mime.startsWith('text/') || ['application/json', 'application/xml', 'application/javascript'].includes(mime)
+                        || /\.(txt|log|csv|json|xml|yaml|yml|md|ini|cfg|conf|py|js|ts|sh|sql|html|css)$/i.test(fileName);
+                      const downloadUrl = getMentionFileUrl(mention.id);
+                      const token = localStorage.getItem('dd_token');
+                      const authParam = token ? `?token=${encodeURIComponent(token)}` : '';
+
+                      return (
+                        <div style={{
+                          marginBottom: 12, padding: 12, background: colors.bgSurface,
+                          borderRadius: 6, border: `1px solid ${colors.border}`,
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <Eye size={14} color={colors.textMuted} />
+                            <span style={{ fontSize: 12, fontWeight: 600, color: colors.text }}>
+                              {fileName}
+                            </span>
+                            {meta.file_size && (
+                              <span style={{ fontSize: 11, color: colors.textMuted }}>
+                                ({Number(meta.file_size) >= 1048576
+                                  ? (Number(meta.file_size) / 1048576).toFixed(1) + ' MB'
+                                  : (Number(meta.file_size) / 1024).toFixed(0) + ' KB'})
+                              </span>
+                            )}
+                            <a
+                              href={`${downloadUrl}${authParam}`}
+                              download={fileName}
+                              style={{
+                                marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4,
+                                padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                                background: colors.accent, color: '#fff', borderRadius: 4,
+                                textDecoration: 'none',
+                              }}
+                            >
+                              <Download size={12} /> Download
+                            </a>
+                          </div>
+
+                          {isImage && (
+                            <img
+                              src={`/api/mentions/${mention.id}/file`}
+                              alt={fileName}
+                              style={{
+                                maxWidth: '100%', maxHeight: 400, borderRadius: 4,
+                                border: `1px solid ${colors.border}`,
+                              }}
+                            />
+                          )}
+
+                          {isText && fileInfo?.files?.length > 0 && (() => {
+                            const origFile = fileInfo.files.find(f => f.type === 'original');
+                            if (!origFile?.s3_key) return null;
+                            return (
+                              <TextFilePreview s3Key={origFile.s3_key} />
+                            );
+                          })()}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Download button for files without s3_key but with file_name */}
+                    {meta?.file_name && !meta?.s3_key && meta?.download_status === 'stored' && (
+                      <div style={{
+                        marginBottom: 12, padding: 12, background: colors.bgSurface,
+                        borderRadius: 6, border: `1px solid ${colors.border}`,
+                        display: 'flex', alignItems: 'center', gap: 8,
+                      }}>
+                        <span style={{ fontSize: 12, color: colors.text }}>{String(meta.file_name)}</span>
+                        <a
+                          href={getMentionFileUrl(mention.id)}
+                          download={String(meta.file_name)}
+                          style={{
+                            marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                            background: colors.accent, color: '#fff', borderRadius: 4,
+                            textDecoration: 'none',
+                          }}
+                        >
+                          <Download size={12} /> Download
+                        </a>
+                      </div>
                     )}
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: colors.textMuted }}>
