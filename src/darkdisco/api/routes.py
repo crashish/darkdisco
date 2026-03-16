@@ -39,6 +39,7 @@ from darkdisco.api.schemas import (
     FindingOut,
     FindingStatusTransition,
     FindingUpdate,
+    PaginatedFindingsOut,
     InstitutionCreate,
     InstitutionDomainExport,
     InstitutionOut,
@@ -1622,35 +1623,62 @@ async def serve_s3_file(
 
 # ---- Findings --------------------------------------------------------------
 
-@protected.get("/findings", response_model=list[FindingOut])
+@protected.get("/findings", response_model=PaginatedFindingsOut)
 async def list_findings(
     institution_id: str | None = None,
     severity: Severity | None = None,
     status: FindingStatus | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
+    q: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_session),
 ):
+    base_filters = []
+    if institution_id is not None:
+        base_filters.append(Finding.institution_id == institution_id)
+    if severity is not None:
+        base_filters.append(Finding.severity == severity)
+    if status is not None:
+        base_filters.append(Finding.status == status)
+    if date_from is not None:
+        base_filters.append(Finding.discovered_at >= date_from)
+    if date_to is not None:
+        base_filters.append(Finding.discovered_at <= date_to)
+    if q:
+        like_pattern = f"%{q}%"
+        base_filters.append(
+            or_(
+                Finding.title.ilike(like_pattern),
+                Finding.summary.ilike(like_pattern),
+                Finding.raw_content.ilike(like_pattern),
+            )
+        )
+
+    # Total count
+    count_stmt = select(func.count(Finding.id))
+    for f in base_filters:
+        count_stmt = count_stmt.where(f)
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    # Paginated results
     stmt = (
         select(Finding)
         .options(selectinload(Finding.institution), selectinload(Finding.source))
         .order_by(Finding.discovered_at.desc())
     )
-    if institution_id is not None:
-        stmt = stmt.where(Finding.institution_id == institution_id)
-    if severity is not None:
-        stmt = stmt.where(Finding.severity == severity)
-    if status is not None:
-        stmt = stmt.where(Finding.status == status)
-    if date_from is not None:
-        stmt = stmt.where(Finding.discovered_at >= date_from)
-    if date_to is not None:
-        stmt = stmt.where(Finding.discovered_at <= date_to)
+    for f in base_filters:
+        stmt = stmt.where(f)
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
-    return result.scalars().all()
+
+    return PaginatedFindingsOut(
+        items=result.scalars().all(),
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @protected.post("/findings", response_model=FindingOut, status_code=201)
@@ -1673,7 +1701,7 @@ async def create_finding(
     return result.scalar_one()
 
 
-@protected.get("/findings/search", response_model=list[FindingOut])
+@protected.get("/findings/search", response_model=PaginatedFindingsOut)
 async def search_findings(
     q: str = Query(..., min_length=1),
     page: int = Query(1, ge=1),
@@ -1682,22 +1710,32 @@ async def search_findings(
 ):
     """Full-text-ish search across finding title, summary, and raw_content."""
     like_pattern = f"%{q}%"
+    search_filter = or_(
+        Finding.title.ilike(like_pattern),
+        Finding.summary.ilike(like_pattern),
+        Finding.raw_content.ilike(like_pattern),
+    )
+
+    total = (await db.execute(
+        select(func.count(Finding.id)).where(search_filter)
+    )).scalar() or 0
+
     stmt = (
         select(Finding)
         .options(selectinload(Finding.institution), selectinload(Finding.source))
-        .where(
-            or_(
-                Finding.title.ilike(like_pattern),
-                Finding.summary.ilike(like_pattern),
-                Finding.raw_content.ilike(like_pattern),
-            )
-        )
+        .where(search_filter)
         .order_by(Finding.discovered_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
     result = await db.execute(stmt)
-    return result.scalars().all()
+
+    return PaginatedFindingsOut(
+        items=result.scalars().all(),
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @protected.get("/findings/{finding_id}/archive-contents")

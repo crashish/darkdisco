@@ -1,15 +1,16 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { fetchFindings, fetchInstitutions, updateFindingStatus } from '../api';
 import { colors, card, font, statusLabel } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import type { Finding, Institution, Severity, FindingStatus } from '../types';
-import { Search, ChevronDown, ExternalLink, Calendar } from 'lucide-react';
+import { Search, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, Calendar, Hash, User } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allSeverities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'false_positive', 'resolved'];
+const PAGE_SIZE = 50;
 
 const selectStyle: CSSProperties = {
   background: colors.bgSurface,
@@ -30,11 +31,27 @@ const inputStyle: CSSProperties = {
   paddingLeft: 36,
 };
 
+const pageBtnStyle: CSSProperties = {
+  background: colors.bgSurface,
+  border: `1px solid ${colors.border}`,
+  borderRadius: 6,
+  color: colors.text,
+  padding: '6px 10px',
+  fontSize: 13,
+  cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+};
+
 export default function Findings() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [findings, setFindings] = useState<Finding[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(searchParams.get('q') || '');
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
   const navigate = useNavigate();
   const [sevFilter, setSevFilter] = useState(searchParams.get('severity') || '');
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
@@ -42,9 +59,19 @@ export default function Findings() {
   const [dateFilter, setDateFilter] = useState(searchParams.get('date') || '');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  // Debounce search input
+  useEffect(() => {
+    debounceRef.current = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [search]);
 
   const load = useCallback(() => {
-    const params: Record<string, string | number> = {};
+    const params: Record<string, string | number> = { page, page_size: PAGE_SIZE };
     if (sevFilter) params.severity = sevFilter;
     if (statusFilter) params.status = statusFilter;
     if (instFilter) params.institution_id = instFilter;
@@ -52,19 +79,23 @@ export default function Findings() {
       params.date_from = `${dateFilter}T00:00:00`;
       params.date_to = `${dateFilter}T23:59:59`;
     }
-    fetchFindings(params as any).then(setFindings);
-  }, [sevFilter, statusFilter, instFilter, dateFilter]);
+    if (debouncedSearch) params.q = debouncedSearch;
+    fetchFindings(params as any).then(res => {
+      setFindings(res.items);
+      setTotal(res.total);
+    });
+  }, [sevFilter, statusFilter, instFilter, dateFilter, debouncedSearch, page]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { fetchInstitutions().then(setInstitutions); }, []);
 
-  const filtered = search
-    ? findings.filter(f =>
-        f.title.toLowerCase().includes(search.toLowerCase()) ||
-        f.summary.toLowerCase().includes(search.toLowerCase()) ||
-        (f.institution_name || '').toLowerCase().includes(search.toLowerCase())
-      )
-    : findings;
+  // Reset page when filters change
+  const handleFilterChange = (setter: (v: string) => void) => (v: string) => {
+    setter(v);
+    setPage(1);
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const handleStatusChange = async (id: string, status: FindingStatus) => {
     await updateFindingStatus(id, status);
@@ -72,11 +103,21 @@ export default function Findings() {
     setFindings(prev => prev.map(f => f.id === id ? { ...f, status } : f));
   };
 
+  const channelName = (f: Finding): string | null => {
+    const meta = f.metadata as Record<string, unknown> | null | undefined;
+    return (meta?.channel_name as string) || (meta?.channel_ref as string) || (meta?.forum_name as string) || null;
+  };
+
+  const senderName = (f: Finding): string | null => {
+    const meta = f.metadata as Record<string, unknown> | null | undefined;
+    return (meta?.sender_name as string) || (meta?.post_author as string) || null;
+  };
+
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Findings</h1>
       <p style={{ color: colors.textDim, fontSize: 14, marginBottom: 24 }}>
-        {filtered.length} finding{filtered.length !== 1 ? 's' : ''} matching current filters
+        {total} finding{total !== 1 ? 's' : ''} matching current filters
       </p>
 
       {/* Filters */}
@@ -85,20 +126,20 @@ export default function Findings() {
           <Search size={16} color={colors.textMuted} style={{ position: 'absolute', left: 12, top: 10 }} />
           <input
             style={inputStyle}
-            placeholder="Search findings..."
+            placeholder="Search title, summary, content..."
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
         </div>
-        <select style={selectStyle} value={sevFilter} onChange={e => setSevFilter(e.target.value)}>
+        <select style={selectStyle} value={sevFilter} onChange={e => handleFilterChange(setSevFilter)(e.target.value)}>
           <option value="">All Severities</option>
           {allSeverities.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
         </select>
-        <select style={selectStyle} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+        <select style={selectStyle} value={statusFilter} onChange={e => handleFilterChange(setStatusFilter)(e.target.value)}>
           <option value="">All Statuses</option>
           {allStatuses.map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
         </select>
-        <select style={selectStyle} value={instFilter} onChange={e => setInstFilter(e.target.value)}>
+        <select style={selectStyle} value={instFilter} onChange={e => handleFilterChange(setInstFilter)(e.target.value)}>
           <option value="">All Institutions</option>
           {institutions.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
         </select>
@@ -108,12 +149,12 @@ export default function Findings() {
             type="date"
             style={{ ...selectStyle, paddingLeft: 36, minWidth: 160 }}
             value={dateFilter}
-            onChange={e => setDateFilter(e.target.value)}
+            onChange={e => handleFilterChange(setDateFilter)(e.target.value)}
           />
         </div>
         {(sevFilter || statusFilter || instFilter || search || dateFilter) && (
           <button
-            onClick={() => { setSevFilter(''); setStatusFilter(''); setInstFilter(''); setSearch(''); setDateFilter(''); setSearchParams({}); }}
+            onClick={() => { setSevFilter(''); setStatusFilter(''); setInstFilter(''); setSearch(''); setDateFilter(''); setPage(1); setSearchParams({}); }}
             style={{ background: 'none', border: 'none', color: colors.accent, fontSize: 13, cursor: 'pointer', padding: '8px 4px' }}
           >
             Clear filters
@@ -132,7 +173,7 @@ export default function Findings() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(f => (
+            {findings.map(f => (
               <>
                 <tr
                   key={f.id}
@@ -149,7 +190,19 @@ export default function Findings() {
                     onMouseLeave={e => (e.currentTarget.style.color = colors.text)}
                   >{f.title}</td>
                   <td style={{ padding: '10px 12px', color: colors.textDim }}>{f.institution_name}</td>
-                  <td style={{ padding: '10px 12px', color: colors.textDim, fontFamily: font.mono, fontSize: 11 }}>{f.source_type}</td>
+                  <td style={{ padding: '10px 12px', color: colors.textDim }}>
+                    <span style={{ fontFamily: font.mono, fontSize: 11 }}>{f.source_type}</span>
+                    {channelName(f) && (
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                        <Hash size={10} /> {channelName(f)}
+                      </span>
+                    )}
+                    {senderName(f) && (
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: colors.textMuted, marginTop: 1 }}>
+                        <User size={10} /> {senderName(f)}
+                      </span>
+                    )}
+                  </td>
                   <td style={{ padding: '10px 12px', position: 'relative' }}>
                     <div
                       style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
@@ -208,10 +261,38 @@ export default function Findings() {
             ))}
           </tbody>
         </table>
-        {filtered.length === 0 && (
+        {findings.length === 0 && (
           <div style={{ textAlign: 'center', padding: 40, color: colors.textMuted }}>No findings match your filters.</div>
         )}
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
+          <span style={{ fontSize: 12, color: colors.textMuted }}>
+            Showing {(page - 1) * PAGE_SIZE + 1}&ndash;{Math.min(page * PAGE_SIZE, total)} of {total}
+          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              style={{ ...pageBtnStyle, opacity: page <= 1 ? 0.4 : 1 }}
+              disabled={page <= 1}
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+            >
+              <ChevronLeft size={14} /> Prev
+            </button>
+            <span style={{ fontSize: 13, color: colors.textDim }}>
+              Page {page} of {totalPages}
+            </span>
+            <button
+              style={{ ...pageBtnStyle, opacity: page >= totalPages ? 0.4 : 1 }}
+              disabled={page >= totalPages}
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            >
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

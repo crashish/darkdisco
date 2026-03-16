@@ -38,7 +38,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchDashboardStats().then(setStats);
-    fetchFindings().then(f => setRecent(f.slice(0, 8)));
+    fetchFindings({ page_size: 8 }).then(r => setRecent(r.items));
   }, []);
 
   if (!stats) return <div style={{ color: colors.textDim, padding: 40 }}>Loading...</div>;

@@ -628,6 +628,11 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
 
                 # Merge enrichment metadata into finding metadata
                 merged_metadata = dict(mention.metadata)
+                # Normalize channel/sender fields for frontend display
+                if "channel_ref" in merged_metadata and "channel_name" not in merged_metadata:
+                    merged_metadata["channel_name"] = merged_metadata["channel_ref"]
+                if mention.author and "sender_name" not in merged_metadata:
+                    merged_metadata["sender_name"] = mention.author
                 if enrichment.enrichment_metadata:
                     merged_metadata["enrichment"] = enrichment.enrichment_metadata
 

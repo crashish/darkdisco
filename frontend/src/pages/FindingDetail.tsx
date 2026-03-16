@@ -233,10 +233,10 @@ export default function FindingDetail() {
                   padding: '10px 16px', borderBottom: `1px solid ${colors.border}`,
                   display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
                 }}>
-                  {meta.channel_name && (
+                  {(meta.channel_name || meta.channel_ref) && (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: colors.text, fontWeight: 600 }}>
                       <Hash size={12} color={colors.accent} />
-                      {String(meta.channel_name)}
+                      {String(meta.channel_name || meta.channel_ref)}
                     </span>
                   )}
                   {meta.forum_name && (

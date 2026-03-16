@@ -40,6 +40,14 @@ export interface Finding {
   source_url?: string;
   discovered_at: string;
   updated_at: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface PaginatedFindings {
+  items: Finding[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 export interface FindingDetail extends Finding {

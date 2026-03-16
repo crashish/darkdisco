@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -45,22 +45,22 @@ export async function fetchFindings(params?: {
   status?: string;
   date_from?: string;
   date_to?: string;
-}): Promise<Finding[]> {
+  q?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<PaginatedFindings> {
   const qs = new URLSearchParams();
   if (params?.institution_id) qs.set('institution_id', params.institution_id);
   if (params?.severity) qs.set('severity', params.severity);
   if (params?.status) qs.set('status', params.status);
   if (params?.date_from) qs.set('date_from', params.date_from);
   if (params?.date_to) qs.set('date_to', params.date_to);
+  if (params?.q) qs.set('q', params.q);
+  if (params?.page !== undefined) qs.set('page', String(params.page));
+  if (params?.page_size !== undefined) qs.set('page_size', String(params.page_size));
   const q = qs.toString();
 
-  let fallback = [...mockFindings];
-  if (params?.institution_id) fallback = fallback.filter(f => f.institution_id === params.institution_id);
-  if (params?.severity) fallback = fallback.filter(f => f.severity === params.severity);
-  if (params?.status) fallback = fallback.filter(f => f.status === params.status);
-  if (params?.date_from) fallback = fallback.filter(f => f.discovered_at >= params.date_from!);
-  if (params?.date_to) fallback = fallback.filter(f => f.discovered_at <= params.date_to!);
-
+  const fallback: PaginatedFindings = { items: mockFindings, total: mockFindings.length, page: params?.page ?? 1, page_size: params?.page_size ?? 50 };
   return apiFetch(`/findings${q ? '?' + q : ''}`, fallback);
 }
 

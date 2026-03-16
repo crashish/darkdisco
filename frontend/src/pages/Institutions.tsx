@@ -96,7 +96,7 @@ export default function Institutions() {
       fetchFindings({ institution_id: id }),
       fetchWatchTerms(id),
     ]);
-    setInstFindings(findings);
+    setInstFindings(findings.items);
     setInstTerms(terms);
     setLoadingDetail(false);
   };

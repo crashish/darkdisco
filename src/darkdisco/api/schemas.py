@@ -237,6 +237,13 @@ class FindingOut(BaseModel):
     source_name: str | None = None
 
 
+class PaginatedFindingsOut(BaseModel):
+    items: list[FindingOut]
+    total: int
+    page: int
+    page_size: int
+
+
 class FindingStatusTransition(BaseModel):
     status: FindingStatus
     notes: str | None = None
