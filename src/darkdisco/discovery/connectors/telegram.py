@@ -245,8 +245,8 @@ class TelegramConnector(BaseConnector):
             if message.id > new_high_water:
                 new_high_water = message.id
 
-            # Time filter
-            if since and message.date and message.date < since:
+            # Time filter — skip for channels with no high-water mark (first poll / backfill)
+            if min_id > 0 and since and message.date and message.date < since:
                 continue
 
             # Download file attachments if present (only for recent messages)
