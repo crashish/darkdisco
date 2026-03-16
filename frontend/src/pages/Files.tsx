@@ -1,8 +1,175 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { colors, card, font } from '../theme';
-import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader } from 'lucide-react';
+import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File } from 'lucide-react';
 
 const BASE = '/api';
+
+// ---- Filetype detection ----
+
+const imageExts = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.ico']);
+const videoExts = new Set(['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm']);
+const archiveExts = new Set(['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.tgz']);
+const docExts = new Set(['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt']);
+
+type FileCategory = 'image' | 'video' | 'archive' | 'document' | 'text' | 'unknown';
+
+function getFileCategory(filename: string, isText?: boolean): FileCategory {
+  const ext = ('.' + (filename.split('.').pop() || '')).toLowerCase();
+  if (imageExts.has(ext)) return 'image';
+  if (videoExts.has(ext)) return 'video';
+  if (archiveExts.has(ext)) return 'archive';
+  if (docExts.has(ext)) return 'document';
+  if (isText || textExts.has(ext)) return 'text';
+  return 'unknown';
+}
+
+function FileCategoryIcon({ category, size = 13 }: { category: FileCategory; size?: number }) {
+  const iconColors: Record<FileCategory, string> = {
+    image: '#a78bfa',
+    video: '#f472b6',
+    archive: '#fb923c',
+    document: '#60a5fa',
+    text: colors.accent,
+    unknown: colors.textDim,
+  };
+  const c = iconColors[category];
+  switch (category) {
+    case 'image': return <Image size={size} color={c} />;
+    case 'video': return <Film size={size} color={c} />;
+    case 'archive': return <FileArchive size={size} color={c} />;
+    case 'document': return <FileText size={size} color={c} />;
+    case 'text': return <FileText size={size} color={c} />;
+    default: return <File size={size} color={c} />;
+  }
+}
+
+// ---- Authenticated image component ----
+
+function AuthImage({ src, alt, style }: { src: string; alt: string; style?: React.CSSProperties }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const urlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem('dd_token');
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    fetch(src, { headers })
+      .then(r => {
+        if (!r.ok) throw new Error(`${r.status}`);
+        return r.blob();
+      })
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        urlRef.current = url;
+        setBlobUrl(url);
+        setLoading(false);
+      })
+      .catch(() => { setError(true); setLoading(false); });
+
+    return () => { if (urlRef.current) URL.revokeObjectURL(urlRef.current); };
+  }, [src]);
+
+  if (loading) return <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>Loading image...</div>;
+  if (error || !blobUrl) return <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>Failed to load image</div>;
+  return <img src={blobUrl} alt={alt} style={style} />;
+}
+
+// ---- Auth download helper ----
+
+function authDownloadUrl(s3Key: string): string {
+  const token = localStorage.getItem('dd_token');
+  const base = `${BASE}/files/${s3Key}`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+function authMentionFileUrl(mentionId: string): string {
+  const token = localStorage.getItem('dd_token');
+  const base = `${BASE}/mentions/${mentionId}/file`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+// ---- Standalone file viewer ----
+
+function StandaloneFileViewer({ archive }: { archive: ArchiveSummary }) {
+  const cat = getFileCategory(archive.file_name);
+  const isImage = cat === 'image';
+  const isText = cat === 'text';
+  const fileUrl = `${BASE}/mentions/${archive.mention_id}/file`;
+  const downloadUrl = authMentionFileUrl(archive.mention_id);
+
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isText) return;
+    setLoading(true);
+    const token = localStorage.getItem('dd_token');
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    fetch(fileUrl, { headers })
+      .then(r => r.ok ? r.text() : '[Failed to load]')
+      .then(text => setContent(text.slice(0, 50000)))
+      .catch(() => setContent('[Failed to load]'))
+      .finally(() => setLoading(false));
+  }, [archive.mention_id, isText, fileUrl]);
+
+  return (
+    <div style={{ ...card, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <FileCategoryIcon category={cat} size={16} />
+        <span style={{ fontSize: 14, fontWeight: 600, color: colors.text, fontFamily: font.mono }}>
+          {archive.file_name}
+        </span>
+        <span style={{ fontSize: 11, color: colors.textMuted }}>{formatSize(archive.file_size)}</span>
+        <a
+          href={downloadUrl}
+          download={archive.file_name}
+          style={{
+            marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '4px 10px', fontSize: 11, fontWeight: 600,
+            background: colors.accent, color: '#fff', borderRadius: 4,
+            textDecoration: 'none',
+          }}
+        >
+          <Download size={12} /> Download
+        </a>
+      </div>
+
+      {isImage && (
+        <AuthImage
+          src={fileUrl}
+          alt={archive.file_name}
+          style={{
+            maxWidth: '100%', maxHeight: 600, borderRadius: 4,
+            border: `1px solid ${colors.border}`,
+          }}
+        />
+      )}
+
+      {isText && (
+        loading ? (
+          <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>Loading...</div>
+        ) : content ? (
+          <pre style={{
+            fontFamily: font.mono, fontSize: 11, lineHeight: 1.5,
+            color: colors.textDim, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            background: colors.bg, padding: 12, borderRadius: 4,
+            border: `1px solid ${colors.border}`,
+            maxHeight: 600, overflow: 'auto', margin: 0,
+          }}>{content}</pre>
+        ) : null
+      )}
+
+      {!isImage && !isText && (
+        <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>
+          {cat === 'video' ? 'Video file' : cat === 'document' ? 'Document' : 'File'} — download to view
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface SearchResult {
   id: string;
@@ -48,6 +215,7 @@ interface ArchiveSummary {
   mention_id: string;
   file_name: string;
   file_size: number;
+  file_mime: string;
   source_name: string;
   collected_at: string;
   file_count: number;
@@ -96,6 +264,7 @@ export default function Files() {
               mention_id: m.id as string,
               file_name: (meta?.file_name as string) || 'unknown',
               file_size: (meta?.file_size as number) || 0,
+              file_mime: (meta?.file_mime as string) || '',
               source_name: (m.source_name as string) || '',
               collected_at: (m.collected_at as string) || '',
               file_count: 0,
@@ -256,28 +425,32 @@ export default function Files() {
               </div>
               {archivesLoading ? (
                 <div style={{ padding: 20, textAlign: 'center', color: colors.textMuted }}>Loading...</div>
-              ) : archives.map(a => (
-                <div
-                  key={a.mention_id}
-                  onClick={() => setSelectedArchive(selectedArchive === a.mention_id ? null : a.mention_id)}
-                  style={{
-                    padding: '8px 14px', cursor: 'pointer',
-                    borderBottom: `1px solid ${colors.border}`,
-                    background: selectedArchive === a.mention_id ? colors.bgHover : 'transparent',
-                  }}
-                  onMouseEnter={e => { if (selectedArchive !== a.mention_id) (e.currentTarget as HTMLElement).style.background = colors.bgSurface; }}
-                  onMouseLeave={e => { if (selectedArchive !== a.mention_id) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                >
-                  <div style={{ fontSize: 12, fontFamily: font.mono, color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {a.file_name}
+              ) : archives.map(a => {
+                const cat = getFileCategory(a.file_name);
+                return (
+                  <div
+                    key={a.mention_id}
+                    onClick={() => setSelectedArchive(selectedArchive === a.mention_id ? null : a.mention_id)}
+                    style={{
+                      padding: '8px 14px', cursor: 'pointer',
+                      borderBottom: `1px solid ${colors.border}`,
+                      background: selectedArchive === a.mention_id ? colors.bgHover : 'transparent',
+                    }}
+                    onMouseEnter={e => { if (selectedArchive !== a.mention_id) (e.currentTarget as HTMLElement).style.background = colors.bgSurface; }}
+                    onMouseLeave={e => { if (selectedArchive !== a.mention_id) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                  >
+                    <div style={{ fontSize: 12, fontFamily: font.mono, color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <FileCategoryIcon category={cat} size={12} />
+                      {a.file_name}
+                    </div>
+                    <div style={{ fontSize: 11, color: colors.textMuted, display: 'flex', gap: 8 }}>
+                      <span>{formatSize(a.file_size)}</span>
+                      <span>{a.source_name}</span>
+                      <span>{new Date(a.collected_at).toLocaleDateString()}</span>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 11, color: colors.textMuted, display: 'flex', gap: 8 }}>
-                    <span>{formatSize(a.file_size)}</span>
-                    <span>{a.source_name}</span>
-                    <span>{new Date(a.collected_at).toLocaleDateString()}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -293,6 +466,13 @@ export default function Files() {
               <div style={{ ...card, padding: 40, textAlign: 'center', color: colors.textMuted }}>
                 <Loader size={20} style={{ animation: 'spin 1s linear infinite' }} />
               </div>
+            ) : archiveFiles.length === 0 && selectedArchive ? (
+              /* Standalone file — not an archive, show file directly */
+              (() => {
+                const arch = archives.find(a => a.mention_id === selectedArchive);
+                if (!arch) return null;
+                return <StandaloneFileViewer archive={arch} />;
+              })()
             ) : (
               <div>
                 <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 8 }}>
@@ -300,9 +480,11 @@ export default function Files() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {archiveFiles.map(file => {
-                    const isExpanded = expandedFile === (file.s3_key || file.filename);
-                    const isText = file.is_text || textExts.has('.' + (file.extension || ''));
                     const fid = file.s3_key || file.filename;
+                    const isExpanded = expandedFile === fid;
+                    const category = getFileCategory(file.filename, file.is_text);
+                    const isText = category === 'text';
+                    const isImage = category === 'image';
                     const content = fileContent[fid] || '';
                     const isLoadingContent = contentLoading === fid;
 
@@ -329,20 +511,29 @@ export default function Files() {
                           }}
                         >
                           {isExpanded ? <ChevronDown size={12} color={colors.textMuted} /> : <ChevronRight size={12} color={colors.textMuted} />}
-                          <FileText size={13} color={isText ? colors.accent : colors.textDim} />
+                          <FileCategoryIcon category={category} />
                           <span style={{ fontSize: 12, fontFamily: font.mono, color: colors.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {file.filename}
                           </span>
                           <span style={{ fontSize: 11, color: colors.textMuted }}>{formatSize(file.size)}</span>
                           {file.s3_key && (
-                            <a href={`${BASE}/files/${file.s3_key}`} onClick={e => e.stopPropagation()} style={{ color: colors.textMuted }} title="Download">
+                            <a href={authDownloadUrl(file.s3_key)} onClick={e => e.stopPropagation()} style={{ color: colors.textMuted, display: 'flex' }} title="Download" download={file.filename}>
                               <Download size={12} />
                             </a>
                           )}
                         </div>
                         {isExpanded && (
                           <div style={{ marginLeft: 32, marginTop: 4, marginBottom: 8 }}>
-                            {isLoadingContent ? (
+                            {isImage && file.s3_key ? (
+                              <AuthImage
+                                src={`${BASE}/files/${file.s3_key}`}
+                                alt={file.filename}
+                                style={{
+                                  maxWidth: '100%', maxHeight: 500, borderRadius: 4,
+                                  border: `1px solid ${colors.border}`,
+                                }}
+                              />
+                            ) : isLoadingContent ? (
                               <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>Loading...</div>
                             ) : isText && content ? (
                               <pre style={{
@@ -355,7 +546,15 @@ export default function Files() {
                             ) : isText ? (
                               <div style={{ padding: 12, color: colors.textMuted, fontSize: 12, fontStyle: 'italic' }}>No content available</div>
                             ) : (
-                              <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>Binary file — download to view</div>
+                              <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>
+                                {category === 'video' ? 'Video file' : category === 'archive' ? 'Archive file' : category === 'document' ? 'Document' : 'Binary file'} — download to view
+                                {file.s3_key && (
+                                  <a href={authDownloadUrl(file.s3_key)} download={file.filename}
+                                    style={{ marginLeft: 8, color: colors.accent, fontSize: 12, textDecoration: 'none' }}>
+                                    <Download size={11} style={{ verticalAlign: -2, marginRight: 4 }} />Download
+                                  </a>
+                                )}
+                              </div>
                             )}
                           </div>
                         )}
@@ -397,7 +596,9 @@ export default function Files() {
               <div style={{ padding: '4px 8px' }}>
                 {group.files.map(file => {
                   const isExpanded = expandedFile === file.id;
-                  const isText = file.is_text || textExts.has('.' + (file.extension || ''));
+                  const category = getFileCategory(file.filename, file.is_text);
+                  const isText = category === 'text';
+                  const isImage = category === 'image';
                   const content = fileContent[file.id] || '';
                   const isLoadingContent = contentLoading === file.id;
 
@@ -414,13 +615,13 @@ export default function Files() {
                         onMouseLeave={e => { if (!isExpanded) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                       >
                         {isExpanded ? <ChevronDown size={12} color={colors.textMuted} /> : <ChevronRight size={12} color={colors.textMuted} />}
-                        <FileText size={13} color={isText ? colors.accent : colors.textDim} />
+                        <FileCategoryIcon category={category} />
                         <span style={{ fontSize: 12, fontFamily: font.mono, color: colors.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {highlightText(file.filename, activeQuery)}
                         </span>
                         <span style={{ fontSize: 11, color: colors.textMuted, whiteSpace: 'nowrap' }}>{formatSize(file.size)}</span>
                         {file.s3_key && (
-                          <a href={`${BASE}/files/${file.s3_key}`} onClick={e => e.stopPropagation()} style={{ color: colors.textMuted, display: 'flex' }} title="Download">
+                          <a href={authDownloadUrl(file.s3_key)} onClick={e => e.stopPropagation()} style={{ color: colors.textMuted, display: 'flex' }} title="Download" download={file.filename}>
                             <Download size={12} />
                           </a>
                         )}
@@ -436,7 +637,16 @@ export default function Files() {
                       {/* Full content */}
                       {isExpanded && (
                         <div style={{ marginLeft: 32, marginTop: 4, marginBottom: 8 }}>
-                          {isLoadingContent ? (
+                          {isImage && file.s3_key ? (
+                            <AuthImage
+                              src={`${BASE}/files/${file.s3_key}`}
+                              alt={file.filename}
+                              style={{
+                                maxWidth: '100%', maxHeight: 500, borderRadius: 4,
+                                border: `1px solid ${colors.border}`,
+                              }}
+                            />
+                          ) : isLoadingContent ? (
                             <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>Loading content...</div>
                           ) : isText && content ? (
                             <pre style={{
@@ -454,7 +664,13 @@ export default function Files() {
                             </div>
                           ) : (
                             <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>
-                              Binary file ({file.extension || 'unknown'}) — {file.s3_key ? 'download to view' : 'not available'}
+                              {category === 'video' ? 'Video file' : category === 'archive' ? 'Archive file' : category === 'document' ? 'Document' : 'Binary file'} ({file.extension || 'unknown'}) — {file.s3_key ? '' : 'not available'}
+                              {file.s3_key && (
+                                <a href={authDownloadUrl(file.s3_key)} download={file.filename}
+                                  style={{ color: colors.accent, fontSize: 12, textDecoration: 'none' }}>
+                                  <Download size={11} style={{ verticalAlign: -2, marginRight: 4 }} />Download to view
+                                </a>
+                              )}
                             </div>
                           )}
                         </div>

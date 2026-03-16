@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from darkdisco.api.auth import (
     create_access_token,
     get_current_user,
+    get_current_user_or_token_param,
     verify_password,
 )
 from darkdisco.api.schemas import (
@@ -1462,9 +1463,10 @@ async def promote_mention(
 
 # ---- Mention Files ---------------------------------------------------------
 
-@protected.get("/mentions/{mention_id}/file")
+@router.get("/mentions/{mention_id}/file")
 async def get_mention_file(
     mention_id: str,
+    _user=Depends(get_current_user_or_token_param),
     db: AsyncSession = Depends(get_session),
 ):
     """Serve the original file attached to a mention from S3."""
@@ -1584,9 +1586,10 @@ async def list_mention_files(
     }
 
 
-@protected.get("/files/{s3_key:path}")
+@router.get("/files/{s3_key:path}")
 async def serve_s3_file(
     s3_key: str,
+    _user=Depends(get_current_user_or_token_param),
 ):
     """Serve any file from S3 by key. Used for extracted archive contents."""
     import boto3
