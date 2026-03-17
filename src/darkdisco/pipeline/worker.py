@@ -284,6 +284,60 @@ async def _poll_async(connector, since):
         await connector.teardown()
 
 
+def _ocr_with_dedup(image_data: bytes, filename: str, image_sha256: str):
+    """Run OCR with dedup — check cache first, store result after.
+
+    Actors frequently repost the same screenshots across channels.
+    By caching OCR results keyed on image SHA-256, we avoid redundant
+    processing of identical images.
+    """
+    from darkdisco.pipeline.ocr import OCRResult, extract_text_from_image
+
+    # Check cache
+    try:
+        session = _get_sync_session()
+        try:
+            from darkdisco.common.models import ImageOCRCache
+            cached = session.get(ImageOCRCache, image_sha256)
+            if cached is not None:
+                logger.debug("OCR cache hit for %s (%s)", filename, image_sha256[:12])
+                return OCRResult(
+                    text=cached.ocr_text or "",
+                    confidence=cached.confidence,
+                    engine=cached.engine,
+                )
+        finally:
+            session.close()
+    except Exception:
+        logger.debug("OCR cache lookup failed, proceeding with OCR", exc_info=True)
+
+    # Cache miss — run OCR
+    ocr_result = extract_text_from_image(image_data, filename)
+
+    # Store result in cache
+    if ocr_result is not None:
+        try:
+            session = _get_sync_session()
+            try:
+                from darkdisco.common.models import ImageOCRCache
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                stmt = pg_insert(ImageOCRCache).values(
+                    sha256=image_sha256,
+                    ocr_text=ocr_result.text,
+                    confidence=ocr_result.confidence,
+                    engine=ocr_result.engine,
+                ).on_conflict_do_nothing(index_elements=["sha256"])
+                session.execute(stmt)
+                session.commit()
+            finally:
+                session.close()
+        except Exception:
+            logger.debug("Failed to cache OCR result", exc_info=True)
+
+    return ocr_result
+
+
 def _process_file_mentions(mentions: list) -> list:
     """Process file attachments in mentions: extract archives, analyze contents, run OCR.
 
@@ -302,7 +356,6 @@ def _process_file_mentions(mentions: list) -> list:
         upload_to_s3,
     )
     from darkdisco.pipeline.ocr import (
-        extract_text_from_image,
         is_image,
         is_image_media_type,
     )
@@ -396,7 +449,7 @@ def _process_file_mentions(mentions: list) -> list:
 
             # OCR processing for image files
             elif is_image(filename) or is_image_media_type(mention.metadata.get("media_type")):
-                ocr_result = extract_text_from_image(file_data, filename)
+                ocr_result = _ocr_with_dedup(file_data, filename, file_sha256)
                 if ocr_result and ocr_result.has_text:
                     mention.metadata["ocr_text"] = ocr_result.text
                     mention.metadata["ocr_confidence"] = ocr_result.confidence
@@ -1432,5 +1485,190 @@ def backfill_stored_archives(batch_size: int = 10):
             )
 
         return {"dispatched": dispatched, "skipped": skipped}
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Historical OCR backfill
+# ---------------------------------------------------------------------------
+
+
+@app.task(
+    name="darkdisco.pipeline.worker.backfill_ocr",
+    soft_time_limit=1800,
+    time_limit=3600,
+)
+def backfill_ocr(batch_size: int = 20, days: int = 30):
+    """Backfill OCR on image attachments from the last N days.
+
+    Finds raw_mentions with image attachments (stored in S3) that don't yet
+    have ocr_text in metadata.  Downloads from S3, runs OCR (with dedup cache),
+    appends OCR text to mention content, and re-runs watch term matching on
+    any mentions where OCR text was added.
+
+    Rate-limited via batch_size and chained follow-ups to avoid overloading.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import and_, or_
+
+    from darkdisco.common.models import RawMention as RawMentionModel
+    from darkdisco.pipeline.files import _get_s3_client
+    from darkdisco.pipeline.ocr import is_image, is_image_media_type
+
+    session = _get_sync_session()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        # Find mentions from the last N days that:
+        # - have an s3_key (file stored)
+        # - don't already have ocr_text in metadata
+        # - have an image file or media type
+        mentions = session.execute(
+            select(RawMentionModel).where(
+                and_(
+                    RawMentionModel.collected_at >= cutoff,
+                    RawMentionModel.metadata_.isnot(None),
+                    RawMentionModel.metadata_["s3_key"].astext != "",
+                    or_(
+                        RawMentionModel.metadata_["ocr_text"].astext.is_(None),
+                        ~RawMentionModel.metadata_.has_key("ocr_text"),
+                    ),
+                )
+            )
+            .order_by(RawMentionModel.collected_at.desc())
+            .limit(batch_size * 3)  # Fetch extra since we filter in Python
+        ).scalars().all()
+
+        s3 = _get_s3_client()
+        processed = 0
+        skipped = 0
+        ocr_hits = 0
+        rematch_mention_ids = []
+
+        for mention in mentions:
+            meta = mention.metadata_ or {}
+            filename = meta.get("file_name", "")
+            media_type = meta.get("media_type", "")
+
+            # Filter to images only
+            if not (is_image(filename) or is_image_media_type(media_type)):
+                continue
+
+            # Skip if already has OCR text
+            if meta.get("ocr_text"):
+                skipped += 1
+                continue
+
+            s3_key = meta.get("s3_key")
+            if not s3_key:
+                continue
+
+            # Download image from S3
+            try:
+                resp = s3.get_object(Bucket=settings.s3_bucket, Key=s3_key)
+                image_data = resp["Body"].read()
+            except Exception:
+                logger.debug("Failed to download %s for OCR backfill", s3_key)
+                skipped += 1
+                continue
+
+            # Compute hash and run OCR with dedup
+            image_sha256 = hashlib.sha256(image_data).hexdigest()
+            ocr_result = _ocr_with_dedup(image_data, filename, image_sha256)
+
+            if ocr_result and ocr_result.has_text:
+                meta["ocr_text"] = ocr_result.text
+                meta["ocr_confidence"] = ocr_result.confidence
+                meta["ocr_engine"] = ocr_result.engine
+
+                # Append OCR text to mention content
+                separator = f"\n\n--- OCR text from {filename} ---\n\n"
+                mention.content = (mention.content or "") + separator + ocr_result.text
+                mention.metadata_ = {**meta}
+                ocr_hits += 1
+                rematch_mention_ids.append((mention.id, mention.source_id))
+            else:
+                # Mark as attempted so we don't retry
+                meta["ocr_text"] = ""
+                mention.metadata_ = {**meta}
+
+            processed += 1
+            if processed >= batch_size:
+                break
+
+        session.commit()
+
+        # Re-run watch term matching on mentions with new OCR text
+        if rematch_mention_ids:
+            _rematch_ocr_mentions(rematch_mention_ids)
+
+        logger.info(
+            "OCR backfill: processed=%d, ocr_hits=%d, skipped=%d",
+            processed, ocr_hits, skipped,
+        )
+
+        # Chain another batch if we hit the limit
+        if processed >= batch_size:
+            backfill_ocr.apply_async(
+                args=[batch_size, days],
+                countdown=60,  # 1 min between batches
+            )
+
+        return {
+            "processed": processed,
+            "ocr_hits": ocr_hits,
+            "skipped": skipped,
+            "rematched": len(rematch_mention_ids),
+        }
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def _rematch_ocr_mentions(mention_source_pairs: list[tuple[str, str]]):
+    """Re-run watch term matching on mentions that received OCR text via backfill.
+
+    Groups mentions by source_id and dispatches run_matching with
+    the updated content so new findings can be created from OCR text.
+    """
+    from darkdisco.common.models import RawMention as RawMentionModel
+
+    session = _get_sync_session()
+    try:
+        by_source: dict[str, list[str]] = {}
+        for mention_id, source_id in mention_source_pairs:
+            by_source.setdefault(source_id, []).append(mention_id)
+
+        for source_id, mention_ids in by_source.items():
+            mentions = session.execute(
+                select(RawMentionModel).where(
+                    RawMentionModel.id.in_(mention_ids)
+                )
+            ).scalars().all()
+
+            serialized = [
+                {
+                    "source_name": (m.source.name if m.source else "unknown"),
+                    "source_url": m.source_url,
+                    "title": "",
+                    "content": m.content,
+                    "author": None,
+                    "discovered_at": m.collected_at.isoformat() if m.collected_at else None,
+                    "metadata": m.metadata_ or {},
+                }
+                for m in mentions
+            ]
+
+            if serialized:
+                run_matching.delay(source_id, serialized)
+
+        logger.info(
+            "Dispatched re-matching for %d mentions across %d sources",
+            len(mention_source_pairs), len(by_source),
+        )
     finally:
         session.close()

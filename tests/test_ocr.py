@@ -165,9 +165,9 @@ class TestOCRInPipeline:
             confidence=90.0,
         )
 
-        # Patch at the source modules since _process_file_mentions imports locally
+        # Patch _ocr_with_dedup (wraps extract_text_from_image with cache)
         with patch("darkdisco.pipeline.files.upload_to_s3", return_value=True), \
-             patch("darkdisco.pipeline.ocr.extract_text_from_image", return_value=mock_ocr_result):
+             patch("darkdisco.pipeline.worker._ocr_with_dedup", return_value=mock_ocr_result):
             result = _process_file_mentions([FakeMention()])
 
         mention = result[0]
@@ -192,3 +192,88 @@ class TestOCRInPipeline:
             result = _process_file_mentions([FakeMention()])
 
         assert "ocr_text" not in result[0].metadata
+
+
+class TestOCRDedup:
+    """Test image deduplication before OCR processing."""
+
+    def test_cache_hit_skips_ocr(self):
+        """When image hash is in cache, OCR engine should not run."""
+        from darkdisco.pipeline.worker import _ocr_with_dedup
+
+        cached_result = MagicMock()
+        cached_result.ocr_text = "Cached OCR text"
+        cached_result.confidence = 85.0
+        cached_result.engine = "easyocr"
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = cached_result
+
+        with patch("darkdisco.pipeline.worker._get_sync_session", return_value=mock_session), \
+             patch("darkdisco.pipeline.ocr.extract_text_from_image") as mock_ocr:
+            result = _ocr_with_dedup(b"\x89PNG", "test.png", "abc123hash")
+
+        # OCR engine should NOT have been called
+        mock_ocr.assert_not_called()
+        assert result.text == "Cached OCR text"
+        assert result.confidence == 85.0
+
+    def test_cache_miss_runs_ocr_and_stores(self):
+        """When image hash is not in cache, run OCR and store result."""
+        from darkdisco.pipeline.worker import _ocr_with_dedup
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = None  # Cache miss
+
+        mock_ocr_result = OCRResult(text="New OCR text", confidence=90.0)
+
+        with patch("darkdisco.pipeline.worker._get_sync_session", return_value=mock_session), \
+             patch("darkdisco.pipeline.ocr.extract_text_from_image", return_value=mock_ocr_result):
+            result = _ocr_with_dedup(b"\x89PNG", "test.png", "abc123hash")
+
+        assert result.text == "New OCR text"
+        # Should have committed the cache entry
+        mock_session.execute.assert_called_once()
+        mock_session.commit.assert_called_once()
+
+    def test_duplicate_image_in_pipeline_uses_cache(self):
+        """Same image posted in two mentions should OCR only once."""
+        from darkdisco.pipeline.worker import _process_file_mentions
+
+        image_data = b"\x89PNG\r\n\x1a\nSAMEIMAGE"
+
+        class FakeMention1:
+            content = "First post"
+            metadata = {
+                "file_data": image_data,
+                "file_name": "screenshot.png",
+                "media_type": "MessageMediaPhoto",
+            }
+
+        class FakeMention2:
+            content = "Second post of same image"
+            metadata = {
+                "file_data": image_data,
+                "file_name": "screenshot2.png",
+                "media_type": "MessageMediaPhoto",
+            }
+
+        mock_ocr_result = OCRResult(
+            text="Bank Account Balance",
+            confidence=88.0,
+        )
+
+        with patch("darkdisco.pipeline.files.upload_to_s3", return_value=True), \
+             patch("darkdisco.pipeline.worker._ocr_with_dedup", return_value=mock_ocr_result) as mock_dedup:
+            result = _process_file_mentions([FakeMention1(), FakeMention2()])
+
+        # Both mentions should have called _ocr_with_dedup with the same hash
+        assert mock_dedup.call_count == 2
+        # Both calls should use the same sha256
+        hash1 = mock_dedup.call_args_list[0][0][2]
+        hash2 = mock_dedup.call_args_list[1][0][2]
+        assert hash1 == hash2  # Same image = same hash
+
+        # Both mentions should have OCR text
+        assert "ocr_text" in result[0].metadata
+        assert "ocr_text" in result[1].metadata

@@ -334,6 +334,22 @@ class DiscoveredChannel(Base):
     )
 
 
+class ImageOCRCache(Base):
+    """Cache of OCR results keyed by image SHA-256 hash.
+
+    Prevents re-processing the same image when actors repost screenshots
+    across channels or in repeated messages.
+    """
+
+    __tablename__ = "image_ocr_cache"
+
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    ocr_text: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    engine: Mapped[str] = mapped_column(String(32), default="easyocr")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class FindingAttachment(Base):
     """File or screenshot attached to a finding."""
 
