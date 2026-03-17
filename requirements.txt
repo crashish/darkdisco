@@ -42,3 +42,5 @@ pytesseract>=0.3.10
 
 # Utilities
 python-multipart>=0.0.6
+easyocr>=1.7
+numpy>=1.24

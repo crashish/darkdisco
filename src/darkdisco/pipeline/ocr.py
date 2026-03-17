@@ -1,8 +1,7 @@
 """OCR processing for image analysis — extract text from screenshots and photos.
 
-Actors frequently share screenshots of bank dashboards, phishing panel results,
-and OTP interception successes. This module runs OCR on image attachments to
-extract text for watch term matching and finding creation.
+Uses EasyOCR as the primary engine (handles rotated/skewed text from phone
+camera photos). Falls back to Tesseract if EasyOCR is unavailable.
 """
 
 from __future__ import annotations
@@ -15,74 +14,143 @@ from darkdisco.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Image extensions we attempt OCR on
 _IMAGE_EXTENSIONS = frozenset({
     ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp", ".gif",
 })
 
-# Max image size for OCR processing (10 MB)
-_MAX_OCR_SIZE = 10 * 1024 * 1024
+_MAX_OCR_SIZE = 10 * 1024 * 1024  # 10 MB
+
+# Lazy-loaded EasyOCR reader (heavy init, reuse across calls)
+_easyocr_reader = None
 
 
 @dataclass
 class OCRResult:
-    """Result of OCR processing on a single image."""
-
     text: str
-    confidence: float  # 0.0-100.0, -1 if unavailable
-    engine: str = "tesseract"
+    confidence: float  # 0.0-1.0, -1 if unavailable
+    engine: str = "easyocr"
 
     @property
     def has_text(self) -> bool:
         return bool(self.text and self.text.strip())
 
 
-def is_image(filename: str) -> bool:
-    """Check if a filename looks like a supported image format."""
-    lower = filename.lower()
-    return any(lower.endswith(ext) for ext in _IMAGE_EXTENSIONS)
+def is_image(filename: str | None) -> bool:
+    if not filename:
+        return False
+    return any(filename.lower().endswith(ext) for ext in _IMAGE_EXTENSIONS)
 
 
 def is_image_media_type(media_type: str | None) -> bool:
-    """Check if a Telegram media type indicates a photo/image."""
     if not media_type:
         return False
     return media_type in ("MessageMediaPhoto", "Photo")
 
 
+def _get_easyocr_reader():
+    """Lazy-load EasyOCR reader (downloads models on first use)."""
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        try:
+            import easyocr
+            _easyocr_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+            logger.info("EasyOCR reader initialized")
+        except ImportError:
+            logger.warning("EasyOCR not installed — OCR will use Tesseract fallback")
+            return None
+    return _easyocr_reader
+
+
 def extract_text_from_image(image_data: bytes, filename: str = "image.png") -> OCRResult | None:
     """Run OCR on image bytes and return extracted text.
 
-    Returns None if OCR is not available (tesseract not installed) or fails.
+    Tries EasyOCR first (handles rotated/skewed text), falls back to Tesseract.
+    Returns None if OCR is disabled or all engines fail.
     """
-    if not image_data:
-        return None
-
-    if len(image_data) > _MAX_OCR_SIZE:
-        logger.debug("Image too large for OCR: %d bytes (max %d)", len(image_data), _MAX_OCR_SIZE)
+    if not image_data or len(image_data) > _MAX_OCR_SIZE:
         return None
 
     if not settings.ocr_enabled:
         return None
 
+    # Try EasyOCR first (handles rotation/skew natively)
+    result = _try_easyocr(image_data, filename)
+    if result is not None:
+        return result
+
+    # Fallback to Tesseract
+    result = _try_tesseract(image_data, filename)
+    if result is not None:
+        return result
+
+    logger.debug("All OCR engines failed for %s", filename)
+    return None
+
+
+def _try_easyocr(image_data: bytes, filename: str) -> OCRResult | None:
+    """Extract text using EasyOCR (handles rotated/skewed images)."""
+    reader = _get_easyocr_reader()
+    if reader is None:
+        return None
+
+    try:
+        from PIL import Image
+        import numpy as np
+
+        image = Image.open(io.BytesIO(image_data))
+        if image.mode not in ("L", "RGB"):
+            image = image.convert("RGB")
+
+        # EasyOCR works on numpy arrays
+        img_array = np.array(image)
+        results = reader.readtext(img_array)
+
+        if not results:
+            return OCRResult(text="", confidence=0.0, engine="easyocr")
+
+        # results is list of (bbox, text, confidence)
+        texts = []
+        confidences = []
+        for _bbox, text, conf in results:
+            text = text.strip()
+            if text:
+                texts.append(text)
+                confidences.append(conf)
+
+        full_text = " ".join(texts)
+        avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+
+        if avg_conf < settings.ocr_min_confidence:
+            logger.debug("EasyOCR confidence %.2f below threshold %.2f for %s",
+                         avg_conf, settings.ocr_min_confidence, filename)
+            return OCRResult(text="", confidence=avg_conf, engine="easyocr")
+
+        if full_text.strip():
+            logger.info("EasyOCR extracted %d chars (conf=%.2f) from %s",
+                        len(full_text), avg_conf, filename)
+
+        return OCRResult(text=full_text, confidence=avg_conf, engine="easyocr")
+
+    except Exception:
+        logger.debug("EasyOCR failed for %s", filename, exc_info=True)
+        return None
+
+
+def _try_tesseract(image_data: bytes, filename: str) -> OCRResult | None:
+    """Extract text using Tesseract (fallback, requires aligned text)."""
     try:
         from PIL import Image
         import pytesseract
     except ImportError:
-        logger.warning("OCR dependencies not installed (Pillow, pytesseract) — skipping OCR")
         return None
 
     try:
         image = Image.open(io.BytesIO(image_data))
-
-        # Convert to RGB if necessary (handles RGBA, palette, etc.)
         if image.mode not in ("L", "RGB"):
             image = image.convert("RGB")
 
-        # Run tesseract with OSD (orientation/script detection) for confidence
         data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
 
-        # Extract text and compute average confidence
         words = []
         confidences = []
         for i, text in enumerate(data["text"]):
@@ -91,28 +159,20 @@ def extract_text_from_image(image_data: bytes, filename: str = "image.png") -> O
                 words.append(text)
                 conf = data["conf"][i]
                 if isinstance(conf, (int, float)) and conf >= 0:
-                    confidences.append(float(conf))
+                    confidences.append(float(conf) / 100.0)  # Normalize to 0-1
 
         full_text = " ".join(words)
-        avg_confidence = sum(confidences) / len(confidences) if confidences else -1.0
+        avg_conf = sum(confidences) / len(confidences) if confidences else -1.0
 
-        # Filter out noise — if confidence is very low, the image likely
-        # doesn't contain readable text
-        if avg_confidence >= 0 and avg_confidence < settings.ocr_min_confidence:
-            logger.debug(
-                "OCR confidence too low (%.1f < %.1f) for %s, discarding",
-                avg_confidence, settings.ocr_min_confidence, filename,
-            )
-            return OCRResult(text="", confidence=avg_confidence)
+        if 0 <= avg_conf < settings.ocr_min_confidence:
+            return OCRResult(text="", confidence=avg_conf, engine="tesseract")
 
         if full_text.strip():
-            logger.info(
-                "OCR extracted %d chars (confidence=%.1f) from %s",
-                len(full_text), avg_confidence, filename,
-            )
+            logger.info("Tesseract extracted %d chars (conf=%.2f) from %s",
+                        len(full_text), avg_conf, filename)
 
-        return OCRResult(text=full_text, confidence=avg_confidence)
+        return OCRResult(text=full_text, confidence=avg_conf, engine="tesseract")
 
     except Exception:
-        logger.exception("OCR failed for %s", filename)
+        logger.debug("Tesseract failed for %s", filename, exc_info=True)
         return None
