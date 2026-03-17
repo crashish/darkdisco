@@ -18,7 +18,7 @@ const termIcons: Record<string, typeof Tag> = {
   routing_number: Hash,
 };
 
-const termTypes = ['name', 'domain', 'bin', 'routing_number'] as const;
+const termTypes = ['institution_name', 'domain', 'bin_range', 'routing_number', 'executive_name', 'keyword', 'regex'] as const;
 
 const btnStyle: CSSProperties = {
   background: colors.accent,
@@ -75,7 +75,7 @@ export default function Institutions() {
 
   // Add watch term
   const [showAddTerm, setShowAddTerm] = useState(false);
-  const [termForm, setTermForm] = useState({ term_type: 'name', value: '' });
+  const [termForm, setTermForm] = useState({ term_type: 'institution_name', value: '' });
 
   const reload = useCallback(() => {
     fetchClients().then(setClients);
@@ -136,7 +136,7 @@ export default function Institutions() {
   const handleAddTerm = async () => {
     if (!expandedInst || !termForm.value.trim()) return;
     await createWatchTerm({ institution_id: expandedInst, term_type: termForm.term_type, value: termForm.value.trim() });
-    setTermForm({ term_type: 'name', value: '' });
+    setTermForm({ term_type: 'institution_name', value: '' });
     setShowAddTerm(false);
     const terms = await fetchWatchTerms(expandedInst);
     setInstTerms(terms);
