@@ -40,12 +40,24 @@ def _build_domain_entries(institution) -> list[dict]:
             "value": institution.primary_domain,
         })
 
-    # Also add institution name as a brand entry
+    # Add brand entries — extract meaningful short names from institution name
+    # "Navy Federal Credit Union" → ["navy federal", "navy", "nfcu"]
+    # "Bank of America" → ["bank of america", "bofa"]
     if institution.name:
-        entries.append({
-            "type": "brand",
-            "value": institution.name.lower(),
-        })
+        name = institution.name.lower()
+        # Full name
+        entries.append({"type": "brand", "value": name})
+        # Remove common suffixes to get the distinctive part
+        for suffix in [" credit union", " federal credit union", " bank", " bancorp",
+                       " financial", " banking", " corp", " n.a.", " inc"]:
+            if name.endswith(suffix):
+                short = name[:-len(suffix)].strip()
+                if short and len(short) >= 3:
+                    entries.append({"type": "brand", "value": short})
+                break
+        # Short name if available
+        if hasattr(institution, 'short_name') and institution.short_name:
+            entries.append({"type": "brand", "value": institution.short_name.lower()})
 
     for domain in institution.additional_domains or []:
         if isinstance(domain, str) and domain.strip():
