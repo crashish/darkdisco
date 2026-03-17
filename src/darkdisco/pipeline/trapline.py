@@ -115,21 +115,7 @@ def sync_institution(institution) -> dict:
                 result["errors"].append(error)
                 logger.warning("Trapline %s for %s", error, institution.name)
 
-        # Sync BIN ranges
-        if bin_entries:
-            payload = {"bins": [{"bin_prefix": e.get("bin", e.get("bin_prefix", "")), "issuer": e.get("institution_name", "")} for e in bin_entries]}
-            try:
-                resp = client.post("/api/v1/watchlist/bins", json=payload)
-                resp.raise_for_status()
-                result["bins"] = len(bin_entries)
-                logger.info(
-                    "Synced %d BIN ranges for %s to trapline",
-                    len(bin_entries), institution.name,
-                )
-            except httpx.HTTPError as exc:
-                error = f"bins sync failed: {exc}"
-                result["errors"].append(error)
-                logger.warning("Trapline %s for %s", error, institution.name)
+        # BIN ranges not synced — trapline scans domains/web content, not card data
 
     return result
 
