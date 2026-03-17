@@ -318,7 +318,7 @@ class DiscoveredChannel(Base):
     source_channel: Mapped[str | None] = mapped_column(String(255))  # which channel it was found in
     message_id: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[DiscoveryStatus] = mapped_column(
-        Enum(DiscoveryStatus), default=DiscoveryStatus.pending, index=True,
+        Enum(DiscoveryStatus), default=DiscoveryStatus.pending,
     )
     added_to_source_id: Mapped[str | None] = mapped_column(ForeignKey("sources.id"))
     notes: Mapped[str | None] = mapped_column(Text)

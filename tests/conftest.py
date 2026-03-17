@@ -11,10 +11,10 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy import JSON, Text
 
-# Register type compilation overrides so JSONB/ARRAY work on SQLite
+# Register type compilation overrides so JSONB/ARRAY/TSVECTOR work on SQLite
 from sqlalchemy.dialects import registry as _  # noqa: F401
 from sqlalchemy.ext.compiler import compiles
 
@@ -27,6 +27,11 @@ def _compile_jsonb_sqlite(type_, compiler, **kw):
 @compiles(ARRAY, "sqlite")
 def _compile_array_sqlite(type_, compiler, **kw):
     return "JSON"
+
+
+@compiles(TSVECTOR, "sqlite")
+def _compile_tsvector_sqlite(type_, compiler, **kw):
+    return "TEXT"
 
 
 from darkdisco.api.app import app
@@ -71,6 +76,20 @@ async def engine():
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
+    # SQLite cannot handle Postgres-specific computed columns (to_tsvector).
+    # Temporarily remove the content_tsvector column before creating tables.
+    from darkdisco.common.models import ExtractedFile
+    tsvector_col = ExtractedFile.__table__.c.get("content_tsvector")
+    if tsvector_col is not None:
+        ExtractedFile.__table__._columns.remove(tsvector_col)
+        # Also remove the GIN index that references it
+        tsvector_indexes = [
+            idx for idx in list(ExtractedFile.__table__.indexes)
+            if "content_tsvector" in {c.name for c in idx.columns}
+        ]
+        for idx in tsvector_indexes:
+            ExtractedFile.__table__.indexes.discard(idx)
 
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
