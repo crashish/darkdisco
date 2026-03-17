@@ -914,28 +914,28 @@ def _extract_channel_discoveries(
 
 @app.task(name="darkdisco.pipeline.worker.process_channel_discoveries")
 def process_channel_discoveries(batch_size: int = 5):
-    """Process approved channel discoveries: join channels and add to source config.
+    """Process pending channel discoveries: auto-join and add to source config.
 
-    Runs periodically via beat schedule. Only processes channels with status='approved'.
-    Rate-limits joins to avoid Telegram flood bans.
+    Runs periodically via beat schedule. Processes pending channels automatically.
+    Rate-limits joins to avoid Telegram flood bans (batch_size controls pace).
     """
     from darkdisco.common.models import DiscoveredChannel, DiscoveryStatus, Source
 
     session = _get_sync_session()
     try:
-        approved = session.execute(
+        pending = session.execute(
             select(DiscoveredChannel)
-            .where(DiscoveredChannel.status == DiscoveryStatus.approved)
+            .where(DiscoveredChannel.status.in_([DiscoveryStatus.pending, DiscoveryStatus.approved]))
             .order_by(DiscoveredChannel.discovered_at.asc())
             .limit(batch_size)
         ).scalars().all()
 
-        if not approved:
+        if not pending:
             return {"processed": 0}
 
         joined = 0
         failed = 0
-        for dc in approved:
+        for dc in pending:
             target_sid = dc.added_to_source_id or dc.source_id
             target_source = session.get(Source, target_sid)
             if not target_source:
