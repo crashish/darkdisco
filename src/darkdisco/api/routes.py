@@ -1266,6 +1266,7 @@ async def mention_archive_contents(
     extracted_rows = ef_result.scalars().all()
 
     if extracted_rows:
+        from darkdisco.pipeline.files import detect_mime_type
         files = [
             {
                 "filename": ef.filename,
@@ -1276,6 +1277,7 @@ async def mention_archive_contents(
                 "sha256": ef.sha256,
                 "extension": ef.extension,
                 "is_text": ef.is_text,
+                "mime_type": detect_mime_type(ef.filename),
             }
             for ef in extracted_rows
         ]
@@ -1622,6 +1624,59 @@ async def serve_s3_file(
             "Content-Length": str(obj.get("ContentLength", "")),
         },
     )
+
+
+# ---- Hex Dump --------------------------------------------------------------
+
+
+@protected.get("/hex-dump")
+async def hex_dump_file(
+    s3_key: str = Query(..., description="S3 key of the file"),
+    limit: int = Query(4096, ge=16, le=65536),
+):
+    """Return hex dump of a file from S3, limited to first `limit` bytes."""
+    import boto3
+    from botocore.config import Config
+    from darkdisco.config import settings
+    from darkdisco.pipeline.files import detect_mime_type, hex_dump
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=settings.s3_endpoint,
+        aws_access_key_id=settings.s3_access_key,
+        aws_secret_access_key=settings.s3_secret_key,
+        config=Config(signature_version="s3v4"),
+    )
+
+    try:
+        # Only fetch the bytes we need
+        obj = s3.get_object(
+            Bucket=settings.s3_bucket,
+            Key=s3_key,
+            Range=f"bytes=0-{limit - 1}",
+        )
+        data = obj["Body"].read()
+    except Exception:
+        raise HTTPException(404, "File not found in storage")
+
+    # Get total size from a HEAD request
+    try:
+        head = s3.head_object(Bucket=settings.s3_bucket, Key=s3_key)
+        total_size = head.get("ContentLength", len(data))
+    except Exception:
+        total_size = len(data)
+
+    filename = s3_key.rsplit("/", 1)[-1]
+    mime = detect_mime_type(filename, data)
+
+    return {
+        "s3_key": s3_key,
+        "filename": filename,
+        "mime_type": mime,
+        "total_size": total_size,
+        "dump_size": min(limit, total_size),
+        "hex_dump": hex_dump(data, limit),
+    }
 
 
 # ---- Findings --------------------------------------------------------------

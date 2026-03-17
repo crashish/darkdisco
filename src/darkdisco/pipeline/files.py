@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import mimetypes
 import os
 import re
 import shutil
@@ -27,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 # Max individual extracted file size (50 MB)
 _MAX_MEMBER_SIZE = 50 * 1024 * 1024
+
+# Max recursion depth for nested archives
+_MAX_ARCHIVE_DEPTH = 3
 
 # Text-like extensions for content extraction
 _TEXT_EXTENSIONS = frozenset({
@@ -50,6 +54,101 @@ _PASSWORD_PATTERNS = [
 
 
 # ---------------------------------------------------------------------------
+# MIME detection
+# ---------------------------------------------------------------------------
+
+# Additional MIME types not always in the system registry
+_EXTRA_MIME_TYPES = {
+    ".7z": "application/x-7z-compressed",
+    ".rar": "application/x-rar-compressed",
+    ".tgz": "application/gzip",
+    ".tbz2": "application/x-bzip2",
+    ".csv": "text/csv",
+    ".log": "text/plain",
+    ".cfg": "text/plain",
+    ".conf": "text/plain",
+    ".ini": "text/plain",
+    ".lst": "text/plain",
+    ".dat": "application/octet-stream",
+    ".sql": "application/sql",
+    ".md": "text/markdown",
+    ".yaml": "text/yaml",
+    ".yml": "text/yaml",
+    ".tsv": "text/tab-separated-values",
+}
+
+# Magic bytes for common file types (checked when extension is ambiguous)
+_MAGIC_SIGNATURES: list[tuple[bytes, int, str]] = [
+    (b"PK\x03\x04", 0, "application/zip"),
+    (b"PK\x05\x06", 0, "application/zip"),
+    (b"Rar!\x1a\x07", 0, "application/x-rar-compressed"),
+    (b"\x1f\x8b", 0, "application/gzip"),
+    (b"BZh", 0, "application/x-bzip2"),
+    (b"7z\xbc\xaf\x27\x1c", 0, "application/x-7z-compressed"),
+    (b"\x89PNG\r\n\x1a\n", 0, "image/png"),
+    (b"\xff\xd8\xff", 0, "image/jpeg"),
+    (b"GIF87a", 0, "image/gif"),
+    (b"GIF89a", 0, "image/gif"),
+    (b"RIFF", 0, "image/webp"),  # RIFF....WEBP
+    (b"%PDF", 0, "application/pdf"),
+]
+
+
+def detect_mime_type(filename: str, content: bytes | None = None) -> str:
+    """Detect MIME type from filename extension and magic bytes."""
+    # Try extension first
+    ext = ""
+    if "." in filename:
+        ext = "." + filename.rsplit(".", 1)[-1].lower()
+        # Handle double extensions like .tar.gz
+        lower = filename.lower()
+        if lower.endswith(".tar.gz"):
+            ext = ".tar.gz"
+        elif lower.endswith(".tar.bz2"):
+            ext = ".tar.bz2"
+
+    if ext in _EXTRA_MIME_TYPES:
+        return _EXTRA_MIME_TYPES[ext]
+
+    guessed, _ = mimetypes.guess_type(filename)
+    if guessed:
+        return guessed
+
+    # Fall back to magic bytes
+    if content and len(content) >= 8:
+        for sig, offset, mime in _MAGIC_SIGNATURES:
+            if content[offset:offset + len(sig)] == sig:
+                return mime
+
+    return "application/octet-stream"
+
+
+# ---------------------------------------------------------------------------
+# Hex dump utility
+# ---------------------------------------------------------------------------
+
+_HEX_DUMP_LIMIT = 4096  # 4KB default
+
+
+def hex_dump(data: bytes, limit: int = _HEX_DUMP_LIMIT) -> str:
+    """Generate xxd-style hex dump with ASCII sidebar.
+
+    Returns a string like:
+    00000000: 504b 0304 1400 0000  PK......
+    """
+    chunk = data[:limit]
+    lines: list[str] = []
+    for offset in range(0, len(chunk), 16):
+        row = chunk[offset:offset + 16]
+        hex_part = " ".join(f"{b:02x}" for b in row)
+        ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in row)
+        lines.append(f"{offset:08x}: {hex_part:<48s}  {ascii_part}")
+    if len(data) > limit:
+        lines.append(f"... truncated at {limit} bytes (total: {len(data)} bytes)")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
 
@@ -63,12 +162,16 @@ class ExtractedFileInfo:
     sha256: str = ""
     size: int = 0
     is_text: bool = False
+    depth: int = 0  # nesting level (0=top-level, 1=nested once, etc.)
+    mime_type: str = ""  # detected MIME type
 
     def __post_init__(self):
         if not self.sha256:
             self.sha256 = hashlib.sha256(self.content).hexdigest()
         if not self.size:
             self.size = len(self.content)
+        if not self.mime_type:
+            self.mime_type = detect_mime_type(self.filename, self.content)
 
 
 @dataclass
@@ -119,27 +222,62 @@ def extract_archive(
     data: bytes,
     filename: str,
     passwords: list[str] | None = None,
+    *,
+    _depth: int = 0,
 ) -> list[ExtractedFileInfo]:
-    """Extract files from an in-memory archive.
+    """Extract files from an in-memory archive, recursing into nested archives.
 
     Supports ZIP (with optional passwords) and TAR variants.
     Returns a list of ExtractedFileInfo for each extracted member.
+    Nested archives are recursively extracted up to _MAX_ARCHIVE_DEPTH levels.
     """
     lower = filename.lower()
 
     if lower.endswith(".zip"):
-        return _extract_zip(io.BytesIO(data), passwords or [])
+        files = _extract_zip(io.BytesIO(data), passwords or [])
     elif lower.endswith((".tar.gz", ".tgz")):
-        return _extract_tar(io.BytesIO(data), mode="r:gz")
+        files = _extract_tar(io.BytesIO(data), mode="r:gz")
     elif lower.endswith((".tar.bz2", ".tbz2")):
-        return _extract_tar(io.BytesIO(data), mode="r:bz2")
+        files = _extract_tar(io.BytesIO(data), mode="r:bz2")
     elif lower.endswith(".tar"):
-        return _extract_tar(io.BytesIO(data), mode="r:")
+        files = _extract_tar(io.BytesIO(data), mode="r:")
     elif lower.endswith(".rar"):
-        return _extract_rar(io.BytesIO(data))
+        files = _extract_rar(io.BytesIO(data))
     else:
         logger.warning("Unsupported archive format: %s", filename)
         return []
+
+    # Set depth on all extracted files
+    for f in files:
+        f.depth = _depth
+
+    # Recursively extract nested archives
+    if _depth < _MAX_ARCHIVE_DEPTH:
+        extra: list[ExtractedFileInfo] = []
+        for f in files:
+            if is_archive(f.filename):
+                try:
+                    nested = extract_archive(
+                        f.content, f.filename, passwords, _depth=_depth + 1
+                    )
+                    if nested:
+                        # Prefix nested filenames with parent archive path
+                        parent = f.filename
+                        for nf in nested:
+                            nf.filename = f"{parent}/{nf.filename}"
+                        extra.extend(nested)
+                        logger.debug(
+                            "Recursively extracted %d files from %s (depth %d)",
+                            len(nested), f.filename, _depth + 1,
+                        )
+                except Exception:
+                    logger.warning(
+                        "Recursive extraction failed for %s at depth %d",
+                        f.filename, _depth + 1,
+                    )
+        files.extend(extra)
+
+    return files
 
 
 def analyze_extracted_files(files: list[ExtractedFileInfo]) -> FileAnalysis:

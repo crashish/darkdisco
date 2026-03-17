@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { colors, card, font } from '../theme';
-import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File } from 'lucide-react';
+import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code } from 'lucide-react';
 
 const BASE = '/api';
 
@@ -11,16 +11,53 @@ const videoExts = new Set(['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.web
 const archiveExts = new Set(['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.tgz']);
 const docExts = new Set(['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt']);
 
-type FileCategory = 'image' | 'video' | 'archive' | 'document' | 'text' | 'unknown';
+type FileCategory = 'image' | 'video' | 'archive' | 'document' | 'text' | 'code' | 'binary' | 'unknown';
 
-function getFileCategory(filename: string, isText?: boolean): FileCategory {
+const codeExts = new Set(['.py', '.js', '.ts', '.jsx', '.tsx', '.go', '.rs', '.c', '.cpp', '.h', '.java', '.rb', '.php', '.sh', '.bash', '.ps1', '.bat']);
+
+function getFileCategory(filename: string, isText?: boolean, mimeType?: string): FileCategory {
   const ext = ('.' + (filename.split('.').pop() || '')).toLowerCase();
+  // Use MIME type if available
+  if (mimeType) {
+    if (mimeType.startsWith('image/')) return 'image';
+    if (mimeType.startsWith('video/')) return 'video';
+    if (mimeType.startsWith('audio/')) return 'unknown';
+    if (mimeType === 'application/zip' || mimeType === 'application/x-rar-compressed' ||
+        mimeType === 'application/gzip' || mimeType === 'application/x-7z-compressed' ||
+        mimeType === 'application/x-bzip2' || mimeType === 'application/x-tar') return 'archive';
+    if (mimeType === 'application/pdf' || mimeType.includes('officedocument') ||
+        mimeType.includes('msword') || mimeType.includes('ms-excel')) return 'document';
+  }
   if (imageExts.has(ext)) return 'image';
   if (videoExts.has(ext)) return 'video';
   if (archiveExts.has(ext)) return 'archive';
   if (docExts.has(ext)) return 'document';
+  if (codeExts.has(ext)) return 'code';
   if (isText || textExts.has(ext)) return 'text';
   return 'unknown';
+}
+
+function getMimeLabel(mimeType?: string, category?: FileCategory): string {
+  if (mimeType && mimeType !== 'application/octet-stream') {
+    // Shorten common MIME types
+    const short: Record<string, string> = {
+      'application/zip': 'ZIP',
+      'application/x-rar-compressed': 'RAR',
+      'application/gzip': 'GZ',
+      'application/x-7z-compressed': '7Z',
+      'application/pdf': 'PDF',
+      'image/png': 'PNG',
+      'image/jpeg': 'JPEG',
+      'image/gif': 'GIF',
+      'text/plain': 'Text',
+      'text/csv': 'CSV',
+      'text/html': 'HTML',
+      'application/json': 'JSON',
+      'application/sql': 'SQL',
+    };
+    return short[mimeType] || mimeType.split('/').pop() || '';
+  }
+  return category || '';
 }
 
 function FileCategoryIcon({ category, size = 13 }: { category: FileCategory; size?: number }) {
@@ -30,6 +67,8 @@ function FileCategoryIcon({ category, size = 13 }: { category: FileCategory; siz
     archive: '#fb923c',
     document: '#60a5fa',
     text: colors.accent,
+    code: '#34d399',
+    binary: '#94a3b8',
     unknown: colors.textDim,
   };
   const c = iconColors[category];
@@ -39,6 +78,8 @@ function FileCategoryIcon({ category, size = 13 }: { category: FileCategory; siz
     case 'archive': return <FileArchive size={size} color={c} />;
     case 'document': return <FileText size={size} color={c} />;
     case 'text': return <FileText size={size} color={c} />;
+    case 'code': return <Code size={size} color={c} />;
+    case 'binary': return <Binary size={size} color={c} />;
     default: return <File size={size} color={c} />;
   }
 }
@@ -76,6 +117,47 @@ function AuthImage({ src, alt, style }: { src: string; alt: string; style?: Reac
   return <img src={blobUrl} alt={alt} style={style} />;
 }
 
+// ---- Hex dump viewer ----
+
+function HexDumpViewer({ s3Key, filename }: { s3Key: string; filename: string }) {
+  const [hexData, setHexData] = useState<{ hex_dump: string; mime_type: string; total_size: number; dump_size: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(false);
+    authedFetch(`${BASE}/hex-dump?s3_key=${encodeURIComponent(s3Key)}&limit=4096`)
+      .then(r => {
+        if (!r.ok) throw new Error(`${r.status}`);
+        return r.json();
+      })
+      .then(data => { setHexData(data); setLoading(false); })
+      .catch(() => { setError(true); setLoading(false); });
+  }, [s3Key]);
+
+  if (loading) return <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>Loading hex dump...</div>;
+  if (error || !hexData) return <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>Failed to load hex dump</div>;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 11, color: colors.textMuted }}>
+        <Binary size={12} />
+        <span>MIME: {hexData.mime_type}</span>
+        <span>|</span>
+        <span>Showing {formatSize(hexData.dump_size)} of {formatSize(hexData.total_size)}</span>
+      </div>
+      <pre style={{
+        fontFamily: font.mono, fontSize: 11, lineHeight: 1.6,
+        color: '#93c5fd', whiteSpace: 'pre', overflowX: 'auto',
+        background: '#0c0c14', padding: 12, borderRadius: 4,
+        border: `1px solid ${colors.border}`,
+        maxHeight: 500, overflow: 'auto', margin: 0,
+      }}>{hexData.hex_dump}</pre>
+    </div>
+  );
+}
+
 // ---- Auth download helper ----
 
 function authDownloadUrl(s3Key: string): string {
@@ -93,11 +175,15 @@ function authMentionFileUrl(mentionId: string): string {
 // ---- Standalone file viewer ----
 
 function StandaloneFileViewer({ archive }: { archive: ArchiveSummary }) {
-  const cat = getFileCategory(archive.file_name);
+  const cat = getFileCategory(archive.file_name, false, archive.file_mime || undefined);
   const isImage = cat === 'image';
-  const isText = cat === 'text';
+  const isText = cat === 'text' || cat === 'code';
+  const isBinary = !isImage && !isText;
   const fileUrl = `${BASE}/mentions/${archive.mention_id}/file`;
   const downloadUrl = authMentionFileUrl(archive.mention_id);
+  const mimeLabel = getMimeLabel(archive.file_mime || undefined, cat);
+  // For hex dump we need an s3_key — extract it from the mention metadata
+  const [s3Key, setS3Key] = useState<string | null>(null);
 
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -115,6 +201,17 @@ function StandaloneFileViewer({ archive }: { archive: ArchiveSummary }) {
       .finally(() => setLoading(false));
   }, [archive.mention_id, isText, fileUrl]);
 
+  // Fetch s3_key for hex dump
+  useEffect(() => {
+    if (!isBinary) return;
+    authedFetch(`${BASE}/mentions/${archive.mention_id}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.metadata?.s3_key) setS3Key(data.metadata.s3_key);
+      })
+      .catch(() => {});
+  }, [archive.mention_id, isBinary]);
+
   return (
     <div style={{ ...card, padding: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -122,6 +219,7 @@ function StandaloneFileViewer({ archive }: { archive: ArchiveSummary }) {
         <span style={{ fontSize: 14, fontWeight: 600, color: colors.text, fontFamily: font.mono }}>
           {archive.file_name}
         </span>
+        {mimeLabel && <span style={{ fontSize: 10, color: colors.textMuted, background: colors.bgSurface, padding: '1px 5px', borderRadius: 3 }}>{mimeLabel}</span>}
         <span style={{ fontSize: 11, color: colors.textMuted }}>{formatSize(archive.file_size)}</span>
         <a
           href={downloadUrl}
@@ -162,7 +260,11 @@ function StandaloneFileViewer({ archive }: { archive: ArchiveSummary }) {
         ) : null
       )}
 
-      {!isImage && !isText && (
+      {isBinary && s3Key && (
+        <HexDumpViewer s3Key={s3Key} filename={archive.file_name} />
+      )}
+
+      {isBinary && !s3Key && (
         <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>
           {cat === 'video' ? 'Video file' : cat === 'document' ? 'Document' : 'File'} — download to view
         </div>
@@ -182,6 +284,7 @@ interface SearchResult {
   s3_key: string;
   archive_name: string;
   source: string;
+  mime_type?: string;
 }
 
 function formatSize(bytes: number): string {
@@ -482,11 +585,13 @@ export default function Files() {
                   {archiveFiles.map(file => {
                     const fid = file.s3_key || file.filename;
                     const isExpanded = expandedFile === fid;
-                    const category = getFileCategory(file.filename, file.is_text);
-                    const isText = category === 'text';
+                    const category = getFileCategory(file.filename, file.is_text, file.mime_type);
+                    const isText = category === 'text' || category === 'code';
                     const isImage = category === 'image';
+                    const isBinary = !isText && !isImage && category !== 'archive';
                     const content = fileContent[fid] || '';
                     const isLoadingContent = contentLoading === fid;
+                    const mimeLabel = getMimeLabel(file.mime_type, category);
 
                     return (
                       <div key={fid}>
@@ -515,6 +620,7 @@ export default function Files() {
                           <span style={{ fontSize: 12, fontFamily: font.mono, color: colors.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {file.filename}
                           </span>
+                          {mimeLabel && <span style={{ fontSize: 10, color: colors.textMuted, background: colors.bgSurface, padding: '1px 5px', borderRadius: 3 }}>{mimeLabel}</span>}
                           <span style={{ fontSize: 11, color: colors.textMuted }}>{formatSize(file.size)}</span>
                           {file.s3_key && (
                             <a href={authDownloadUrl(file.s3_key)} onClick={e => e.stopPropagation()} style={{ color: colors.textMuted, display: 'flex' }} title="Download" download={file.filename}>
@@ -545,6 +651,16 @@ export default function Files() {
                               }}>{content}</pre>
                             ) : isText ? (
                               <div style={{ padding: 12, color: colors.textMuted, fontSize: 12, fontStyle: 'italic' }}>No content available</div>
+                            ) : isBinary && file.s3_key ? (
+                              <div>
+                                <HexDumpViewer s3Key={file.s3_key} filename={file.filename} />
+                                <div style={{ marginTop: 8 }}>
+                                  <a href={authDownloadUrl(file.s3_key)} download={file.filename}
+                                    style={{ color: colors.accent, fontSize: 12, textDecoration: 'none' }}>
+                                    <Download size={11} style={{ verticalAlign: -2, marginRight: 4 }} />Download full file
+                                  </a>
+                                </div>
+                              </div>
                             ) : (
                               <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>
                                 {category === 'video' ? 'Video file' : category === 'archive' ? 'Archive file' : category === 'document' ? 'Document' : 'Binary file'} — download to view
@@ -596,11 +712,13 @@ export default function Files() {
               <div style={{ padding: '4px 8px' }}>
                 {group.files.map(file => {
                   const isExpanded = expandedFile === file.id;
-                  const category = getFileCategory(file.filename, file.is_text);
-                  const isText = category === 'text';
+                  const category = getFileCategory(file.filename, file.is_text, file.mime_type);
+                  const isText = category === 'text' || category === 'code';
                   const isImage = category === 'image';
+                  const isBinary = !isText && !isImage && category !== 'archive';
                   const content = fileContent[file.id] || '';
                   const isLoadingContent = contentLoading === file.id;
+                  const mimeLabel = getMimeLabel(file.mime_type, category);
 
                   return (
                     <div key={file.id}>
@@ -619,6 +737,7 @@ export default function Files() {
                         <span style={{ fontSize: 12, fontFamily: font.mono, color: colors.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {highlightText(file.filename, activeQuery)}
                         </span>
+                        {mimeLabel && <span style={{ fontSize: 10, color: colors.textMuted, background: colors.bgSurface, padding: '1px 5px', borderRadius: 3 }}>{mimeLabel}</span>}
                         <span style={{ fontSize: 11, color: colors.textMuted, whiteSpace: 'nowrap' }}>{formatSize(file.size)}</span>
                         {file.s3_key && (
                           <a href={authDownloadUrl(file.s3_key)} onClick={e => e.stopPropagation()} style={{ color: colors.textMuted, display: 'flex' }} title="Download" download={file.filename}>
@@ -661,6 +780,16 @@ export default function Files() {
                           ) : isText ? (
                             <div style={{ padding: 12, color: colors.textMuted, fontSize: 12, fontStyle: 'italic' }}>
                               No content available — file may need extraction
+                            </div>
+                          ) : isBinary && file.s3_key ? (
+                            <div>
+                              <HexDumpViewer s3Key={file.s3_key} filename={file.filename} />
+                              <div style={{ marginTop: 8 }}>
+                                <a href={authDownloadUrl(file.s3_key)} download={file.filename}
+                                  style={{ color: colors.accent, fontSize: 12, textDecoration: 'none' }}>
+                                  <Download size={11} style={{ verticalAlign: -2, marginRight: 4 }} />Download full file
+                                </a>
+                              </div>
                             </div>
                           ) : (
                             <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>
