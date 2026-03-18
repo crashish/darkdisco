@@ -207,8 +207,14 @@ def poll_source(self, source_id: str):
         connector = _load_connector(source)
         since = source.last_polled_at
 
-        # No session lock needed — poll uses primary session, download uses _download session
+        # Acquire session lock — poll gets priority, download skips if locked
         telegram_lock = None
+        if source.source_type.value in ("telegram", "telegram_intel"):
+            import redis as _redis
+            from darkdisco.config import settings as _settings
+            _r = _redis.from_url(_settings.celery_broker_url)
+            telegram_lock = _r.lock("darkdisco:telegram_session_lock", timeout=900)
+            telegram_lock.acquire(blocking=True, blocking_timeout=60)
 
         try:
             # Bridge async connector to sync Celery task
@@ -1014,14 +1020,20 @@ def download_pending_files(batch_size: int = 50):
     from darkdisco.config import settings
     from darkdisco.common.models import RawMention as RawMentionModel, Source
 
-    # Acquire exclusive download lock + Telegram session lock
+    # Acquire exclusive download lock
     r = _redis.from_url(settings.celery_broker_url)
     lock = r.lock("darkdisco:download_files_lock", timeout=3600, blocking=False)
     if not lock.acquire(blocking=False):
         logger.info("Another download task is already running, skipping")
         return {"skipped": True}
 
-    # No session lock needed — download uses separate _download.session file
+    # Acquire session lock (non-blocking — skip if poll is running)
+    tg_lock = r.lock("darkdisco:telegram_session_lock", timeout=3600)
+    if not tg_lock.acquire(blocking=False):
+        logger.info("Poll task is running, skipping downloads this cycle")
+        lock.release()
+        return {"skipped": True, "reason": "poll_running"}
+
     session = _get_sync_session()
     try:
         stmt = (
@@ -1131,6 +1143,10 @@ def download_pending_files(batch_size: int = 50):
 
         return {"downloaded": downloaded, "failed": failed}
     finally:
+        try:
+            tg_lock.release()
+        except Exception:
+            pass
         try:
             lock.release()
         except Exception:
