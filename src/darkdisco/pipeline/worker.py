@@ -187,7 +187,8 @@ def schedule_polls():
         session.close()
 
 
-@app.task(name="darkdisco.pipeline.worker.poll_source", bind=True, max_retries=3)
+@app.task(name="darkdisco.pipeline.worker.poll_source", bind=True, max_retries=3,
+          soft_time_limit=600, time_limit=900)
 def poll_source(self, source_id: str):
     """Poll a single source for new mentions, then fan out to matching."""
     from darkdisco.common.models import Source
