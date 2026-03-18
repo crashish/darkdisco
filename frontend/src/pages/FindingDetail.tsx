@@ -7,7 +7,7 @@ import StatusBadge from '../components/StatusBadge';
 import ArchiveContents from '../components/ArchiveContents';
 import type { ArchiveFile } from '../components/ArchiveContents';
 import type { FindingDetail as FindingDetailType, FindingStatus, HighlightSpan } from '../types';
-import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash, Globe, Lock, Activity, BarChart3, Camera, Network } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allStatuses: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
@@ -317,6 +317,218 @@ export default function FindingDetail() {
                 )}
               </div>
             </div>
+            );
+          })()}
+
+          {/* Trapline Intelligence */}
+          {finding.metadata && (finding.metadata as Record<string, unknown>).trapline && (() => {
+            const trap = (finding.metadata as Record<string, Record<string, unknown>>).trapline;
+            const dns = trap.dns_records as Record<string, unknown> | undefined;
+            const whois = trap.whois as Record<string, unknown> | undefined;
+            const tls = trap.tls_certificate as Record<string, unknown> | undefined;
+            const screenshotUrl = trap.screenshot_url as string | undefined;
+            const networkLog = trap.network_log as Array<Record<string, string>> | undefined;
+            const scoreBreakdown = trap.score_breakdown as Array<Record<string, unknown>> | undefined;
+            const trapScore = trap.score as number | undefined;
+
+            const subSection: CSSProperties = {
+              padding: '12px 16px',
+              borderBottom: `1px solid ${colors.border}`,
+            };
+            const subTitle: CSSProperties = {
+              fontSize: 11, fontWeight: 600, color: colors.textMuted,
+              textTransform: 'uppercase', letterSpacing: '0.05em',
+              marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6,
+            };
+            const kvRow: CSSProperties = {
+              display: 'flex', gap: 8, fontSize: 12, marginBottom: 4,
+            };
+            const kvLabel: CSSProperties = {
+              color: colors.textMuted, minWidth: 100, flexShrink: 0,
+            };
+            const kvValue: CSSProperties = {
+              color: colors.text, fontFamily: font.mono, wordBreak: 'break-all',
+            };
+
+            return (
+              <div style={sectionStyle}>
+                <div style={sectionTitle}><Globe size={14} /> Trapline Intelligence</div>
+                <div style={{
+                  background: colors.bgSurface, borderRadius: 6,
+                  border: `1px solid ${colors.border}`, overflow: 'hidden',
+                }}>
+                  {/* Score header */}
+                  {trapScore !== undefined && (
+                    <div style={{
+                      ...subSection, display: 'flex', alignItems: 'center', gap: 12,
+                    }}>
+                      <div style={{
+                        fontSize: 28, fontWeight: 700, fontFamily: font.mono,
+                        color: trapScore >= 70 ? colors.statusEscalated : trapScore >= 40 ? '#f59e0b' : colors.textMuted,
+                      }}>
+                        {trapScore}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, color: colors.textDim }}>Trapline Score</div>
+                        <div style={{ fontSize: 11, color: colors.textMuted }}>
+                          {trapScore >= 70 ? 'High risk' : trapScore >= 40 ? 'Medium risk' : 'Low risk'}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Score Breakdown */}
+                  {scoreBreakdown && scoreBreakdown.length > 0 && (
+                    <div style={subSection}>
+                      <div style={subTitle}><BarChart3 size={12} /> Score Breakdown</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {scoreBreakdown.map((s, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                            <span style={{
+                              fontFamily: font.mono, fontWeight: 600,
+                              color: colors.accent, minWidth: 30, textAlign: 'right',
+                            }}>
+                              +{String(s.weight)}
+                            </span>
+                            <span style={{ color: colors.text }}>{String(s.signal)}</span>
+                            {s.detail && (
+                              <span style={{ color: colors.textMuted, fontSize: 11 }}>{String(s.detail)}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Screenshot */}
+                  {screenshotUrl && (
+                    <div style={subSection}>
+                      <div style={subTitle}><Camera size={12} /> Screenshot</div>
+                      <a href={screenshotUrl} target="_blank" rel="noopener noreferrer">
+                        <img
+                          src={screenshotUrl}
+                          alt="Phishing site screenshot"
+                          style={{
+                            maxWidth: '100%', borderRadius: 4,
+                            border: `1px solid ${colors.border}`,
+                          }}
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = 'none';
+                            const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                            if (fallback) fallback.style.display = 'flex';
+                          }}
+                        />
+                      </a>
+                      <a
+                        href={screenshotUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ display: 'none', alignItems: 'center', gap: 4, color: colors.accent, fontSize: 12, marginTop: 4 }}
+                      >
+                        <ExternalLink size={12} /> View screenshot
+                      </a>
+                    </div>
+                  )}
+
+                  {/* DNS Records */}
+                  {dns && (
+                    <div style={subSection}>
+                      <div style={subTitle}><Network size={12} /> DNS Records</div>
+                      {(['A', 'CNAME', 'MX', 'NS'] as const).map(rtype => {
+                        const records = dns[rtype] as string[] | undefined;
+                        if (!records || records.length === 0) return null;
+                        return (
+                          <div key={rtype} style={kvRow}>
+                            <span style={kvLabel}>{rtype}</span>
+                            <span style={kvValue}>{records.join(', ')}</span>
+                          </div>
+                        );
+                      })}
+                      {(dns.resolved_ips as Array<Record<string, string>> | undefined)?.map((ip, i) => (
+                        <div key={i} style={kvRow}>
+                          <span style={kvLabel}>{i === 0 ? 'Resolved IPs' : ''}</span>
+                          <span style={kvValue}>
+                            {ip.ip}
+                            {ip.asn && <span style={{ color: colors.textMuted }}> (AS{ip.asn}{ip.org ? ` - ${ip.org}` : ''})</span>}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* WHOIS */}
+                  {whois && (
+                    <div style={subSection}>
+                      <div style={subTitle}><FileText size={12} /> WHOIS</div>
+                      {[
+                        ['Registrar', whois.registrar],
+                        ['Created', whois.creation_date],
+                        ['Expires', whois.expiry_date],
+                        ['Registrant', whois.registrant_org],
+                        ['Country', whois.registrant_country],
+                        ['Name Servers', Array.isArray(whois.name_servers) ? (whois.name_servers as string[]).join(', ') : whois.name_servers],
+                      ].filter(([, v]) => v).map(([label, value]) => (
+                        <div key={String(label)} style={kvRow}>
+                          <span style={kvLabel}>{String(label)}</span>
+                          <span style={kvValue}>{String(value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* TLS Certificate */}
+                  {tls && (
+                    <div style={subSection}>
+                      <div style={subTitle}><Lock size={12} /> TLS Certificate</div>
+                      {[
+                        ['Issuer', tls.issuer],
+                        ['Subject', tls.subject],
+                        ['Valid From', tls.not_before],
+                        ['Valid Until', tls.not_after],
+                        ['Serial', tls.serial_number],
+                      ].filter(([, v]) => v).map(([label, value]) => (
+                        <div key={String(label)} style={kvRow}>
+                          <span style={kvLabel}>{String(label)}</span>
+                          <span style={kvValue}>{String(value)}</span>
+                        </div>
+                      ))}
+                      {Array.isArray(tls.sans) && (tls.sans as string[]).length > 0 && (
+                        <div style={kvRow}>
+                          <span style={kvLabel}>SANs</span>
+                          <span style={kvValue}>{(tls.sans as string[]).join(', ')}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Network Log */}
+                  {networkLog && networkLog.length > 0 && (
+                    <div style={{ ...subSection, borderBottom: 'none' }}>
+                      <div style={subTitle}><Activity size={12} /> Network Log ({networkLog.length} requests)</div>
+                      <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                              <th style={{ textAlign: 'left', padding: '4px 8px', color: colors.textMuted, fontWeight: 500 }}>Domain</th>
+                              <th style={{ textAlign: 'left', padding: '4px 8px', color: colors.textMuted, fontWeight: 500 }}>Type</th>
+                              <th style={{ textAlign: 'left', padding: '4px 8px', color: colors.textMuted, fontWeight: 500 }}>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {networkLog.map((entry, i) => (
+                              <tr key={i} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                                <td style={{ padding: '4px 8px', fontFamily: font.mono, color: colors.text }}>{entry.domain}</td>
+                                <td style={{ padding: '4px 8px', color: colors.textDim }}>{entry.resource_type}</td>
+                                <td style={{ padding: '4px 8px', color: colors.textDim }}>{entry.status}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             );
           })()}
 

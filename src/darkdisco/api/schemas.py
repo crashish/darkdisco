@@ -476,6 +476,12 @@ class TraplineWebhookPayload(BaseModel):
     screenshot_url: str | None = None
     finding_id: str | None = None  # trapline's own finding ID
     completed_at: str | None = None
+    # Enrichment fields
+    dns_records: dict | None = None        # {"A": [...], "CNAME": [...], "MX": [...], "NS": [...], "resolved_ips": [{"ip": ..., "asn": ..., "org": ...}]}
+    whois: dict | None = None              # {"registrar": ..., "creation_date": ..., "expiry_date": ..., "name_servers": [...], "registrant_org": ..., "registrant_country": ...}
+    tls_certificate: dict | None = None    # {"issuer": ..., "subject": ..., "not_before": ..., "not_after": ..., "sans": [...], "serial_number": ...}
+    network_log: list[dict] | None = None  # [{"domain": ..., "resource_type": ..., "status": ..., "url": ...}, ...]
+    score_breakdown: list[dict] | None = None  # [{"signal": ..., "weight": ..., "detail": ...}, ...]
 
 
 class TraplineWebhookResponse(BaseModel):

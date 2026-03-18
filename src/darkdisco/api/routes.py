@@ -380,6 +380,30 @@ async def list_institution_domains(
 # ---- Trapline webhook receiver ---------------------------------------------
 
 
+def _build_trapline_metadata(payload: TraplineWebhookPayload, match_type: str | None) -> dict:
+    """Build the trapline metadata dict from a webhook payload."""
+    meta = {
+        "score": payload.score,
+        "brands": payload.brands,
+        "artifacts": payload.artifacts,
+        "screenshot_url": payload.screenshot_url,
+        "finding_id": payload.finding_id,
+        "completed_at": payload.completed_at,
+        "match_type": match_type,
+    }
+    if payload.dns_records is not None:
+        meta["dns_records"] = payload.dns_records
+    if payload.whois is not None:
+        meta["whois"] = payload.whois
+    if payload.tls_certificate is not None:
+        meta["tls_certificate"] = payload.tls_certificate
+    if payload.network_log is not None:
+        meta["network_log"] = payload.network_log
+    if payload.score_breakdown is not None:
+        meta["score_breakdown"] = payload.score_breakdown
+    return meta
+
+
 def _verify_trapline_signature(body: bytes, signature: str) -> bool:
     """Verify HMAC-SHA256 signature from trapline's X-Trapline-Signature header."""
     if not settings.trapline_webhook_secret:
@@ -462,15 +486,7 @@ async def receive_trapline_webhook(
     if existing:
         # Enrich existing finding with updated trapline data
         meta = existing.metadata_ or {}
-        meta["trapline"] = {
-            "score": payload.score,
-            "brands": payload.brands,
-            "artifacts": payload.artifacts,
-            "screenshot_url": payload.screenshot_url,
-            "finding_id": payload.finding_id,
-            "completed_at": payload.completed_at,
-            "match_type": match_type,
-        }
+        meta["trapline"] = _build_trapline_metadata(payload, match_type)
         existing.metadata_ = meta
         await db.commit()
         logger.info("Trapline webhook: enriched existing finding %s for %s", existing.id, payload.domain)
@@ -493,15 +509,7 @@ async def receive_trapline_webhook(
         matched_terms=[{"source": "trapline", "match_type": match_type, "domain": payload.domain}],
         tags=["trapline", "phishing"],
         metadata_={
-            "trapline": {
-                "score": payload.score,
-                "brands": payload.brands,
-                "artifacts": payload.artifacts,
-                "screenshot_url": payload.screenshot_url,
-                "finding_id": payload.finding_id,
-                "completed_at": payload.completed_at,
-                "match_type": match_type,
-            },
+            "trapline": _build_trapline_metadata(payload, match_type),
         },
     )
     db.add(finding)
