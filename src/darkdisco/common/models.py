@@ -198,6 +198,7 @@ class Finding(Base):
     matched_terms: Mapped[list | None] = mapped_column(JSONB)  # which watch terms triggered
     tags: Mapped[list | None] = mapped_column(JSONB)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    classification: Mapped[str | None] = mapped_column(String(100))
     analyst_notes: Mapped[str | None] = mapped_column(Text)
     assigned_to: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
     reviewed_by: Mapped[str | None] = mapped_column(String(36))
@@ -225,6 +226,25 @@ class Finding(Base):
         Index("ix_findings_status_severity", "status", "severity"),
         Index("ix_findings_institution_status", "institution_id", "status"),
         Index("ix_findings_discovered", "discovered_at"),
+    )
+
+
+class FindingAuditLog(Base):
+    """Audit log entry for a finding review action."""
+
+    __tablename__ = "finding_audit_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    finding_id: Mapped[str] = mapped_column(ForeignKey("findings.id"), index=True, nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)  # status_change, severity_change, classification_change, note_added, etc.
+    user: Mapped[str | None] = mapped_column(String(100))
+    field: Mapped[str | None] = mapped_column(String(50))
+    old_value: Mapped[str | None] = mapped_column(Text)
+    new_value: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_finding_audit_log_finding_created", "finding_id", "created_at"),
     )
 
 

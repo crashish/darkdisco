@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchFinding, updateFindingStatus, fetchArchiveContents } from '../api';
+import { fetchFinding, updateFindingStatus, updateFinding, addFindingNote, fetchAuditLog, fetchClassifications, fetchArchiveContents } from '../api';
 import { colors, card, font, statusColor } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import ArchiveContents from '../components/ArchiveContents';
 import type { ArchiveFile } from '../components/ArchiveContents';
-import type { FindingDetail as FindingDetailType, FindingStatus, HighlightSpan } from '../types';
-import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash, Globe, Lock, Activity, BarChart3, Camera, Network } from 'lucide-react';
+import type { FindingDetail as FindingDetailType, FindingStatus, Severity, AuditLogEntry, HighlightSpan } from '../types';
+import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash, Globe, Lock, Activity, BarChart3, Camera, Network, Edit3, Send, History } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allStatuses: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
@@ -107,13 +107,22 @@ export default function FindingDetail() {
   const [finding, setFinding] = useState<FindingDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const [severityMenuOpen, setSeverityMenuOpen] = useState(false);
   const [archiveFiles, setArchiveFiles] = useState<ArchiveFile[]>([]);
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
+  const [classifications, setClassifications] = useState<string[]>([]);
+  const [classificationInput, setClassificationInput] = useState('');
+  const [classificationOpen, setClassificationOpen] = useState(false);
+  const [noteInput, setNoteInput] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
+  const classificationRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
     fetchFinding(id).then(f => {
       setFinding(f);
+      setClassificationInput(f.classification || '');
       setLoading(false);
       // Extract archive files from metadata if available
       const localFiles = (f.metadata as Record<string, unknown> | undefined)?.extracted_file_contents;
@@ -129,6 +138,8 @@ export default function FindingDetail() {
         fetchArchiveContents('findings', id).then(r => setArchiveFiles(r.files)).catch(() => {});
       }
     });
+    fetchAuditLog(id).then(setAuditLog).catch(() => {});
+    fetchClassifications().then(setClassifications).catch(() => {});
   }, [id]);
 
   const handleStatusChange = async (status: FindingStatus) => {
@@ -136,7 +147,45 @@ export default function FindingDetail() {
     await updateFindingStatus(finding.id, status);
     setFinding(prev => prev ? { ...prev, status } : prev);
     setStatusMenuOpen(false);
+    if (id) fetchAuditLog(id).then(setAuditLog).catch(() => {});
   };
+
+  const handleSeverityChange = async (severity: Severity) => {
+    if (!finding) return;
+    await updateFinding(finding.id, { severity });
+    setFinding(prev => prev ? { ...prev, severity } : prev);
+    setSeverityMenuOpen(false);
+    if (id) fetchAuditLog(id).then(setAuditLog).catch(() => {});
+  };
+
+  const handleClassificationSave = async (value: string) => {
+    if (!finding) return;
+    await updateFinding(finding.id, { classification: value });
+    setFinding(prev => prev ? { ...prev, classification: value } : prev);
+    setClassificationOpen(false);
+    if (id) fetchAuditLog(id).then(setAuditLog).catch(() => {});
+    if (value && !classifications.includes(value)) {
+      setClassifications(prev => [...prev, value].sort());
+    }
+  };
+
+  const handleAddNote = async () => {
+    if (!finding || !noteInput.trim()) return;
+    setNoteSaving(true);
+    try {
+      const updated = await addFindingNote(finding.id, noteInput.trim());
+      setFinding(prev => prev ? { ...prev, analyst_notes: updated.analyst_notes } : prev);
+      setNoteInput('');
+      if (id) fetchAuditLog(id).then(setAuditLog).catch(() => {});
+    } finally {
+      setNoteSaving(false);
+    }
+  };
+
+  const allSeverities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
+  const filteredClassifications = classifications.filter(c =>
+    c.toLowerCase().includes(classificationInput.toLowerCase())
+  );
 
   if (loading) {
     return <div style={{ color: colors.textMuted, padding: 40, textAlign: 'center' }}>Loading...</div>;
@@ -165,7 +214,34 @@ export default function FindingDetail() {
           <div style={{ flex: 1 }}>
             <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8, lineHeight: 1.3 }}>{finding.title}</h1>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <SeverityBadge severity={finding.severity} />
+              <div style={{ position: 'relative' }}>
+                <div
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+                  onClick={() => setSeverityMenuOpen(!severityMenuOpen)}
+                >
+                  <SeverityBadge severity={finding.severity} />
+                  <Edit3 size={11} color={colors.textMuted} />
+                </div>
+                {severityMenuOpen && (
+                  <div style={{
+                    position: 'absolute', top: '100%', left: 0, zIndex: 50, marginTop: 4,
+                    background: colors.bgSurface, border: `1px solid ${colors.border}`, borderRadius: 6,
+                    padding: 4, minWidth: 120, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                  }}>
+                    {allSeverities.filter(s => s !== finding.severity).map(s => (
+                      <div
+                        key={s}
+                        style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer', borderRadius: 4, color: colors.textDim }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = colors.bgHover; (e.currentTarget as HTMLElement).style.color = colors.text; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = colors.textDim; }}
+                        onClick={() => handleSeverityChange(s)}
+                      >
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div style={{ position: 'relative' }}>
                 <div
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
@@ -592,20 +668,104 @@ export default function FindingDetail() {
             </div>
           )}
 
-          {/* Analyst Notes */}
-          {finding.analyst_notes && (
-            <div style={sectionStyle}>
-              <div style={sectionTitle}><User size={14} /> Analyst Notes</div>
-              <div style={{
-                fontSize: 13, lineHeight: 1.6, color: colors.textDim,
-                whiteSpace: 'pre-wrap', padding: '12px 16px',
-                background: colors.bgSurface, borderRadius: 6,
-                border: `1px solid ${colors.border}`,
-              }}>
-                {finding.analyst_notes}
-              </div>
+          {/* Classification */}
+          <div style={sectionStyle}>
+            <div style={sectionTitle}><Tag size={14} /> Classification</div>
+            <div style={{ position: 'relative' }} ref={classificationRef}>
+              <input
+                type="text"
+                value={classificationInput}
+                onChange={e => { setClassificationInput(e.target.value); setClassificationOpen(true); }}
+                onFocus={() => setClassificationOpen(true)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { handleClassificationSave(classificationInput.trim()); }
+                  if (e.key === 'Escape') { setClassificationOpen(false); }
+                }}
+                placeholder="e.g. credential theft, phishing kit, data leak"
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '8px 12px', fontSize: 13,
+                  background: colors.bgSurface, color: colors.text,
+                  border: `1px solid ${colors.border}`, borderRadius: 6,
+                  outline: 'none', fontFamily: font.mono,
+                }}
+              />
+              {classificationOpen && filteredClassifications.length > 0 && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, marginTop: 2,
+                  background: colors.bgSurface, border: `1px solid ${colors.border}`, borderRadius: 6,
+                  maxHeight: 160, overflow: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                }}>
+                  {filteredClassifications.map(c => (
+                    <div
+                      key={c}
+                      style={{ padding: '6px 12px', fontSize: 12, cursor: 'pointer', color: colors.textDim }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = colors.bgHover; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                      onMouseDown={e => { e.preventDefault(); setClassificationInput(c); handleClassificationSave(c); }}
+                    >
+                      {c}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {finding.classification && classificationInput !== finding.classification && (
+                <div style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
+                  Current: <span style={{ color: colors.text }}>{finding.classification}</span>
+                </div>
+              )}
             </div>
-          )}
+          </div>
+
+          {/* Analyst Notes (threaded) */}
+          <div style={sectionStyle}>
+            <div style={sectionTitle}><User size={14} /> Analyst Notes</div>
+            {finding.analyst_notes && (
+              <div style={{
+                marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 0,
+              }}>
+                {finding.analyst_notes.split('\n---\n').map((note, i) => (
+                  <div key={i} style={{
+                    padding: '10px 14px',
+                    borderBottom: `1px solid ${colors.border}`,
+                    fontSize: 13, lineHeight: 1.5, color: colors.textDim,
+                    whiteSpace: 'pre-wrap',
+                    background: i % 2 === 0 ? colors.bgSurface : 'transparent',
+                  }}>
+                    {note}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <textarea
+                value={noteInput}
+                onChange={e => setNoteInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleAddNote(); }}
+                placeholder="Add a note... (Ctrl+Enter to submit)"
+                rows={2}
+                style={{
+                  flex: 1, padding: '8px 12px', fontSize: 13,
+                  background: colors.bgSurface, color: colors.text,
+                  border: `1px solid ${colors.border}`, borderRadius: 6,
+                  outline: 'none', resize: 'vertical', fontFamily: 'inherit',
+                  lineHeight: 1.5,
+                }}
+              />
+              <button
+                onClick={handleAddNote}
+                disabled={noteSaving || !noteInput.trim()}
+                style={{
+                  padding: '8px 12px', background: colors.accent, color: '#fff',
+                  border: 'none', borderRadius: 6, cursor: 'pointer',
+                  opacity: noteSaving || !noteInput.trim() ? 0.5 : 1,
+                  display: 'flex', alignItems: 'center', gap: 4, fontSize: 12,
+                }}
+              >
+                <Send size={12} /> Add
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Right column - sidebar */}
@@ -700,6 +860,54 @@ export default function FindingDetail() {
                         {entry.notes && (
                           <div style={{ fontSize: 11, color: colors.textDim, marginTop: 2 }}>{entry.notes}</div>
                         )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Audit Log */}
+          {auditLog.length > 0 && (
+            <div style={sectionStyle}>
+              <div style={sectionTitle}><History size={14} /> Audit Log</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxHeight: 400, overflow: 'auto' }}>
+                {auditLog.map((entry, i) => {
+                  const actionLabels: Record<string, string> = {
+                    status_change: 'Status changed',
+                    severity_change: 'Severity changed',
+                    classification_change: 'Classification changed',
+                    note_added: 'Note added',
+                  };
+                  return (
+                    <div key={entry.id} style={{
+                      padding: '8px 0',
+                      borderBottom: i < auditLog.length - 1 ? `1px solid ${colors.border}` : 'none',
+                    }}>
+                      <div style={{ fontSize: 12, color: colors.text, fontWeight: 500 }}>
+                        {actionLabels[entry.action] || entry.action}
+                      </div>
+                      {entry.old_value && entry.new_value && (
+                        <div style={{ fontSize: 11, color: colors.textDim, marginTop: 2 }}>
+                          <span style={{ textDecoration: 'line-through', color: colors.textMuted }}>{entry.old_value}</span>
+                          {' → '}
+                          <span style={{ color: colors.accent }}>{entry.new_value}</span>
+                        </div>
+                      )}
+                      {!entry.old_value && entry.new_value && entry.action === 'note_added' && (
+                        <div style={{ fontSize: 11, color: colors.textDim, marginTop: 2, fontStyle: 'italic' }}>
+                          {entry.new_value.length > 80 ? entry.new_value.slice(0, 80) + '...' : entry.new_value}
+                        </div>
+                      )}
+                      {!entry.old_value && entry.new_value && entry.action !== 'note_added' && (
+                        <div style={{ fontSize: 11, color: colors.textDim, marginTop: 2 }}>
+                          Set to: <span style={{ color: colors.accent }}>{entry.new_value}</span>
+                        </div>
+                      )}
+                      <div style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
+                        {new Date(entry.created_at).toLocaleString()}
+                        {entry.user && <> &middot; {entry.user}</>}
                       </div>
                     </div>
                   );

@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -75,6 +75,32 @@ export async function updateFindingStatus(id: string, status: FindingStatus): Pr
     method: 'POST',
     body: JSON.stringify({ status }),
   });
+}
+
+export async function updateFinding(id: string, body: {
+  severity?: Severity;
+  classification?: string;
+  analyst_notes?: string;
+}): Promise<FindingDetail> {
+  return apiFetch(`/findings/${id}`, {} as FindingDetail, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function addFindingNote(id: string, content: string): Promise<FindingDetail> {
+  return apiFetch(`/findings/${id}/notes`, {} as FindingDetail, {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function fetchAuditLog(findingId: string): Promise<AuditLogEntry[]> {
+  return apiFetch(`/findings/${findingId}/audit-log`, []);
+}
+
+export async function fetchClassifications(): Promise<string[]> {
+  return apiFetch('/findings/classifications', []);
 }
 
 export async function fetchWatchTerms(institutionId: string): Promise<WatchTerm[]> {

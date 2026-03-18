@@ -54,6 +54,7 @@ export interface FindingDetail extends Finding {
   raw_content: string | null;
   matched_terms: MatchedTerm[] | null;
   tags: string[] | null;
+  classification: string | null;
   analyst_notes: string | null;
   enrichment: EnrichmentData | null;
   status_history: StatusHistoryEntry[];
@@ -62,6 +63,17 @@ export interface FindingDetail extends Finding {
   reviewed_at: string | null;
   source_name?: string;
   metadata?: Record<string, unknown> | null;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  finding_id: string;
+  action: string;
+  user: string | null;
+  field: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  created_at: string;
 }
 
 export interface HighlightSpan {

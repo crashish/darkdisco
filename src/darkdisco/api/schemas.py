@@ -199,6 +199,7 @@ class FindingUpdate(BaseModel):
     status: FindingStatus | None = None
     title: str | None = None
     summary: str | None = None
+    classification: str | None = None
     analyst_notes: str | None = None
     assigned_to: str | None = None
     tags: list | None = None
@@ -223,6 +224,7 @@ class FindingOut(BaseModel):
     source_url: str | None = None
     matched_terms: list | None = None
     tags: list | None = None
+    classification: str | None = None
     analyst_notes: str | None = None
     assigned_to: str | None = None
     reviewed_by: str | None = None
@@ -247,6 +249,23 @@ class PaginatedFindingsOut(BaseModel):
 class FindingStatusTransition(BaseModel):
     status: FindingStatus
     notes: str | None = None
+
+
+class FindingNoteAdd(BaseModel):
+    content: str
+
+
+class FindingAuditLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    finding_id: str
+    action: str
+    user: str | None = None
+    field: str | None = None
+    old_value: str | None = None
+    new_value: str | None = None
+    created_at: datetime
 
 
 # ---------------------------------------------------------------------------

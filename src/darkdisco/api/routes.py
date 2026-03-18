@@ -36,7 +36,9 @@ from darkdisco.api.schemas import (
     DryRunMatch,
     DryRunRequest,
     DryRunResult,
+    FindingAuditLogOut,
     FindingCreate,
+    FindingNoteAdd,
     FindingOut,
     FindingStatusTransition,
     FindingUpdate,
@@ -78,6 +80,7 @@ from darkdisco.common.models import (
     DiscoveryStatus,
     ExtractedFile,
     Finding,
+    FindingAuditLog,
     FindingStatus,
     Institution,
     Notification,
@@ -1804,6 +1807,21 @@ async def search_findings(
     )
 
 
+@protected.get("/findings/classifications")
+async def list_classifications(
+    db: AsyncSession = Depends(get_session),
+):
+    """Return distinct classification values for autocomplete suggestions."""
+    result = await db.execute(
+        select(Finding.classification)
+        .where(Finding.classification.isnot(None))
+        .where(Finding.classification != "")
+        .distinct()
+        .order_by(Finding.classification)
+    )
+    return [row[0] for row in result.all()]
+
+
 @protected.get("/findings/{finding_id}/archive-contents")
 async def finding_archive_contents(
     finding_id: str,
@@ -1879,6 +1897,7 @@ async def update_finding(
     finding_id: str,
     body: FindingUpdate,
     db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     finding = await db.get(Finding, finding_id)
     if not finding:
@@ -1887,6 +1906,44 @@ async def update_finding(
     # If status is being changed, validate transition
     if "status" in updates and updates["status"] != finding.status:
         _check_transition(finding.status, updates["status"])
+
+    username = current_user.username
+
+    # Audit tracked fields
+    audit_fields = {
+        "status": ("status_change", lambda v: v.value if hasattr(v, "value") else str(v)),
+        "severity": ("severity_change", lambda v: v.value if hasattr(v, "value") else str(v)),
+        "classification": ("classification_change", str),
+    }
+    for field_name, (action, fmt) in audit_fields.items():
+        if field_name in updates:
+            old_val = getattr(finding, field_name)
+            new_val = updates[field_name]
+            if old_val != new_val:
+                db.add(FindingAuditLog(
+                    finding_id=finding_id,
+                    action=action,
+                    user=username,
+                    field=field_name,
+                    old_value=fmt(old_val) if old_val is not None else None,
+                    new_value=fmt(new_val) if new_val is not None else None,
+                ))
+
+    # Analyst notes: append-only behavior
+    if "analyst_notes" in updates and updates["analyst_notes"]:
+        new_note = updates["analyst_notes"]
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        formatted = f"[{timestamp}] {username}: {new_note}"
+        existing = finding.analyst_notes or ""
+        separator = "\n---\n" if existing else ""
+        updates["analyst_notes"] = existing + separator + formatted
+        db.add(FindingAuditLog(
+            finding_id=finding_id,
+            action="note_added",
+            user=username,
+            new_value=new_note,
+        ))
+
     for key, val in updates.items():
         setattr(finding, key, val)
     await db.commit()
@@ -1904,17 +1961,36 @@ async def transition_finding_status(
     finding_id: str,
     body: FindingStatusTransition,
     db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Explicit status transition with validation."""
     finding = await db.get(Finding, finding_id)
     if not finding:
         raise HTTPException(404, "Finding not found")
     _check_transition(finding.status, body.status)
+    username = current_user.username
+    old_status = finding.status.value
     finding.status = body.status
+    db.add(FindingAuditLog(
+        finding_id=finding_id,
+        action="status_change",
+        user=username,
+        field="status",
+        old_value=old_status,
+        new_value=body.status.value,
+    ))
     if body.notes:
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        formatted = f"[{timestamp}] {username}: {body.notes}"
         existing = finding.analyst_notes or ""
         separator = "\n---\n" if existing else ""
-        finding.analyst_notes = existing + separator + body.notes
+        finding.analyst_notes = existing + separator + formatted
+        db.add(FindingAuditLog(
+            finding_id=finding_id,
+            action="note_added",
+            user=username,
+            new_value=body.notes,
+        ))
     await db.commit()
     # Re-fetch with relationships loaded
     result = await db.execute(
@@ -1935,6 +2011,55 @@ async def delete_finding(
         raise HTTPException(404, "Finding not found")
     await db.delete(finding)
     await db.commit()
+
+
+@protected.get("/findings/{finding_id}/audit-log", response_model=list[FindingAuditLogOut])
+async def get_finding_audit_log(
+    finding_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """Return audit log entries for a finding, ordered chronologically."""
+    finding = await db.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(404, "Finding not found")
+    result = await db.execute(
+        select(FindingAuditLog)
+        .where(FindingAuditLog.finding_id == finding_id)
+        .order_by(FindingAuditLog.created_at.asc())
+    )
+    return result.scalars().all()
+
+
+@protected.post("/findings/{finding_id}/notes", response_model=FindingOut)
+async def add_finding_note(
+    finding_id: str,
+    body: FindingNoteAdd,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Append a note to a finding's analyst_notes (append-only thread)."""
+    finding = await db.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(404, "Finding not found")
+    username = current_user.username
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    formatted = f"[{timestamp}] {username}: {body.content}"
+    existing = finding.analyst_notes or ""
+    separator = "\n---\n" if existing else ""
+    finding.analyst_notes = existing + separator + formatted
+    db.add(FindingAuditLog(
+        finding_id=finding_id,
+        action="note_added",
+        user=username,
+        new_value=body.content,
+    ))
+    await db.commit()
+    result = await db.execute(
+        select(Finding)
+        .options(selectinload(Finding.institution), selectinload(Finding.source))
+        .where(Finding.id == finding_id)
+    )
+    return result.scalar_one()
 
 
 def _check_transition(current: FindingStatus, target: FindingStatus) -> None:
