@@ -2100,7 +2100,7 @@ async def update_finding(
                 db.add(FindingAuditLog(
                     finding_id=finding_id,
                     action=action,
-                    user=username,
+                    username=username,
                     field=field_name,
                     old_value=fmt(old_val) if old_val is not None else None,
                     new_value=fmt(new_val) if new_val is not None else None,
@@ -2117,7 +2117,7 @@ async def update_finding(
         db.add(FindingAuditLog(
             finding_id=finding_id,
             action="note_added",
-            user=username,
+            username=username,
             new_value=new_note,
         ))
 

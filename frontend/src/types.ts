@@ -69,7 +69,7 @@ export interface AuditLogEntry {
   id: string;
   finding_id: string;
   action: string;
-  user: string | null;
+  username: string | null;
   field: string | null;
   old_value: string | null;
   new_value: string | null;

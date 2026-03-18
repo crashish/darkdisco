@@ -908,7 +908,7 @@ export default function FindingDetail() {
                       )}
                       <div style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
                         {new Date(entry.created_at).toLocaleString()}
-                        {entry.user && <> &middot; {entry.user}</>}
+                        {entry.username && <> &middot; {entry.username}</>}
                       </div>
                     </div>
                   );

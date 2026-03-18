@@ -24,7 +24,7 @@ def upgrade() -> None:
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("finding_id", sa.String(36), sa.ForeignKey("findings.id"), nullable=False),
         sa.Column("action", sa.String(50), nullable=False),
-        sa.Column("user", sa.String(100), nullable=True),
+        sa.Column("username", sa.String(100), nullable=True),
         sa.Column("field", sa.String(50), nullable=True),
         sa.Column("old_value", sa.Text(), nullable=True),
         sa.Column("new_value", sa.Text(), nullable=True),

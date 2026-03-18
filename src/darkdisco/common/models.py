@@ -237,7 +237,7 @@ class FindingAuditLog(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     finding_id: Mapped[str] = mapped_column(ForeignKey("findings.id"), index=True, nullable=False)
     action: Mapped[str] = mapped_column(String(50), nullable=False)  # status_change, severity_change, classification_change, note_added, etc.
-    user: Mapped[str | None] = mapped_column(String(100))
+    username: Mapped[str | None] = mapped_column(String(100))
     field: Mapped[str | None] = mapped_column(String(50))
     old_value: Mapped[str | None] = mapped_column(Text)
     new_value: Mapped[str | None] = mapped_column(Text)

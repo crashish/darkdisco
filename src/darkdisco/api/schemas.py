@@ -261,7 +261,7 @@ class FindingAuditLogOut(BaseModel):
     id: str
     finding_id: str
     action: str
-    user: str | None = None
+    username: str | None = None
     field: str | None = None
     old_value: str | None = None
     new_value: str | None = None
