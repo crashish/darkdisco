@@ -2151,7 +2151,7 @@ async def transition_finding_status(
     db.add(FindingAuditLog(
         finding_id=finding_id,
         action="status_change",
-        user=username,
+        username=username,
         field="status",
         old_value=old_status,
         new_value=body.status.value,
@@ -2165,7 +2165,7 @@ async def transition_finding_status(
         db.add(FindingAuditLog(
             finding_id=finding_id,
             action="note_added",
-            user=username,
+            username=username,
             new_value=body.notes,
         ))
     await db.commit()
@@ -2227,7 +2227,7 @@ async def add_finding_note(
     db.add(FindingAuditLog(
         finding_id=finding_id,
         action="note_added",
-        user=username,
+        username=username,
         new_value=body.content,
     ))
     await db.commit()
