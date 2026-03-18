@@ -34,6 +34,7 @@ export const colors = {
   statusFalsePositive: '#64748b',
   statusDismissed: '#64748b',
   statusConfirmed: '#22c55e',
+  statusEscalated: '#f59e0b',
 };
 
 export const severityColor = (s: string) => colors[s as keyof typeof colors] || colors.textDim;

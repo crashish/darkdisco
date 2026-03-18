@@ -169,7 +169,7 @@ function buildMetadata(sourceType: SourceType, i: number): Record<string, unknow
   return null;
 }
 
-export const mockFindingDetails: FindingDetail[] = mockFindings.map((f, i) => ({
+export const mockFindingDetails: FindingDetail[] = (mockFindings as any[]).map((f: any, i: number) => ({
   ...f,
   raw_content: findingTemplates[i].summary + '\n\n[Raw scraped content from source. May contain formatting artifacts, markup, and surrounding context from the original post.]',
   matched_terms: buildMatchedTerms(f.institution_id),
