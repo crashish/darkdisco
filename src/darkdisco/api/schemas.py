@@ -573,6 +573,27 @@ class DiscoveredChannelUpdate(BaseModel):
 # Bulk BIN / Routing Number Population
 # ---------------------------------------------------------------------------
 
+class InstitutionExportRow(BaseModel):
+    """A single institution with its related data for export."""
+    name: str
+    short_name: str | None = None
+    charter_type: str | None = None
+    state: str | None = None
+    primary_domain: str | None = None
+    additional_domains: list | None = None
+    bin_ranges: list | None = None
+    routing_numbers: list | None = None
+    active: bool = True
+    watch_terms: list[dict] | None = None
+
+
+class InstitutionImportResult(BaseModel):
+    """Summary of an institution import operation."""
+    imported: int
+    skipped: int
+    errors: list[str]
+
+
 class BinRoutingEntry(BaseModel):
     """A single institution's BIN/routing data for bulk population."""
     name: str

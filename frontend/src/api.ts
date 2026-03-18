@@ -137,6 +137,30 @@ export async function deleteWatchTerm(id: string): Promise<void> {
   await apiFetch(`/watch-terms/${id}`, null, { method: 'DELETE' });
 }
 
+export function getInstitutionExportUrl(format: 'json' | 'csv', clientId?: string): string {
+  const params = new URLSearchParams({ format });
+  if (clientId) params.set('client_id', clientId);
+  return `${BASE}/institutions/export?${params}`;
+}
+
+export async function importInstitutions(file: File, clientId: string): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  const token = localStorage.getItem('dd_token');
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${BASE}/institutions/import?client_id=${encodeURIComponent(clientId)}`, {
+    method: 'POST',
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    body: formData,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('dd_token');
+    window.dispatchEvent(new CustomEvent('auth:logout', { detail: 'unauthorized' }));
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
+  return await res.json();
+}
+
 export async function fetchSources(enabled?: boolean): Promise<Source[]> {
   const qs = enabled !== undefined ? `?enabled=${enabled}` : '';
   return apiFetch(`/sources${qs}`, mockSources);

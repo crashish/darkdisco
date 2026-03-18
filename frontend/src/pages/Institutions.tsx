@@ -3,12 +3,13 @@ import {
   fetchClients, fetchInstitutions, fetchFindings, fetchWatchTerms,
   createInstitution, updateInstitution, deleteInstitution,
   createWatchTerm, deleteWatchTerm,
+  getInstitutionExportUrl, importInstitutions,
 } from '../api';
 import { colors, card, font } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import type { Client, Institution, Finding, WatchTerm } from '../types';
-import { Building2, ChevronRight, ChevronDown, Tag, Globe, CreditCard, Hash, MapPin, Plus, Pencil, Trash2, X, Check } from 'lucide-react';
+import { Building2, ChevronRight, ChevronDown, Tag, Globe, CreditCard, Hash, MapPin, Plus, Pencil, Trash2, X, Check, Download, Upload } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const termIcons: Record<string, typeof Tag> = {
@@ -77,6 +78,12 @@ export default function Institutions() {
   const [showAddTerm, setShowAddTerm] = useState(false);
   const [termForm, setTermForm] = useState({ term_type: 'institution_name', value: '' });
 
+  // Import
+  const [showImport, setShowImport] = useState(false);
+  const [importClientId, setImportClientId] = useState('');
+  const [importResult, setImportResult] = useState<{ imported: number; skipped: number; errors: string[] } | null>(null);
+  const [importing, setImporting] = useState(false);
+
   const reload = useCallback(() => {
     fetchClients().then(setClients);
     fetchInstitutions().then(setInstitutions);
@@ -142,6 +149,44 @@ export default function Institutions() {
     setInstTerms(terms);
   };
 
+  const handleExport = (format: 'json' | 'csv') => {
+    const url = getInstitutionExportUrl(format);
+    const token = localStorage.getItem('dd_token');
+    const a = document.createElement('a');
+    if (token) {
+      // Use fetch for authenticated download
+      fetch(url, { headers: { 'Authorization': `Bearer ${token}` } })
+        .then(r => r.blob())
+        .then(blob => {
+          a.href = URL.createObjectURL(blob);
+          a.download = `institutions.${format}`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+        });
+    } else {
+      a.href = url;
+      a.download = `institutions.${format}`;
+      a.click();
+    }
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !importClientId) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const result = await importInstitutions(file, importClientId);
+      setImportResult(result);
+      reload();
+    } catch (err) {
+      setImportResult({ imported: 0, skipped: 0, errors: [`Import failed: ${err}`] });
+    } finally {
+      setImporting(false);
+      e.target.value = '';
+    }
+  };
+
   const handleDeleteTerm = async (termId: string) => {
     await deleteWatchTerm(termId);
     if (expandedInst) {
@@ -159,13 +204,66 @@ export default function Institutions() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700 }}>Institutions</h1>
-        <button style={btnStyle} onClick={() => { setShowAddForm(!showAddForm); if (!showAddForm && clients.length) setAddForm(f => ({ ...f, client_id: clients[0].id })); }}>
-          <Plus size={14} style={{ verticalAlign: -2, marginRight: 4 }} /> Add Institution
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button style={btnGhostStyle} onClick={() => handleExport('json')} title="Export as JSON">
+            <Download size={13} style={{ verticalAlign: -2, marginRight: 4 }} /> JSON
+          </button>
+          <button style={btnGhostStyle} onClick={() => handleExport('csv')} title="Export as CSV">
+            <Download size={13} style={{ verticalAlign: -2, marginRight: 4 }} /> CSV
+          </button>
+          <button style={btnGhostStyle} onClick={() => { setShowImport(!showImport); if (!showImport && clients.length) setImportClientId(clients[0].id); }}>
+            <Upload size={13} style={{ verticalAlign: -2, marginRight: 4 }} /> Import
+          </button>
+          <button style={btnStyle} onClick={() => { setShowAddForm(!showAddForm); if (!showAddForm && clients.length) setAddForm(f => ({ ...f, client_id: clients[0].id })); }}>
+            <Plus size={14} style={{ verticalAlign: -2, marginRight: 4 }} /> Add Institution
+          </button>
+        </div>
       </div>
       <p style={{ color: colors.textDim, fontSize: 14, marginBottom: 20 }}>
         {institutions.length} monitored institution{institutions.length !== 1 ? 's' : ''} across {clients.length} client{clients.length !== 1 ? 's' : ''}
       </p>
+
+      {/* Import Dialog */}
+      {showImport && (
+        <div style={{ ...card, marginBottom: 20, padding: 20 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Import Institutions</h3>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+            <div>
+              <label style={{ fontSize: 11, color: colors.textMuted, display: 'block', marginBottom: 4 }}>Target Client</label>
+              <select
+                style={{ ...inputStyle, width: 200, cursor: 'pointer', appearance: 'auto' as const }}
+                value={importClientId}
+                onChange={e => setImportClientId(e.target.value)}
+              >
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: 11, color: colors.textMuted, display: 'block', marginBottom: 4 }}>File (JSON or CSV)</label>
+              <input
+                type="file"
+                accept=".json,.csv"
+                onChange={handleImport}
+                disabled={importing || !importClientId}
+                style={{ fontSize: 13, color: colors.text }}
+              />
+            </div>
+            <button style={btnGhostStyle} onClick={() => { setShowImport(false); setImportResult(null); }}>Cancel</button>
+          </div>
+          {importing && <div style={{ color: colors.textMuted, fontSize: 13 }}>Importing...</div>}
+          {importResult && (
+            <div style={{ fontSize: 13, padding: 10, background: colors.bgSurface, borderRadius: 6 }}>
+              <span style={{ color: colors.accent }}>Imported: {importResult.imported}</span>
+              {importResult.skipped > 0 && <span style={{ marginLeft: 12, color: colors.textMuted }}>Skipped (duplicates): {importResult.skipped}</span>}
+              {importResult.errors.length > 0 && (
+                <div style={{ color: '#ef4444', marginTop: 6 }}>
+                  {importResult.errors.map((e, i) => <div key={i}>{e}</div>)}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add Institution Form */}
       {showAddForm && (

@@ -7,7 +7,8 @@ import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -65,6 +66,8 @@ from darkdisco.api.schemas import (
     BinRoutingEntry,
     BinRoutingResult,
     BinRoutingSummary,
+    InstitutionExportRow,
+    InstitutionImportResult,
     DiscoveredChannelOut,
     DiscoveredChannelUpdate,
     WatchTermCreate,
@@ -636,6 +639,180 @@ async def create_institution(
     await db.refresh(inst)
     _trigger_trapline_sync(inst.id)
     return inst
+
+
+@protected.get("/institutions/export")
+async def export_institutions(
+    format: str = Query("json", pattern="^(json|csv)$"),
+    client_id: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """Export all institutions with their domains, BINs, routing numbers, and watch terms."""
+    import csv
+    import io
+    import json as json_lib
+
+    stmt = (
+        select(Institution)
+        .options(selectinload(Institution.watch_terms))
+        .order_by(Institution.name)
+    )
+    if client_id is not None:
+        stmt = stmt.where(Institution.client_id == client_id)
+    result = await db.execute(stmt)
+    institutions = result.scalars().all()
+
+    rows = []
+    for inst in institutions:
+        terms = [
+            {"term_type": t.term_type.value, "value": t.value, "enabled": t.enabled,
+             "case_sensitive": t.case_sensitive, "notes": t.notes}
+            for t in (inst.watch_terms or [])
+        ]
+        rows.append(InstitutionExportRow(
+            name=inst.name,
+            short_name=inst.short_name,
+            charter_type=inst.charter_type,
+            state=inst.state,
+            primary_domain=inst.primary_domain,
+            additional_domains=inst.additional_domains,
+            bin_ranges=inst.bin_ranges,
+            routing_numbers=inst.routing_numbers,
+            active=inst.active,
+            watch_terms=terms or None,
+        ))
+
+    if format == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow([
+            "name", "short_name", "charter_type", "state", "primary_domain",
+            "additional_domains", "bin_ranges", "routing_numbers", "active", "watch_terms",
+        ])
+        for r in rows:
+            writer.writerow([
+                r.name, r.short_name or "", r.charter_type or "", r.state or "",
+                r.primary_domain or "",
+                json_lib.dumps(r.additional_domains) if r.additional_domains else "",
+                json_lib.dumps(r.bin_ranges) if r.bin_ranges else "",
+                json_lib.dumps(r.routing_numbers) if r.routing_numbers else "",
+                r.active,
+                json_lib.dumps(r.watch_terms) if r.watch_terms else "",
+            ])
+        content = buf.getvalue()
+        return StreamingResponse(
+            iter([content]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=institutions.csv"},
+        )
+    else:
+        content = json_lib.dumps(
+            [r.model_dump() for r in rows], indent=2, default=str
+        )
+        return StreamingResponse(
+            iter([content]),
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=institutions.json"},
+        )
+
+
+@protected.post("/institutions/import", response_model=InstitutionImportResult)
+async def import_institutions(
+    file: UploadFile = File(...),
+    client_id: str = Query(...),
+    db: AsyncSession = Depends(get_session),
+):
+    """Import institutions from JSON or CSV file. Skips duplicates by name within the client."""
+    import csv
+    import io
+    import json as json_lib
+
+    # Verify client exists
+    parent = await db.get(Client, client_id)
+    if not parent:
+        raise HTTPException(400, "Client not found")
+
+    raw = await file.read()
+    text = raw.decode("utf-8-sig")
+
+    # Parse input
+    entries: list[dict] = []
+    filename = (file.filename or "").lower()
+    if filename.endswith(".csv") or file.content_type == "text/csv":
+        reader = csv.DictReader(io.StringIO(text))
+        for row in reader:
+            entry: dict = {}
+            entry["name"] = row.get("name", "").strip()
+            entry["short_name"] = row.get("short_name", "").strip() or None
+            entry["charter_type"] = row.get("charter_type", "").strip() or None
+            entry["state"] = row.get("state", "").strip() or None
+            entry["primary_domain"] = row.get("primary_domain", "").strip() or None
+            for json_field in ("additional_domains", "bin_ranges", "routing_numbers", "watch_terms"):
+                val = row.get(json_field, "").strip()
+                entry[json_field] = json_lib.loads(val) if val else None
+            active_val = row.get("active", "true").strip().lower()
+            entry["active"] = active_val not in ("false", "0", "no")
+            entries.append(entry)
+    else:
+        try:
+            entries = json_lib.loads(text)
+        except json_lib.JSONDecodeError as e:
+            raise HTTPException(400, f"Invalid JSON: {e}")
+        if not isinstance(entries, list):
+            raise HTTPException(400, "JSON must be an array of institution objects")
+
+    # Get existing institution names for dedup
+    existing_stmt = select(Institution.name).where(Institution.client_id == client_id)
+    existing_result = await db.execute(existing_stmt)
+    existing_names = {row[0].lower() for row in existing_result.all()}
+
+    imported = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for i, entry in enumerate(entries):
+        name = (entry.get("name") or "").strip()
+        if not name:
+            errors.append(f"Row {i + 1}: missing name")
+            continue
+        if name.lower() in existing_names:
+            skipped += 1
+            continue
+
+        inst = Institution(
+            client_id=client_id,
+            name=name,
+            short_name=entry.get("short_name"),
+            charter_type=entry.get("charter_type"),
+            state=entry.get("state"),
+            primary_domain=entry.get("primary_domain"),
+            additional_domains=entry.get("additional_domains"),
+            bin_ranges=entry.get("bin_ranges"),
+            routing_numbers=entry.get("routing_numbers"),
+            active=entry.get("active", True),
+        )
+        db.add(inst)
+        await db.flush()
+
+        # Import watch terms if present
+        watch_terms = entry.get("watch_terms") or []
+        for wt in watch_terms:
+            if isinstance(wt, dict) and wt.get("value"):
+                term = WatchTerm(
+                    institution_id=inst.id,
+                    term_type=wt.get("term_type", "keyword"),
+                    value=wt["value"],
+                    enabled=wt.get("enabled", True),
+                    case_sensitive=wt.get("case_sensitive", False),
+                    notes=wt.get("notes"),
+                )
+                db.add(term)
+
+        existing_names.add(name.lower())
+        imported += 1
+
+    await db.commit()
+    return InstitutionImportResult(imported=imported, skipped=skipped, errors=errors)
 
 
 @protected.get("/institutions/{institution_id}", response_model=InstitutionOut)
