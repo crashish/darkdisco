@@ -947,9 +947,18 @@ def process_channel_discoveries(batch_size: int = 5):
     Runs periodically via beat schedule. Processes pending channels automatically.
     Rate-limits joins to avoid Telegram flood bans (batch_size controls pace).
     """
+    import redis as _redis
     from darkdisco.common.models import DiscoveredChannel, DiscoveryStatus, Source
 
     session = _get_sync_session()
+    # Acquire Telegram session lock to avoid SQLite contention with poll_source
+    r = _redis.from_url(settings.celery_broker_url)
+    tg_lock = r.lock("darkdisco:telegram_session_lock", timeout=300)
+    if not tg_lock.acquire(blocking=False):
+        logger.info("Telegram session lock held, skipping channel discovery this cycle")
+        session.close()
+        return {"skipped": True, "reason": "session_locked"}
+
     try:
         pending = session.execute(
             select(DiscoveredChannel)
@@ -1012,6 +1021,10 @@ def process_channel_discoveries(batch_size: int = 5):
         )
         return {"processed": len(approved), "joined": joined, "failed": failed}
     finally:
+        try:
+            tg_lock.release()
+        except Exception:
+            pass
         session.close()
 
 
