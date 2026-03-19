@@ -232,7 +232,7 @@ def poll_source(self, source_id: str):
             from darkdisco.config import settings as _settings
             _r = _redis.from_url(_settings.celery_broker_url)
             telegram_lock = _r.lock("darkdisco:telegram_session_lock", timeout=300)
-            acquired = telegram_lock.acquire(blocking=True, blocking_timeout=60)
+            acquired = telegram_lock.acquire(blocking=True, blocking_timeout=180)
             if not acquired:
                 logger.warning("Could not acquire Telegram session lock for %s, retrying later", source.name)
                 raise self.retry(countdown=30, max_retries=5)
@@ -1044,7 +1044,7 @@ async def _join_channel_async(connector, channel_ref: str) -> bool:
 
 @app.task(name="darkdisco.pipeline.worker.download_pending_files",
           soft_time_limit=3600, time_limit=3900)
-def download_pending_files(batch_size: int = 50):
+def download_pending_files(batch_size: int = 20):
     """Download large files from mentions marked as download_status=pending.
 
     Uses a Redis lock to prevent concurrent download tasks from contending
@@ -1056,13 +1056,13 @@ def download_pending_files(batch_size: int = 50):
 
     # Acquire exclusive download lock
     r = _redis.from_url(settings.celery_broker_url)
-    lock = r.lock("darkdisco:download_files_lock", timeout=3600, blocking=False)
+    lock = r.lock("darkdisco:download_files_lock", timeout=300, blocking=False)
     if not lock.acquire(blocking=False):
         logger.info("Another download task is already running, skipping")
         return {"skipped": True}
 
     # Acquire session lock (non-blocking — skip if poll is running)
-    tg_lock = r.lock("darkdisco:telegram_session_lock", timeout=600)
+    tg_lock = r.lock("darkdisco:telegram_session_lock", timeout=120)
     if not tg_lock.acquire(blocking=False):
         logger.info("Poll task is running, skipping downloads this cycle")
         lock.release()
