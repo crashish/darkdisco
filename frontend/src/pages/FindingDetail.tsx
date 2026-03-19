@@ -114,6 +114,7 @@ export default function FindingDetail() {
   const [classifications, setClassifications] = useState<string[]>([]);
   const [classificationInput, setClassificationInput] = useState('');
   const [classificationOpen, setClassificationOpen] = useState(false);
+  const [classificationHighlight, setClassificationHighlight] = useState(-1);
   const [noteInput, setNoteInput] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
   const classificationRef = useRef<HTMLDivElement>(null);
@@ -142,6 +143,17 @@ export default function FindingDetail() {
     fetchAuditLog(id).then(setAuditLog).catch(() => {});
     fetchClassifications().then(setClassifications).catch(() => {});
   }, [id]);
+
+  // Click-outside handler for classification dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (classificationRef.current && !classificationRef.current.contains(e.target as Node)) {
+        setClassificationOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleStatusChange = async (status: FindingStatus) => {
     if (!finding) return;
@@ -765,41 +777,96 @@ export default function FindingDetail() {
           <div style={sectionStyle}>
             <div style={sectionTitle}><Tag size={14} /> Classification</div>
             <div style={{ position: 'relative' }} ref={classificationRef}>
-              <input
-                type="text"
-                value={classificationInput}
-                onChange={e => { setClassificationInput(e.target.value); setClassificationOpen(true); }}
-                onFocus={() => setClassificationOpen(true)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') { handleClassificationSave(classificationInput.trim()); }
-                  if (e.key === 'Escape') { setClassificationOpen(false); }
-                }}
-                placeholder="e.g. credential theft, phishing kit, data leak"
-                style={{
-                  width: '100%', boxSizing: 'border-box',
-                  padding: '8px 12px', fontSize: 13,
-                  background: colors.bgSurface, color: colors.text,
-                  border: `1px solid ${colors.border}`, borderRadius: 6,
-                  outline: 'none', fontFamily: font.mono,
-                }}
-              />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <div style={{ position: 'relative', flex: 1 }}>
+                  <input
+                    type="text"
+                    value={classificationInput}
+                    onChange={e => { setClassificationInput(e.target.value); setClassificationOpen(true); setClassificationHighlight(-1); }}
+                    onFocus={() => { setClassificationOpen(true); setClassificationHighlight(-1); }}
+                    onKeyDown={e => {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        if (!classificationOpen) { setClassificationOpen(true); setClassificationHighlight(0); }
+                        else { setClassificationHighlight(prev => Math.min(prev + 1, filteredClassifications.length - 1)); }
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setClassificationHighlight(prev => Math.max(prev - 1, -1));
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (classificationHighlight >= 0 && classificationHighlight < filteredClassifications.length) {
+                          const picked = filteredClassifications[classificationHighlight];
+                          setClassificationInput(picked);
+                          handleClassificationSave(picked);
+                        } else {
+                          handleClassificationSave(classificationInput.trim());
+                        }
+                      } else if (e.key === 'Escape') {
+                        setClassificationOpen(false);
+                        setClassificationHighlight(-1);
+                      }
+                    }}
+                    placeholder="Type or select a classification..."
+                    style={{
+                      width: '100%', boxSizing: 'border-box',
+                      padding: '8px 32px 8px 12px', fontSize: 13,
+                      background: colors.bgSurface, color: colors.text,
+                      border: `1px solid ${colors.border}`, borderRadius: 6,
+                      outline: 'none', fontFamily: font.mono,
+                    }}
+                  />
+                  <ChevronDown
+                    size={14}
+                    style={{
+                      position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                      color: colors.textMuted, cursor: 'pointer', pointerEvents: 'auto',
+                    }}
+                    onClick={() => { setClassificationOpen(prev => !prev); setClassificationHighlight(-1); }}
+                  />
+                </div>
+                {classificationInput.trim() && classificationInput.trim() !== (finding.classification || '') && (
+                  <button
+                    onClick={() => handleClassificationSave(classificationInput.trim())}
+                    style={{
+                      padding: '6px 14px', fontSize: 12, fontWeight: 600,
+                      background: colors.accent || '#6366f1', color: '#fff',
+                      border: 'none', borderRadius: 6, cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Save
+                  </button>
+                )}
+              </div>
               {classificationOpen && filteredClassifications.length > 0 && (
                 <div style={{
                   position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, marginTop: 2,
                   background: colors.bgSurface, border: `1px solid ${colors.border}`, borderRadius: 6,
-                  maxHeight: 160, overflow: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                  maxHeight: 200, overflow: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
                 }}>
-                  {filteredClassifications.map(c => (
+                  {filteredClassifications.map((c, idx) => (
                     <div
                       key={c}
-                      style={{ padding: '6px 12px', fontSize: 12, cursor: 'pointer', color: colors.textDim }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = colors.bgHover; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                      style={{
+                        padding: '7px 12px', fontSize: 12, cursor: 'pointer',
+                        color: idx === classificationHighlight ? colors.text : colors.textDim,
+                        background: idx === classificationHighlight ? colors.bgHover : 'transparent',
+                      }}
+                      onMouseEnter={() => setClassificationHighlight(idx)}
+                      onMouseLeave={() => setClassificationHighlight(-1)}
                       onMouseDown={e => { e.preventDefault(); setClassificationInput(c); handleClassificationSave(c); }}
                     >
                       {c}
                     </div>
                   ))}
+                  {classificationInput.trim() && !filteredClassifications.includes(classificationInput.trim()) && (
+                    <div style={{
+                      padding: '7px 12px', fontSize: 12, color: colors.textMuted,
+                      borderTop: `1px solid ${colors.border}`, fontStyle: 'italic',
+                    }}>
+                      Press Enter to add "{classificationInput.trim()}"
+                    </div>
+                  )}
                 </div>
               )}
               {finding.classification && classificationInput !== finding.classification && (
