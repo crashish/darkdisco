@@ -7,6 +7,7 @@ import ArchiveContents from '../components/ArchiveContents';
 import type { ArchiveFile } from '../components/ArchiveContents';
 import { MessageSquare, Filter, Search, ChevronDown, ChevronUp, ExternalLink, ArrowRight, X, Check, Download, Eye, Calendar } from 'lucide-react';
 import type { CSSProperties } from 'react';
+import MultiSelect from '../components/MultiSelect';
 
 const sourceTypeBadge = (type: string): CSSProperties => ({
   fontSize: 10,
@@ -18,100 +19,6 @@ const sourceTypeBadge = (type: string): CSSProperties => ({
   color: colors.accent,
   background: `${colors.accent}1a`,
 });
-
-/* ── Multi-select dropdown ─────────────────────────────────────────── */
-function MultiSelect({ label, options, selected, onChange }: {
-  label: string;
-  options: { value: string; label: string }[];
-  selected: Set<string>;
-  onChange: (next: Set<string>) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  const toggle = (val: string) => {
-    const next = new Set(selected);
-    if (next.has(val)) next.delete(val); else next.add(val);
-    onChange(next);
-  };
-
-  return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          padding: '7px 10px', fontSize: 13, background: colors.bgSurface,
-          border: `1px solid ${selected.size > 0 ? colors.accent : colors.border}`,
-          borderRadius: 6, color: colors.text, cursor: 'pointer',
-          display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
-        }}
-      >
-        {label}
-        {selected.size > 0 && (
-          <span style={{
-            background: colors.accent, color: '#fff', fontSize: 10, fontWeight: 700,
-            borderRadius: 9999, minWidth: 18, height: 18, display: 'inline-flex',
-            alignItems: 'center', justifyContent: 'center', padding: '0 5px',
-          }}>
-            {selected.size}
-          </span>
-        )}
-        <ChevronDown size={12} />
-      </button>
-      {open && (
-        <div style={{
-          position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 50,
-          background: colors.bgCard, border: `1px solid ${colors.border}`, borderRadius: 6,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.4)', minWidth: 220, maxHeight: 280, overflow: 'auto',
-        }}>
-          {selected.size > 0 && (
-            <button
-              onClick={() => onChange(new Set())}
-              style={{
-                width: '100%', padding: '6px 12px', fontSize: 11, color: colors.accent,
-                background: 'none', border: 'none', borderBottom: `1px solid ${colors.border}`,
-                cursor: 'pointer', textAlign: 'left',
-              }}
-            >
-              Clear all
-            </button>
-          )}
-          {options.map(opt => (
-            <label
-              key={opt.value}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
-                fontSize: 12, color: colors.text, cursor: 'pointer',
-                background: selected.has(opt.value) ? colors.bgHover : 'transparent',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={selected.has(opt.value)}
-                onChange={() => toggle(opt.value)}
-                style={{ accentColor: colors.accent }}
-              />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {opt.label}
-              </span>
-            </label>
-          ))}
-          {options.length === 0 && (
-            <div style={{ padding: '8px 12px', fontSize: 11, color: colors.textMuted }}>No options</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /* ── Sortable column header ────────────────────────────────────────── */
 type SortDir = 'asc' | 'desc' | null;
@@ -190,8 +97,8 @@ export default function Mentions() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilters, setSourceFilters] = useState<Set<string>>(new Set());
   const [channelFilters, setChannelFilters] = useState<Set<string>>(new Set());
-  const [mediaFilter, setMediaFilter] = useState('');
-  const [promotedFilter, setPromotedFilter] = useState<string>('unmatched');
+  const [mediaFilters, setMediaFilters] = useState<Set<string>>(new Set());
+  const [promotedFilters, setPromotedFilters] = useState<Set<string>>(new Set(['unmatched']));
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [sortBy, setSortBy] = useState<string | null>(null);
@@ -217,10 +124,14 @@ export default function Mentions() {
     const params: Record<string, unknown> = { page, page_size: PAGE_SIZE };
     if (sourceFilters.size > 0) params.source_ids = Array.from(sourceFilters).join(',');
     if (channelFilters.size > 0) params.channels = Array.from(channelFilters).join(',');
-    if (mediaFilter === 'media') params.has_media = true;
-    else if (mediaFilter === 'text') params.has_media = false;
-    if (promotedFilter === 'unmatched') params.promoted = false;
-    else if (promotedFilter === 'promoted') params.promoted = true;
+    if (mediaFilters.size === 1) {
+      if (mediaFilters.has('media')) params.has_media = true;
+      else if (mediaFilters.has('text')) params.has_media = false;
+    }
+    if (promotedFilters.size === 1) {
+      if (promotedFilters.has('unmatched')) params.promoted = false;
+      else if (promotedFilters.has('promoted')) params.promoted = true;
+    }
     if (searchQuery.trim()) params.q = searchQuery.trim();
     if (dateFrom) params.date_from = dateFrom;
     if (dateTo) params.date_to = dateTo;
@@ -229,7 +140,7 @@ export default function Mentions() {
     setMentions(data.items);
     setTotal(data.total);
     setLoading(false);
-  }, [page, sourceFilters, channelFilters, mediaFilter, promotedFilter, searchQuery, dateFrom, dateTo, sortBy, sortDir]);
+  }, [page, sourceFilters, channelFilters, mediaFilters, promotedFilters, searchQuery, dateFrom, dateTo, sortBy, sortDir]);
 
   useEffect(() => {
     loadMentions();
@@ -346,31 +257,25 @@ export default function Mentions() {
           onChange={setChannelFilters}
         />
 
-        <select
-          value={mediaFilter}
-          onChange={e => setMediaFilter(e.target.value)}
-          style={{
-            padding: '7px 10px', fontSize: 13, background: colors.bgSurface,
-            border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.text, outline: 'none',
-          }}
-        >
-          <option value="">All Types</option>
-          <option value="media">Has Files</option>
-          <option value="text">Text Only</option>
-        </select>
+        <MultiSelect
+          label="Type"
+          options={[
+            { value: 'media', label: 'Has Files' },
+            { value: 'text', label: 'Text Only' },
+          ]}
+          selected={mediaFilters}
+          onChange={setMediaFilters}
+        />
 
-        <select
-          value={promotedFilter}
-          onChange={e => setPromotedFilter(e.target.value)}
-          style={{
-            padding: '7px 10px', fontSize: 13, background: colors.bgSurface,
-            border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.text, outline: 'none',
-          }}
-        >
-          <option value="unmatched">Unmatched Only</option>
-          <option value="promoted">Promoted</option>
-          <option value="">All</option>
-        </select>
+        <MultiSelect
+          label="Status"
+          options={[
+            { value: 'unmatched', label: 'Unmatched Only' },
+            { value: 'promoted', label: 'Promoted' },
+          ]}
+          selected={promotedFilters}
+          onChange={setPromotedFilters}
+        />
 
         {/* Date range */}
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -402,9 +307,9 @@ export default function Mentions() {
           />
         </div>
 
-        {(searchQuery || sourceFilters.size > 0 || channelFilters.size > 0 || mediaFilter || promotedFilter !== 'unmatched' || dateFrom || dateTo) && (
+        {(searchQuery || sourceFilters.size > 0 || channelFilters.size > 0 || mediaFilters.size > 0 || (promotedFilters.size !== 1 || !promotedFilters.has('unmatched')) || dateFrom || dateTo) && (
           <button
-            onClick={() => { setSearchQuery(''); setSourceFilters(new Set()); setChannelFilters(new Set()); setMediaFilter(''); setPromotedFilter('unmatched'); setDateFrom(''); setDateTo(''); }}
+            onClick={() => { setSearchQuery(''); setSourceFilters(new Set()); setChannelFilters(new Set()); setMediaFilters(new Set()); setPromotedFilters(new Set(['unmatched'])); setDateFrom(''); setDateTo(''); }}
             style={{
               background: 'none', border: 'none', color: colors.accent,
               fontSize: 12, cursor: 'pointer', padding: '4px 8px',

@@ -1913,8 +1913,8 @@ async def hex_dump_file(
 @protected.get("/findings", response_model=PaginatedFindingsOut)
 async def list_findings(
     institution_id: str | None = None,
-    severity: Severity | None = None,
-    status: FindingStatus | None = None,
+    severity: str | None = None,
+    status: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     q: str | None = None,
@@ -1924,11 +1924,23 @@ async def list_findings(
 ):
     base_filters = []
     if institution_id is not None:
-        base_filters.append(Finding.institution_id == institution_id)
+        inst_ids = [v.strip() for v in institution_id.split(",") if v.strip()]
+        if len(inst_ids) == 1:
+            base_filters.append(Finding.institution_id == inst_ids[0])
+        elif inst_ids:
+            base_filters.append(Finding.institution_id.in_(inst_ids))
     if severity is not None:
-        base_filters.append(Finding.severity == severity)
+        sev_vals = [v.strip() for v in severity.split(",") if v.strip()]
+        if len(sev_vals) == 1:
+            base_filters.append(Finding.severity == sev_vals[0])
+        elif sev_vals:
+            base_filters.append(Finding.severity.in_(sev_vals))
     if status is not None:
-        base_filters.append(Finding.status == status)
+        stat_vals = [v.strip() for v in status.split(",") if v.strip()]
+        if len(stat_vals) == 1:
+            base_filters.append(Finding.status == stat_vals[0])
+        elif stat_vals:
+            base_filters.append(Finding.status.in_(stat_vals))
     if date_from is not None:
         base_filters.append(Finding.discovered_at >= date_from)
     if date_to is not None:

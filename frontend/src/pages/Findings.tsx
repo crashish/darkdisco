@@ -7,6 +7,7 @@ import StatusBadge from '../components/StatusBadge';
 import type { Finding, Institution, Severity, FindingStatus } from '../types';
 import { Search, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, Calendar, Hash, User } from 'lucide-react';
 import type { CSSProperties } from 'react';
+import MultiSelect from '../components/MultiSelect';
 
 const allSeverities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'confirmed', 'dismissed', 'false_positive', 'resolved'];
@@ -53,9 +54,18 @@ export default function Findings() {
   const [search, setSearch] = useState(searchParams.get('q') || '');
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   const navigate = useNavigate();
-  const [sevFilter, setSevFilter] = useState(searchParams.get('severity') || '');
-  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
-  const [instFilter, setInstFilter] = useState(searchParams.get('institution_id') || '');
+  const [sevFilter, setSevFilter] = useState<Set<string>>(() => {
+    const v = searchParams.get('severity');
+    return v ? new Set(v.split(',').filter(Boolean)) : new Set();
+  });
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(() => {
+    const v = searchParams.get('status');
+    return v ? new Set(v.split(',').filter(Boolean)) : new Set();
+  });
+  const [instFilter, setInstFilter] = useState<Set<string>>(() => {
+    const v = searchParams.get('institution_id');
+    return v ? new Set(v.split(',').filter(Boolean)) : new Set();
+  });
   const [dateFilter, setDateFilter] = useState(searchParams.get('date') || '');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
@@ -72,9 +82,9 @@ export default function Findings() {
 
   const load = useCallback(() => {
     const params: Record<string, string | number> = { page, page_size: PAGE_SIZE };
-    if (sevFilter) params.severity = sevFilter;
-    if (statusFilter) params.status = statusFilter;
-    if (instFilter) params.institution_id = instFilter;
+    if (sevFilter.size > 0) params.severity = Array.from(sevFilter).join(',');
+    if (statusFilter.size > 0) params.status = Array.from(statusFilter).join(',');
+    if (instFilter.size > 0) params.institution_id = Array.from(instFilter).join(',');
     if (dateFilter) {
       params.date_from = `${dateFilter}T00:00:00`;
       params.date_to = `${dateFilter}T23:59:59`;
@@ -89,7 +99,11 @@ export default function Findings() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { fetchInstitutions().then(setInstitutions); }, []);
 
-  // Reset page when filters change
+  // Reset page when set-based filters change
+  const handleSetFilterChange = (setter: (v: Set<string>) => void) => (v: Set<string>) => {
+    setter(v);
+    setPage(1);
+  };
   const handleFilterChange = (setter: (v: string) => void) => (v: string) => {
     setter(v);
     setPage(1);
@@ -131,18 +145,24 @@ export default function Findings() {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
-        <select style={selectStyle} value={sevFilter} onChange={e => handleFilterChange(setSevFilter)(e.target.value)}>
-          <option value="">All Severities</option>
-          {allSeverities.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-        </select>
-        <select style={selectStyle} value={statusFilter} onChange={e => handleFilterChange(setStatusFilter)(e.target.value)}>
-          <option value="">All Statuses</option>
-          {allStatuses.map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
-        </select>
-        <select style={selectStyle} value={instFilter} onChange={e => handleFilterChange(setInstFilter)(e.target.value)}>
-          <option value="">All Institutions</option>
-          {institutions.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-        </select>
+        <MultiSelect
+          label="Severity"
+          options={allSeverities.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }))}
+          selected={sevFilter}
+          onChange={handleSetFilterChange(setSevFilter)}
+        />
+        <MultiSelect
+          label="Status"
+          options={allStatuses.map(s => ({ value: s, label: statusLabel(s) }))}
+          selected={statusFilter}
+          onChange={handleSetFilterChange(setStatusFilter)}
+        />
+        <MultiSelect
+          label="Institution"
+          options={institutions.map(i => ({ value: i.id, label: i.name }))}
+          selected={instFilter}
+          onChange={handleSetFilterChange(setInstFilter)}
+        />
         <div style={{ position: 'relative' }}>
           <Calendar size={16} color={colors.textMuted} style={{ position: 'absolute', left: 12, top: 10 }} />
           <input
@@ -152,9 +172,9 @@ export default function Findings() {
             onChange={e => handleFilterChange(setDateFilter)(e.target.value)}
           />
         </div>
-        {(sevFilter || statusFilter || instFilter || search || dateFilter) && (
+        {(sevFilter.size > 0 || statusFilter.size > 0 || instFilter.size > 0 || search || dateFilter) && (
           <button
-            onClick={() => { setSevFilter(''); setStatusFilter(''); setInstFilter(''); setSearch(''); setDateFilter(''); setPage(1); setSearchParams({}); }}
+            onClick={() => { setSevFilter(new Set()); setStatusFilter(new Set()); setInstFilter(new Set()); setSearch(''); setDateFilter(''); setPage(1); setSearchParams({}); }}
             style={{ background: 'none', border: 'none', color: colors.accent, fontSize: 13, cursor: 'pointer', padding: '8px 4px' }}
           >
             Clear filters
