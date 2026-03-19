@@ -45,6 +45,8 @@ const statusColorMap: Record<string, string> = {
   new: '#6366f1',
   reviewing: '#eab308',
   escalated: '#ef4444',
+  confirmed: '#f97316',
+  dismissed: '#78716c',
   false_positive: '#64748b',
   resolved: '#22c55e',
 };
@@ -54,6 +56,8 @@ const statusLabelMap: Record<string, string> = {
   new: 'New',
   reviewing: 'Reviewing',
   escalated: 'Escalated',
+  confirmed: 'Confirmed',
+  dismissed: 'Dismissed',
   false_positive: 'False Positive',
   resolved: 'Resolved',
 };

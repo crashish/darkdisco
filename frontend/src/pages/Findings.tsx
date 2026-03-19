@@ -9,7 +9,7 @@ import { Search, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, Calendar,
 import type { CSSProperties } from 'react';
 
 const allSeverities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
-const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'false_positive', 'resolved'];
+const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'confirmed', 'dismissed', 'false_positive', 'resolved'];
 const PAGE_SIZE = 50;
 
 const selectStyle: CSSProperties = {

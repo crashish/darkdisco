@@ -11,7 +11,7 @@ import type { FindingDetail as FindingDetailType, FindingStatus, Severity, Audit
 import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash, Globe, Lock, Activity, BarChart3, Camera, Network, Edit3, Send, History } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
-const allStatuses: FindingStatus[] = ['new', 'reviewing', 'confirmed', 'dismissed', 'resolved'];
+const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'confirmed', 'dismissed', 'false_positive', 'resolved'];
 
 const sectionStyle: CSSProperties = {
   ...card,

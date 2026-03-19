@@ -43,7 +43,7 @@ export const mockWatchTerms: WatchTerm[] = [
 ];
 
 const severities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
-const statuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'false_positive', 'resolved'];
+const statuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'confirmed', 'dismissed', 'false_positive', 'resolved'];
 const sourceTypes: SourceType[] = ['tor_forum', 'paste_site', 'telegram', 'breach_db', 'ransomware_blog'];
 
 const findingTemplates: { title: string; summary: string; severity: Severity; source_type: SourceType }[] = [
