@@ -1350,13 +1350,24 @@ async def list_mentions(
     channel: str | None = None,
     has_media: bool | None = None,
     q: str | None = None,
+    sort_by: str | None = None,
+    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
+    date_from: str | None = None,
+    date_to: str | None = None,
+    source_ids: str | None = None,
+    channels: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_session),
 ):
     """Browse raw collected mentions. Filter by source, channel, media, promotion status, or search content."""
     base = select(RawMention)
-    if source_id is not None:
+    # Multi-select source filter (comma-separated IDs)
+    if source_ids:
+        ids = [s.strip() for s in source_ids.split(",") if s.strip()]
+        if ids:
+            base = base.where(RawMention.source_id.in_(ids))
+    elif source_id is not None:
         base = base.where(RawMention.source_id == source_id)
     if source_type is not None:
         base = base.join(Source).where(Source.source_type == source_type)
@@ -1365,7 +1376,12 @@ async def list_mentions(
             base = base.where(RawMention.promoted_to_finding_id.isnot(None))
         else:
             base = base.where(RawMention.promoted_to_finding_id.is_(None))
-    if channel:
+    # Multi-select channel filter (comma-separated)
+    if channels:
+        ch_list = [c.strip() for c in channels.split(",") if c.strip()]
+        if ch_list:
+            base = base.where(RawMention.metadata_["channel_ref"].astext.in_(ch_list))
+    elif channel:
         base = base.where(RawMention.metadata_["channel_ref"].astext == channel)
     if has_media is not None:
         if has_media:
@@ -1377,15 +1393,40 @@ async def list_mentions(
             )
     if q:
         base = base.where(RawMention.content.ilike(f"%{q}%"))
+    # Date range filtering on collected_at
+    if date_from:
+        try:
+            dt_from = datetime.fromisoformat(date_from)
+            base = base.where(RawMention.collected_at >= dt_from)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            dt_to = datetime.fromisoformat(date_to)
+            # Include the entire end day
+            if len(date_to) <= 10:  # date only, no time component
+                dt_to = dt_to.replace(hour=23, minute=59, second=59)
+            base = base.where(RawMention.collected_at <= dt_to)
+        except ValueError:
+            pass
 
     # Total count
     count_result = await db.execute(select(func.count()).select_from(base.subquery()))
     total = count_result.scalar() or 0
 
+    # Sorting
+    sortable_columns = {
+        "collected_at": RawMention.collected_at,
+        "content": RawMention.content,
+        "source_id": RawMention.source_id,
+    }
+    sort_col = sortable_columns.get(sort_by, RawMention.collected_at)
+    order = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
+
     # Paginated query
     stmt = (
         base.options(selectinload(RawMention.source))
-        .order_by(RawMention.collected_at.desc())
+        .order_by(order)
         .offset((page - 1) * page_size)
         .limit(page_size)
     )

@@ -240,21 +240,33 @@ export interface PaginatedMentions {
 
 export async function fetchMentions(params?: {
   source_id?: string;
+  source_ids?: string;
   source_type?: string;
   promoted?: boolean;
   channel?: string;
+  channels?: string;
   has_media?: boolean;
   q?: string;
+  sort_by?: string;
+  sort_dir?: string;
+  date_from?: string;
+  date_to?: string;
   page?: number;
   page_size?: number;
 }): Promise<PaginatedMentions> {
   const qs = new URLSearchParams();
   if (params?.source_id) qs.set('source_id', params.source_id);
+  if (params?.source_ids) qs.set('source_ids', params.source_ids);
   if (params?.source_type) qs.set('source_type', params.source_type);
   if (params?.promoted !== undefined) qs.set('promoted', String(params.promoted));
   if (params?.channel) qs.set('channel', params.channel);
+  if (params?.channels) qs.set('channels', params.channels);
   if (params?.has_media !== undefined) qs.set('has_media', String(params.has_media));
   if (params?.q) qs.set('q', params.q);
+  if (params?.sort_by) qs.set('sort_by', params.sort_by);
+  if (params?.sort_dir) qs.set('sort_dir', params.sort_dir);
+  if (params?.date_from) qs.set('date_from', params.date_from);
+  if (params?.date_to) qs.set('date_to', params.date_to);
   if (params?.page !== undefined) qs.set('page', String(params.page));
   if (params?.page_size !== undefined) qs.set('page_size', String(params.page_size));
   const q = qs.toString();

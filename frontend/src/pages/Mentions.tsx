@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { fetchMentions, fetchSources, fetchInstitutions, promoteMention, fetchArchiveContents, fetchMentionChannels, fetchMentionFiles, getMentionFileUrl } from '../api';
 import type { MentionFilesResponse } from '../api';
 import { colors, card, font } from '../theme';
 import type { RawMention, Source, Institution, Severity } from '../types';
 import ArchiveContents from '../components/ArchiveContents';
 import type { ArchiveFile } from '../components/ArchiveContents';
-import { MessageSquare, Filter, Search, ChevronDown, ChevronUp, ExternalLink, ArrowRight, X, Check, Download, Eye } from 'lucide-react';
+import { MessageSquare, Filter, Search, ChevronDown, ChevronUp, ExternalLink, ArrowRight, X, Check, Download, Eye, Calendar } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const sourceTypeBadge = (type: string): CSSProperties => ({
@@ -18,6 +18,135 @@ const sourceTypeBadge = (type: string): CSSProperties => ({
   color: colors.accent,
   background: `${colors.accent}1a`,
 });
+
+/* ── Multi-select dropdown ─────────────────────────────────────────── */
+function MultiSelect({ label, options, selected, onChange }: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const toggle = (val: string) => {
+    const next = new Set(selected);
+    if (next.has(val)) next.delete(val); else next.add(val);
+    onChange(next);
+  };
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          padding: '7px 10px', fontSize: 13, background: colors.bgSurface,
+          border: `1px solid ${selected.size > 0 ? colors.accent : colors.border}`,
+          borderRadius: 6, color: colors.text, cursor: 'pointer',
+          display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+        {selected.size > 0 && (
+          <span style={{
+            background: colors.accent, color: '#fff', fontSize: 10, fontWeight: 700,
+            borderRadius: 9999, minWidth: 18, height: 18, display: 'inline-flex',
+            alignItems: 'center', justifyContent: 'center', padding: '0 5px',
+          }}>
+            {selected.size}
+          </span>
+        )}
+        <ChevronDown size={12} />
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 50,
+          background: colors.bgCard, border: `1px solid ${colors.border}`, borderRadius: 6,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)', minWidth: 220, maxHeight: 280, overflow: 'auto',
+        }}>
+          {selected.size > 0 && (
+            <button
+              onClick={() => onChange(new Set())}
+              style={{
+                width: '100%', padding: '6px 12px', fontSize: 11, color: colors.accent,
+                background: 'none', border: 'none', borderBottom: `1px solid ${colors.border}`,
+                cursor: 'pointer', textAlign: 'left',
+              }}
+            >
+              Clear all
+            </button>
+          )}
+          {options.map(opt => (
+            <label
+              key={opt.value}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+                fontSize: 12, color: colors.text, cursor: 'pointer',
+                background: selected.has(opt.value) ? colors.bgHover : 'transparent',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={selected.has(opt.value)}
+                onChange={() => toggle(opt.value)}
+                style={{ accentColor: colors.accent }}
+              />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {opt.label}
+              </span>
+            </label>
+          ))}
+          {options.length === 0 && (
+            <div style={{ padding: '8px 12px', fontSize: 11, color: colors.textMuted }}>No options</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Sortable column header ────────────────────────────────────────── */
+type SortDir = 'asc' | 'desc' | null;
+
+function SortHeader({ label, field, current, dir, onSort, style }: {
+  label: string;
+  field: string;
+  current: string | null;
+  dir: SortDir;
+  onSort: (field: string, dir: SortDir) => void;
+  style?: CSSProperties;
+}) {
+  const active = current === field;
+  const handleClick = () => {
+    if (!active) onSort(field, 'asc');
+    else if (dir === 'asc') onSort(field, 'desc');
+    else onSort(field, null);
+  };
+  return (
+    <span
+      onClick={handleClick}
+      style={{
+        cursor: 'pointer', userSelect: 'none', display: 'inline-flex',
+        alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600,
+        textTransform: 'uppercase', letterSpacing: '0.05em',
+        color: active ? colors.accent : colors.textMuted,
+        ...style,
+      }}
+    >
+      {label}
+      {active && dir === 'asc' && <span>&#9650;</span>}
+      {active && dir === 'desc' && <span>&#9660;</span>}
+    </span>
+  );
+}
 
 function TextFilePreview({ s3Key }: { s3Key: string }) {
   const [content, setContent] = useState<string | null>(null);
@@ -59,10 +188,14 @@ export default function Mentions() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sourceFilter, setSourceFilter] = useState('');
-  const [channelFilter, setChannelFilter] = useState('');
+  const [sourceFilters, setSourceFilters] = useState<Set<string>>(new Set());
+  const [channelFilters, setChannelFilters] = useState<Set<string>>(new Set());
   const [mediaFilter, setMediaFilter] = useState('');
   const [promotedFilter, setPromotedFilter] = useState<string>('unmatched');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sortBy, setSortBy] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>(null);
   const [promoteId, setPromoteId] = useState<string | null>(null);
   const [promoteForm, setPromoteForm] = useState({ institution_id: '', title: '', severity: 'medium' as Severity, summary: '' });
   const [promoting, setPromoting] = useState(false);
@@ -74,21 +207,29 @@ export default function Mentions() {
   const PAGE_SIZE = 50;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  const handleSort = (field: string, dir: SortDir) => {
+    setSortBy(dir ? field : null);
+    setSortDir(dir);
+  };
+
   const loadMentions = useCallback(async () => {
     setLoading(true);
     const params: Record<string, unknown> = { page, page_size: PAGE_SIZE };
-    if (sourceFilter) params.source_id = sourceFilter;
-    if (channelFilter) params.channel = channelFilter;
+    if (sourceFilters.size > 0) params.source_ids = Array.from(sourceFilters).join(',');
+    if (channelFilters.size > 0) params.channels = Array.from(channelFilters).join(',');
     if (mediaFilter === 'media') params.has_media = true;
     else if (mediaFilter === 'text') params.has_media = false;
     if (promotedFilter === 'unmatched') params.promoted = false;
     else if (promotedFilter === 'promoted') params.promoted = true;
     if (searchQuery.trim()) params.q = searchQuery.trim();
+    if (dateFrom) params.date_from = dateFrom;
+    if (dateTo) params.date_to = dateTo;
+    if (sortBy && sortDir) { params.sort_by = sortBy; params.sort_dir = sortDir; }
     const data = await fetchMentions(params as Parameters<typeof fetchMentions>[0]);
     setMentions(data.items);
     setTotal(data.total);
     setLoading(false);
-  }, [page, sourceFilter, channelFilter, mediaFilter, promotedFilter, searchQuery]);
+  }, [page, sourceFilters, channelFilters, mediaFilter, promotedFilter, searchQuery, dateFrom, dateTo, sortBy, sortDir]);
 
   useEffect(() => {
     loadMentions();
@@ -191,33 +332,19 @@ export default function Mentions() {
           />
         </div>
 
-        <select
-          value={sourceFilter}
-          onChange={e => setSourceFilter(e.target.value)}
-          style={{
-            padding: '7px 10px', fontSize: 13, background: colors.bgSurface,
-            border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.text, outline: 'none',
-          }}
-        >
-          <option value="">All Sources</option>
-          {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
+        <MultiSelect
+          label="Sources"
+          options={sources.map(s => ({ value: s.id, label: s.name }))}
+          selected={sourceFilters}
+          onChange={setSourceFilters}
+        />
 
-        <select
-          value={channelFilter}
-          onChange={e => setChannelFilter(e.target.value)}
-          style={{
-            padding: '7px 10px', fontSize: 13, background: colors.bgSurface,
-            border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.text, outline: 'none',
-          }}
-        >
-          <option value="">All Channels</option>
-          {channels.map(ch => (
-            <option key={ch.channel} value={ch.channel}>
-              {ch.channel} ({ch.count})
-            </option>
-          ))}
-        </select>
+        <MultiSelect
+          label="Channels"
+          options={channels.map(ch => ({ value: ch.channel, label: `${ch.channel} (${ch.count})` }))}
+          selected={channelFilters}
+          onChange={setChannelFilters}
+        />
 
         <select
           value={mediaFilter}
@@ -245,9 +372,39 @@ export default function Mentions() {
           <option value="">All</option>
         </select>
 
-        {(searchQuery || sourceFilter || channelFilter || mediaFilter || promotedFilter !== 'unmatched') && (
+        {/* Date range */}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Calendar size={14} color={colors.textMuted} />
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            placeholder="From"
+            style={{
+              padding: '6px 8px', fontSize: 12, background: colors.bgSurface,
+              border: `1px solid ${dateFrom ? colors.accent : colors.border}`,
+              borderRadius: 6, color: colors.text, outline: 'none',
+              colorScheme: 'dark',
+            }}
+          />
+          <span style={{ fontSize: 11, color: colors.textMuted }}>to</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+            placeholder="To"
+            style={{
+              padding: '6px 8px', fontSize: 12, background: colors.bgSurface,
+              border: `1px solid ${dateTo ? colors.accent : colors.border}`,
+              borderRadius: 6, color: colors.text, outline: 'none',
+              colorScheme: 'dark',
+            }}
+          />
+        </div>
+
+        {(searchQuery || sourceFilters.size > 0 || channelFilters.size > 0 || mediaFilter || promotedFilter !== 'unmatched' || dateFrom || dateTo) && (
           <button
-            onClick={() => { setSearchQuery(''); setSourceFilter(''); setChannelFilter(''); setMediaFilter(''); setPromotedFilter('unmatched'); }}
+            onClick={() => { setSearchQuery(''); setSourceFilters(new Set()); setChannelFilters(new Set()); setMediaFilter(''); setPromotedFilter('unmatched'); setDateFrom(''); setDateTo(''); }}
             style={{
               background: 'none', border: 'none', color: colors.accent,
               fontSize: 12, cursor: 'pointer', padding: '4px 8px',
@@ -256,6 +413,17 @@ export default function Mentions() {
             Clear filters
           </button>
         )}
+      </div>
+
+      {/* Column sort headers */}
+      <div style={{
+        ...card, marginBottom: 8, padding: '10px 20px',
+        display: 'flex', alignItems: 'center', gap: 12,
+      }}>
+        <SortHeader label="Type" field="source_id" current={sortBy} dir={sortDir} onSort={handleSort} style={{ minWidth: 70 }} />
+        <SortHeader label="Content" field="content" current={sortBy} dir={sortDir} onSort={handleSort} style={{ flex: 1 }} />
+        <SortHeader label="Source" field="source_id" current={sortBy} dir={sortDir} onSort={handleSort} style={{ minWidth: 70 }} />
+        <SortHeader label="Collected" field="collected_at" current={sortBy} dir={sortDir} onSort={handleSort} style={{ minWidth: 80 }} />
       </div>
 
       {/* Mentions list */}
