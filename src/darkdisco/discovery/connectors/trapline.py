@@ -34,7 +34,7 @@ class TraplineConnector(BaseConnector):
         self._client = httpx.AsyncClient(
             base_url=self.api_url,
             headers={
-                "Authorization": f"Bearer {self.api_key}",
+                "X-API-Key": self.api_key,
                 "Content-Type": "application/json",
             },
             timeout=30.0,
@@ -59,7 +59,7 @@ class TraplineConnector(BaseConnector):
             return {"healthy": False, "message": "Trapline API URL or key not configured"}
         try:
             assert self._client is not None
-            resp = await self._client.get("/api/v1/health")
+            resp = await self._client.get("/api/dashboard/health")
             resp.raise_for_status()
             return {"healthy": True, "message": "Trapline API reachable"}
         except Exception as exc:
@@ -82,55 +82,56 @@ class TraplineConnector(BaseConnector):
             logger.info("No active institutions to sync to trapline")
             return
 
-        # Build watchlist payloads
-        domains_payload = []
-        bins_payload = []
+        # Build watchlist payloads in trapline's expected format:
+        #   domains: {"entries": [{"type": "domain", "value": "..."}, {"type": "brand", "value": "..."}]}
+        #   bins:    {"bins": [{"bin_prefix": "...", "issuer": "..."}]}
+        domain_entries = []
+        bin_entries = []
 
         for inst in institutions:
-            # Collect all domains for this institution
-            inst_domains = []
-            if inst.primary_domain:
-                inst_domains.append(inst.primary_domain)
-            if inst.additional_domains:
-                inst_domains.extend(inst.additional_domains)
+            # Add institution name as a brand entry
+            if inst.name:
+                domain_entries.append({"type": "brand", "value": inst.name})
 
-            if inst_domains:
-                domains_payload.append({
-                    "institution_id": inst.id,
-                    "institution_name": inst.name,
-                    "domains": inst_domains,
-                })
+            # Add all domains
+            if inst.primary_domain:
+                domain_entries.append({"type": "domain", "value": inst.primary_domain})
+            if inst.additional_domains:
+                for d in inst.additional_domains:
+                    domain_entries.append({"type": "domain", "value": d})
 
             # Collect BIN ranges
             if inst.bin_ranges:
-                bins_payload.append({
-                    "institution_id": inst.id,
-                    "institution_name": inst.name,
-                    "bins": inst.bin_ranges,
-                })
+                for bin_prefix in inst.bin_ranges:
+                    bin_entries.append({
+                        "bin_prefix": str(bin_prefix),
+                        "issuer": inst.name,
+                    })
 
         assert self._client is not None
 
-        # Sync domains
-        if domains_payload:
+        # Sync domains + brands
+        if domain_entries:
             resp = await self._client.post(
                 "/api/v1/watchlist/domains",
-                json={"entries": domains_payload},
+                json={"entries": domain_entries},
             )
             resp.raise_for_status()
             logger.info(
-                "Synced %d institution domain entries to trapline",
-                len(domains_payload),
+                "Synced %d watchlist entries (%d domains, %d brands) to trapline",
+                len(domain_entries),
+                sum(1 for e in domain_entries if e["type"] == "domain"),
+                sum(1 for e in domain_entries if e["type"] == "brand"),
             )
 
         # Sync BINs
-        if bins_payload:
+        if bin_entries:
             resp = await self._client.post(
                 "/api/v1/watchlist/bins",
-                json={"entries": bins_payload},
+                json={"bins": bin_entries},
             )
             resp.raise_for_status()
             logger.info(
-                "Synced %d institution BIN entries to trapline",
-                len(bins_payload),
+                "Synced %d BIN entries to trapline",
+                len(bin_entries),
             )
