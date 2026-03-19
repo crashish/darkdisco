@@ -85,6 +85,7 @@ from darkdisco.common.models import (
     Finding,
     FindingAuditLog,
     FindingStatus,
+    ImageOCRCache,
     Institution,
     Notification,
     RawMention,
@@ -1496,8 +1497,18 @@ async def mention_archive_contents(
 
     if extracted_rows:
         from darkdisco.pipeline.files import detect_mime_type
-        files = [
-            {
+        # Bulk-fetch OCR cache entries for all sha256 hashes in this batch
+        sha_list = [ef.sha256 for ef in extracted_rows if ef.sha256]
+        ocr_map: dict[str, ImageOCRCache] = {}
+        if sha_list:
+            ocr_result = await db.execute(
+                select(ImageOCRCache).where(ImageOCRCache.sha256.in_(sha_list))
+            )
+            ocr_map = {r.sha256: r for r in ocr_result.scalars().all()}
+        files = []
+        for ef in extracted_rows:
+            ocr = ocr_map.get(ef.sha256) if ef.sha256 else None
+            entry: dict = {
                 "filename": ef.filename,
                 "size": ef.size or 0,
                 "preview": (ef.text_content or "")[:200] if q else "",
@@ -1508,8 +1519,11 @@ async def mention_archive_contents(
                 "is_text": ef.is_text,
                 "mime_type": detect_mime_type(ef.filename),
             }
-            for ef in extracted_rows
-        ]
+            if ocr:
+                entry["ocr_text"] = ocr.ocr_text or ""
+                entry["ocr_confidence"] = round(ocr.confidence, 3)
+                entry["ocr_engine"] = ocr.engine
+            files.append(entry)
     else:
         # Fallback to legacy JSONB metadata (parse content sections)
         files = _extract_archive_file_list(mention.metadata_, q, content_blob=mention.content or "")
@@ -1574,10 +1588,19 @@ async def search_extracted_files(
     )
     total = (await db.execute(count_stmt)).scalar() or 0
 
+    # Bulk-fetch OCR cache for search results
+    search_sha_list = [row[0].sha256 for row in rows if row[0].sha256]
+    search_ocr_map: dict[str, ImageOCRCache] = {}
+    if search_sha_list:
+        ocr_r = await db.execute(
+            select(ImageOCRCache).where(ImageOCRCache.sha256.in_(search_sha_list))
+        )
+        search_ocr_map = {r.sha256: r for r in ocr_r.scalars().all()}
+
     for row in rows:
         ef = row[0]
         mention_meta = row[1] or {}
-        files_result.append({
+        entry = {
             "id": ef.id,
             "mention_id": ef.mention_id,
             "filename": ef.filename,
@@ -1588,7 +1611,13 @@ async def search_extracted_files(
             "s3_key": ef.s3_key,
             "archive_name": mention_meta.get("file_name", ""),
             "source": "extracted_files",
-        })
+        }
+        ocr = search_ocr_map.get(ef.sha256) if ef.sha256 else None
+        if ocr:
+            entry["ocr_text"] = ocr.ocr_text or ""
+            entry["ocr_confidence"] = round(ocr.confidence, 3)
+            entry["ocr_engine"] = ocr.engine
+        files_result.append(entry)
 
     # 2. Fallback: search raw_mentions content for archives without ExtractedFile rows
     # (only if we haven't hit the limit from ExtractedFile results)
@@ -2086,8 +2115,18 @@ async def finding_archive_contents(
         extracted_rows = ef_result.scalars().all()
 
         if extracted_rows:
-            files = [
-                {
+            # Bulk-fetch OCR cache entries
+            sha_list = [ef.sha256 for ef in extracted_rows if ef.sha256]
+            ocr_map: dict[str, ImageOCRCache] = {}
+            if sha_list:
+                ocr_res = await db.execute(
+                    select(ImageOCRCache).where(ImageOCRCache.sha256.in_(sha_list))
+                )
+                ocr_map = {r.sha256: r for r in ocr_res.scalars().all()}
+            files = []
+            for ef in extracted_rows:
+                ocr = ocr_map.get(ef.sha256) if ef.sha256 else None
+                entry: dict = {
                     "filename": ef.filename,
                     "size": ef.size or 0,
                     "preview": (ef.text_content or "")[:500],
@@ -2097,8 +2136,11 @@ async def finding_archive_contents(
                     "extension": ef.extension,
                     "is_text": ef.is_text,
                 }
-                for ef in extracted_rows
-            ]
+                if ocr:
+                    entry["ocr_text"] = ocr.ocr_text or ""
+                    entry["ocr_confidence"] = round(ocr.confidence, 3)
+                    entry["ocr_engine"] = ocr.engine
+                files.append(entry)
             return {"finding_id": finding_id, "files": files, "total": len(files)}
 
     # Fallback to legacy JSONB metadata
@@ -2859,4 +2901,58 @@ async def delete_discovered_channel(
     await db.delete(ch)
     await db.commit()
     return {"deleted": channel_id}
+
+
+# ---------------------------------------------------------------------------
+# OCR Stats
+# ---------------------------------------------------------------------------
+
+
+@protected.get("/ocr-stats")
+async def get_ocr_stats(
+    db: AsyncSession = Depends(get_session),
+):
+    """Return OCR processing statistics: total cached, avg confidence, recent results."""
+    # Total cached images
+    total_cached = (await db.execute(
+        select(func.count()).select_from(ImageOCRCache)
+    )).scalar() or 0
+
+    # Average confidence
+    avg_confidence = (await db.execute(
+        select(func.avg(ImageOCRCache.confidence))
+    )).scalar() or 0.0
+
+    # Count mentions with OCR text (cache hits = mentions that matched a cached hash)
+    mentions_with_ocr = (await db.execute(
+        select(func.count()).select_from(RawMention).where(
+            RawMention.metadata_["ocr_text"].astext.isnot(None),
+            RawMention.metadata_.has_key("ocr_text"),
+        )
+    )).scalar() or 0
+
+    # Recent OCR cache entries
+    recent_stmt = (
+        select(ImageOCRCache)
+        .order_by(ImageOCRCache.created_at.desc())
+        .limit(10)
+    )
+    recent_result = await db.execute(recent_stmt)
+    recent = [
+        {
+            "sha256": r.sha256[:12] + "...",
+            "text_preview": (r.ocr_text or "")[:120],
+            "confidence": round(r.confidence, 3),
+            "engine": r.engine,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in recent_result.scalars().all()
+    ]
+
+    return {
+        "total_cached": total_cached,
+        "mentions_with_ocr": mentions_with_ocr,
+        "avg_confidence": round(float(avg_confidence), 3),
+        "recent": recent,
+    }
 

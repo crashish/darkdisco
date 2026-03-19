@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { ShieldAlert, AlertTriangle, Eye, Building2, Radio } from 'lucide-react';
-import { fetchDashboardStats, fetchFindings } from '../api';
+import { ShieldAlert, AlertTriangle, Eye, Building2, Radio, ScanLine } from 'lucide-react';
+import { fetchDashboardStats, fetchFindings, fetchOcrStats } from '../api';
+import type { OcrStats } from '../api';
 import { colors, card, severityColor, severityBg, font } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
@@ -34,11 +35,13 @@ const sevOrder: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recent, setRecent] = useState<Finding[]>([]);
+  const [ocrStats, setOcrStats] = useState<OcrStats | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchDashboardStats().then(setStats);
     fetchFindings({ page_size: 8 }).then(r => setRecent(r.items));
+    fetchOcrStats().then(setOcrStats).catch(() => {});
   }, []);
 
   if (!stats) return <div style={{ color: colors.textDim, padding: 40 }}>Loading...</div>;
@@ -132,6 +135,56 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* OCR Statistics */}
+      {ocrStats && ocrStats.total_cached > 0 && (
+        <div style={{ ...card, marginBottom: 28 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: colors.textDim, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ScanLine size={16} color="#a78bfa" /> OCR Processing
+          </h3>
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#a78bfa', lineHeight: 1 }}>{ocrStats.total_cached}</div>
+              <div style={{ fontSize: 11, color: colors.textDim, marginTop: 2 }}>Images Processed</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: colors.text, lineHeight: 1 }}>{ocrStats.mentions_with_ocr}</div>
+              <div style={{ fontSize: 11, color: colors.textDim, marginTop: 2 }}>Mentions with OCR</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 700, lineHeight: 1, color: ocrStats.avg_confidence > 0.8 ? colors.healthy : ocrStats.avg_confidence > 0.5 ? colors.medium : colors.critical }}>
+                {(ocrStats.avg_confidence * 100).toFixed(1)}%
+              </div>
+              <div style={{ fontSize: 11, color: colors.textDim, marginTop: 2 }}>Avg Confidence</div>
+            </div>
+          </div>
+          {ocrStats.recent.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Recent OCR Results</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {ocrStats.recent.slice(0, 5).map((r, i) => (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+                    background: colors.bgSurface, borderRadius: 4, fontSize: 12,
+                  }}>
+                    <span style={{ fontFamily: font.mono, fontSize: 10, color: colors.textMuted }}>{r.sha256}</span>
+                    <span style={{ flex: 1, color: colors.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.text_preview || '(no text)'}
+                    </span>
+                    <span style={{
+                      fontSize: 10, fontWeight: 600,
+                      color: r.confidence > 0.8 ? colors.healthy : r.confidence > 0.5 ? colors.medium : colors.critical,
+                    }}>
+                      {(r.confidence * 100).toFixed(0)}%
+                    </span>
+                    <span style={{ fontSize: 10, color: colors.textMuted }}>{r.engine}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Recent findings */}
       <div style={card}>

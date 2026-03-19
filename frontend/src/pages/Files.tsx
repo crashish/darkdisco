@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { colors, card, font } from '../theme';
-import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code } from 'lucide-react';
+import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code, ScanLine } from 'lucide-react';
 
 const BASE = '/api';
 
@@ -285,6 +285,9 @@ interface SearchResult {
   archive_name: string;
   source: string;
   mime_type?: string;
+  ocr_text?: string;
+  ocr_confidence?: number;
+  ocr_engine?: string;
 }
 
 function formatSize(bytes: number): string {
@@ -620,6 +623,11 @@ export default function Files() {
                           <span style={{ fontSize: 12, fontFamily: font.mono, color: colors.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {file.filename}
                           </span>
+                          {file.ocr_text && (
+                            <span title={`OCR: ${file.ocr_text.slice(0, 120)}`} style={{ fontSize: 9, fontWeight: 600, padding: '1px 5px', borderRadius: 3, color: '#a78bfa', background: 'rgba(167, 139, 250, 0.12)', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                              <ScanLine size={9} /> OCR {file.ocr_confidence != null ? `${(file.ocr_confidence * 100).toFixed(0)}%` : ''}
+                            </span>
+                          )}
                           {mimeLabel && <span style={{ fontSize: 10, color: colors.textMuted, background: colors.bgSurface, padding: '1px 5px', borderRadius: 3 }}>{mimeLabel}</span>}
                           <span style={{ fontSize: 11, color: colors.textMuted }}>{formatSize(file.size)}</span>
                           {file.s3_key && (
@@ -737,6 +745,11 @@ export default function Files() {
                         <span style={{ fontSize: 12, fontFamily: font.mono, color: colors.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {highlightText(file.filename, activeQuery)}
                         </span>
+                        {file.ocr_text && (
+                          <span title={`OCR: ${file.ocr_text.slice(0, 120)}`} style={{ fontSize: 9, fontWeight: 600, padding: '1px 5px', borderRadius: 3, color: '#a78bfa', background: 'rgba(167, 139, 250, 0.12)', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                            <ScanLine size={9} /> OCR {file.ocr_confidence != null ? `${(file.ocr_confidence * 100).toFixed(0)}%` : ''}
+                          </span>
+                        )}
                         {mimeLabel && <span style={{ fontSize: 10, color: colors.textMuted, background: colors.bgSurface, padding: '1px 5px', borderRadius: 3 }}>{mimeLabel}</span>}
                         <span style={{ fontSize: 11, color: colors.textMuted, whiteSpace: 'nowrap' }}>{formatSize(file.size)}</span>
                         {file.s3_key && (

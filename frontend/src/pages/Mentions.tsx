@@ -5,7 +5,7 @@ import { colors, card, font } from '../theme';
 import type { RawMention, Source, Institution, Severity } from '../types';
 import ArchiveContents from '../components/ArchiveContents';
 import type { ArchiveFile } from '../components/ArchiveContents';
-import { MessageSquare, Filter, Search, ChevronDown, ChevronUp, ExternalLink, ArrowRight, X, Check, Download, Eye, Calendar } from 'lucide-react';
+import { MessageSquare, Filter, Search, ChevronDown, ChevronUp, ExternalLink, ArrowRight, X, Check, Download, Eye, Calendar, ScanLine } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import MultiSelect from '../components/MultiSelect';
 
@@ -396,6 +396,18 @@ export default function Mentions() {
                   <span style={{ fontSize: 11, color: colors.textMuted, whiteSpace: 'nowrap' }}>
                     {formatTimestamp(mention.collected_at)}
                   </span>
+                  {meta?.ocr_text && (
+                    <span
+                      title={`OCR: ${String(meta.ocr_text).slice(0, 200)}`}
+                      style={{
+                        fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+                        color: '#a78bfa', background: 'rgba(167, 139, 250, 0.12)',
+                        display: 'inline-flex', alignItems: 'center', gap: 3,
+                      }}
+                    >
+                      <ScanLine size={10} /> OCR
+                    </span>
+                  )}
                   {mention.promoted_to_finding_id && (
                     <span style={{
                       fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
@@ -452,6 +464,36 @@ export default function Mentions() {
                             </span>
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/* OCR Extracted Text */}
+                    {meta?.ocr_text && (
+                      <div style={{
+                        marginBottom: 12, padding: 12, background: 'rgba(167, 139, 250, 0.06)',
+                        borderRadius: 6, border: '1px solid rgba(167, 139, 250, 0.2)',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                          <ScanLine size={13} color="#a78bfa" />
+                          <span style={{ fontSize: 12, fontWeight: 600, color: '#a78bfa' }}>OCR Extracted Text</span>
+                          {meta.ocr_confidence != null && (
+                            <span style={{
+                              fontSize: 10, color: Number(meta.ocr_confidence) > 0.8 ? colors.healthy : Number(meta.ocr_confidence) > 0.5 ? colors.medium : colors.critical,
+                              fontWeight: 600,
+                            }}>
+                              {(Number(meta.ocr_confidence) * 100).toFixed(0)}% confidence
+                            </span>
+                          )}
+                        </div>
+                        <pre style={{
+                          fontFamily: font.mono, fontSize: 11, lineHeight: 1.5,
+                          color: colors.textDim, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                          background: colors.bg, padding: 10, borderRadius: 4,
+                          border: `1px solid ${colors.border}`, margin: 0,
+                          maxHeight: 200, overflow: 'auto',
+                        }}>
+                          {String(meta.ocr_text)}
+                        </pre>
                       </div>
                     )}
 

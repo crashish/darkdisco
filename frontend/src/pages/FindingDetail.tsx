@@ -8,7 +8,7 @@ import StatusBadge from '../components/StatusBadge';
 import ArchiveContents from '../components/ArchiveContents';
 import type { ArchiveFile } from '../components/ArchiveContents';
 import type { FindingDetail as FindingDetailType, FindingStatus, Severity, AuditLogEntry, HighlightSpan } from '../types';
-import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash, Globe, Lock, Activity, BarChart3, Camera, Network, Edit3, Send, History } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash, Globe, Lock, Activity, BarChart3, Camera, Network, Edit3, Send, History, ScanLine } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'confirmed', 'dismissed', 'false_positive', 'resolved'];
@@ -638,6 +638,98 @@ export default function FindingDetail() {
 
           {/* Archive Contents */}
           {archiveFiles.length > 0 && <ArchiveContents files={archiveFiles} />}
+
+          {/* OCR Extracted Text — from archive files with OCR data or from finding metadata */}
+          {(() => {
+            const ocrFiles = archiveFiles.filter((f: any) => f.ocr_text);
+            const metaOcr = (finding.metadata as Record<string, unknown> | undefined)?.ocr_text;
+            if (ocrFiles.length === 0 && !metaOcr) return null;
+            return (
+              <div style={sectionStyle}>
+                <div style={sectionTitle}><ScanLine size={14} color="#a78bfa" /> OCR Extracted Text</div>
+                {/* From finding metadata (direct mention OCR) */}
+                {metaOcr && (
+                  <div style={{
+                    marginBottom: ocrFiles.length > 0 ? 12 : 0,
+                    padding: 12, background: 'rgba(167, 139, 250, 0.06)',
+                    borderRadius: 6, border: '1px solid rgba(167, 139, 250, 0.2)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <Camera size={12} color="#a78bfa" />
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#a78bfa' }}>Image OCR</span>
+                      {(finding.metadata as Record<string, unknown> | undefined)?.ocr_confidence != null && (
+                        <span style={{
+                          fontSize: 10, fontWeight: 600,
+                          color: Number((finding.metadata as Record<string, unknown>).ocr_confidence) > 0.8 ? colors.healthy
+                            : Number((finding.metadata as Record<string, unknown>).ocr_confidence) > 0.5 ? colors.medium : colors.critical,
+                        }}>
+                          {(Number((finding.metadata as Record<string, unknown>).ocr_confidence) * 100).toFixed(0)}%
+                        </span>
+                      )}
+                    </div>
+                    <pre style={{
+                      fontFamily: font.mono, fontSize: 11, lineHeight: 1.5,
+                      color: colors.textDim, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                      background: colors.bg, padding: 10, borderRadius: 4,
+                      border: `1px solid ${colors.border}`, margin: 0,
+                      maxHeight: 300, overflow: 'auto',
+                    }}>
+                      {String(metaOcr)}
+                    </pre>
+                  </div>
+                )}
+                {/* From extracted files with OCR */}
+                {ocrFiles.map((f: any, i: number) => (
+                  <div key={i} style={{
+                    marginBottom: i < ocrFiles.length - 1 ? 8 : 0,
+                    padding: 12, background: 'rgba(167, 139, 250, 0.06)',
+                    borderRadius: 6, border: '1px solid rgba(167, 139, 250, 0.2)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <Camera size={12} color="#a78bfa" />
+                      <span style={{ fontSize: 12, fontWeight: 600, color: colors.text, fontFamily: font.mono }}>
+                        {f.filename}
+                      </span>
+                      {f.ocr_engine && (
+                        <span style={{ fontSize: 10, color: colors.textMuted, background: colors.bgSurface, padding: '1px 5px', borderRadius: 3 }}>
+                          {f.ocr_engine}
+                        </span>
+                      )}
+                      {f.ocr_confidence != null && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <div style={{
+                            width: 50, height: 4, borderRadius: 2,
+                            background: colors.bgSurface, overflow: 'hidden',
+                          }}>
+                            <div style={{
+                              width: `${Math.round(f.ocr_confidence * 100)}%`,
+                              height: '100%', borderRadius: 2,
+                              background: f.ocr_confidence > 0.8 ? colors.healthy : f.ocr_confidence > 0.5 ? colors.medium : colors.critical,
+                            }} />
+                          </div>
+                          <span style={{
+                            fontSize: 10, fontWeight: 600,
+                            color: f.ocr_confidence > 0.8 ? colors.healthy : f.ocr_confidence > 0.5 ? colors.medium : colors.critical,
+                          }}>
+                            {(f.ocr_confidence * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <pre style={{
+                      fontFamily: font.mono, fontSize: 11, lineHeight: 1.5,
+                      color: colors.textDim, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                      background: colors.bg, padding: 10, borderRadius: 4,
+                      border: `1px solid ${colors.border}`, margin: 0,
+                      maxHeight: 300, overflow: 'auto',
+                    }}>
+                      {f.ocr_text}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* Matched Terms */}
           {finding.matched_terms && finding.matched_terms.length > 0 && (

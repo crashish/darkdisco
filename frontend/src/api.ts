@@ -331,6 +331,23 @@ export async function fetchArchiveContents(
   return apiFetch(`/${type}/${id}/archive-contents`, { files: [], total: 0 });
 }
 
+export interface OcrStats {
+  total_cached: number;
+  mentions_with_ocr: number;
+  avg_confidence: number;
+  recent: {
+    sha256: string;
+    text_preview: string;
+    confidence: number;
+    engine: string;
+    created_at: string | null;
+  }[];
+}
+
+export async function fetchOcrStats(): Promise<OcrStats> {
+  return apiFetch('/ocr-stats', { total_cached: 0, mentions_with_ocr: 0, avg_confidence: 0, recent: [] });
+}
+
 export async function promoteMention(mentionId: string, body: {
   institution_id: string;
   title: string;
