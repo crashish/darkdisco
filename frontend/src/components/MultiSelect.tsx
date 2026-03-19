@@ -54,18 +54,33 @@ export default function MultiSelect({ label, options, selected, onChange }: {
           background: colors.bgCard, border: `1px solid ${colors.border}`, borderRadius: 6,
           boxShadow: '0 8px 24px rgba(0,0,0,0.4)', minWidth: 220, maxHeight: 280, overflow: 'auto',
         }}>
-          {selected.size > 0 && (
+          <div style={{
+            display: 'flex', gap: 8, padding: '6px 12px',
+            borderBottom: `1px solid ${colors.border}`,
+          }}>
             <button
-              onClick={() => onChange(new Set())}
+              onClick={() => onChange(new Set(options.map(o => o.value)))}
+              disabled={options.length > 0 && options.every(o => selected.has(o.value))}
               style={{
-                width: '100%', padding: '6px 12px', fontSize: 11, color: colors.accent,
-                background: 'none', border: 'none', borderBottom: `1px solid ${colors.border}`,
-                cursor: 'pointer', textAlign: 'left',
+                padding: '2px 6px', fontSize: 11, color: colors.accent,
+                background: 'none', border: `1px solid ${colors.border}`, borderRadius: 3,
+                cursor: 'pointer', opacity: (options.length > 0 && options.every(o => selected.has(o.value))) ? 0.4 : 1,
               }}
             >
-              Clear all
+              Select All
             </button>
-          )}
+            <button
+              onClick={() => onChange(new Set())}
+              disabled={selected.size === 0}
+              style={{
+                padding: '2px 6px', fontSize: 11, color: colors.accent,
+                background: 'none', border: `1px solid ${colors.border}`, borderRadius: 3,
+                cursor: 'pointer', opacity: selected.size === 0 ? 0.4 : 1,
+              }}
+            >
+              Deselect All
+            </button>
+          </div>
           {options.map(opt => (
             <label
               key={opt.value}

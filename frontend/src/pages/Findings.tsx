@@ -66,7 +66,8 @@ export default function Findings() {
     const v = searchParams.get('institution_id');
     return v ? new Set(v.split(',').filter(Boolean)) : new Set();
   });
-  const [dateFilter, setDateFilter] = useState(searchParams.get('date') || '');
+  const [dateFrom, setDateFrom] = useState(searchParams.get('date_from') || '');
+  const [dateTo, setDateTo] = useState(searchParams.get('date_to') || '');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
@@ -85,16 +86,14 @@ export default function Findings() {
     if (sevFilter.size > 0) params.severity = Array.from(sevFilter).join(',');
     if (statusFilter.size > 0) params.status = Array.from(statusFilter).join(',');
     if (instFilter.size > 0) params.institution_id = Array.from(instFilter).join(',');
-    if (dateFilter) {
-      params.date_from = `${dateFilter}T00:00:00`;
-      params.date_to = `${dateFilter}T23:59:59`;
-    }
+    if (dateFrom) params.date_from = dateFrom.includes('T') ? dateFrom : `${dateFrom}T00:00:00`;
+    if (dateTo) params.date_to = dateTo.includes('T') ? dateTo : `${dateTo}T23:59:59`;
     if (debouncedSearch) params.q = debouncedSearch;
     fetchFindings(params as any).then(res => {
       setFindings(res.items);
       setTotal(res.total);
     });
-  }, [sevFilter, statusFilter, instFilter, dateFilter, debouncedSearch, page]);
+  }, [sevFilter, statusFilter, instFilter, dateFrom, dateTo, debouncedSearch, page]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { fetchInstitutions().then(setInstitutions); }, []);
@@ -163,18 +162,58 @@ export default function Findings() {
           selected={instFilter}
           onChange={handleSetFilterChange(setInstFilter)}
         />
-        <div style={{ position: 'relative' }}>
-          <Calendar size={16} color={colors.textMuted} style={{ position: 'absolute', left: 12, top: 10 }} />
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <Calendar size={16} color={colors.textMuted} />
           <input
             type="date"
-            style={{ ...selectStyle, paddingLeft: 36, minWidth: 160 }}
-            value={dateFilter}
-            onChange={e => handleFilterChange(setDateFilter)(e.target.value)}
+            style={{ ...selectStyle, minWidth: 140, padding: '7px 10px' }}
+            value={dateFrom}
+            onChange={e => { setDateFrom(e.target.value); setPage(1); }}
+            title="From date"
+          />
+          <span style={{ color: colors.textMuted, fontSize: 12 }}>&ndash;</span>
+          <input
+            type="date"
+            style={{ ...selectStyle, minWidth: 140, padding: '7px 10px' }}
+            value={dateTo}
+            onChange={e => { setDateTo(e.target.value); setPage(1); }}
+            title="To date"
+          />
+          <input
+            type="text"
+            placeholder="e.g. 30d, 1w, 3m"
+            style={{ ...selectStyle, minWidth: 110, padding: '7px 10px', fontSize: 12 }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                const range = parseDateShorthand((e.target as HTMLInputElement).value);
+                if (range) { setDateFrom(range.from); setDateTo(range.to); setPage(1); (e.target as HTMLInputElement).value = ''; }
+              }
+            }}
+            title="Type shorthand (24h, 7d, 1w, 3m) and press Enter"
           />
         </div>
-        {(sevFilter.size > 0 || statusFilter.size > 0 || instFilter.size > 0 || search || dateFilter) && (
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[
+            { label: '24h', value: '24h' },
+            { label: '7d', value: '7d' },
+            { label: '30d', value: '30d' },
+            { label: '90d', value: '90d' },
+          ].map(btn => (
+            <button
+              key={btn.value}
+              onClick={() => { const range = parseDateShorthand(btn.value); if (range) { setDateFrom(range.from); setDateTo(range.to); setPage(1); } }}
+              style={{
+                background: 'none', border: `1px solid ${colors.border}`, borderRadius: 4,
+                color: colors.accent, fontSize: 11, padding: '4px 8px', cursor: 'pointer',
+              }}
+            >
+              {btn.label}
+            </button>
+          ))}
+        </div>
+        {(sevFilter.size > 0 || statusFilter.size > 0 || instFilter.size > 0 || search || dateFrom || dateTo) && (
           <button
-            onClick={() => { setSevFilter(new Set()); setStatusFilter(new Set()); setInstFilter(new Set()); setSearch(''); setDateFilter(''); setPage(1); setSearchParams({}); }}
+            onClick={() => { setSevFilter(new Set()); setStatusFilter(new Set()); setInstFilter(new Set()); setSearch(''); setDateFrom(''); setDateTo(''); setPage(1); setSearchParams({}); }}
             style={{ background: 'none', border: 'none', color: colors.accent, fontSize: 13, cursor: 'pointer', padding: '8px 4px' }}
           >
             Clear filters
@@ -315,6 +354,25 @@ export default function Findings() {
       )}
     </div>
   );
+}
+
+function parseDateShorthand(input: string): { from: string; to: string } | null {
+  const trimmed = input.trim().toLowerCase();
+  const match = trimmed.match(/^(\d+)\s*(h|d|w|m)$/);
+  if (!match) return null;
+  const amount = parseInt(match[1], 10);
+  const unit = match[2];
+  const now = new Date();
+  const from = new Date(now);
+  switch (unit) {
+    case 'h': from.setHours(from.getHours() - amount); break;
+    case 'd': from.setDate(from.getDate() - amount); break;
+    case 'w': from.setDate(from.getDate() - amount * 7); break;
+    case 'm': from.setMonth(from.getMonth() - amount); break;
+    default: return null;
+  }
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return { from: fmt(from), to: fmt(now) };
 }
 
 function timeAgo(iso: string): string {
