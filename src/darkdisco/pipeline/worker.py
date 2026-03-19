@@ -20,6 +20,24 @@ from darkdisco.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Persistent per-process event loop (avoids "Event loop is closed" /
+# "Future attached to a different loop" errors with httpx/asyncpg pools)
+# ---------------------------------------------------------------------------
+
+def _get_or_create_loop():
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop
+
+
 # ---------------------------------------------------------------------------
 # Celery app
 # ---------------------------------------------------------------------------
@@ -221,7 +239,7 @@ def poll_source(self, source_id: str):
 
         try:
             # Bridge async connector to sync Celery task
-            mentions = asyncio.run(_poll_async(connector, since))
+            mentions = _get_or_create_loop().run_until_complete(_poll_async(connector, since))
         except Exception as exc:
             source.last_error = str(exc)[:2000]
             session.commit()
@@ -963,7 +981,7 @@ def process_channel_discoveries(batch_size: int = 5):
                 failed += 1
                 continue
             try:
-                success = asyncio.run(_join_channel_async(connector, dc.url))
+                success = _get_or_create_loop().run_until_complete(_join_channel_async(connector, dc.url))
             except Exception as exc:
                 dc.status = DiscoveryStatus.failed
                 dc.notes = f"Join error: {str(exc)[:200]}"
@@ -1137,7 +1155,7 @@ def download_pending_files(batch_size: int = 50):
                     finally:
                         await connector.teardown()
 
-                results = asyncio.run(_do_downloads())
+                results = _get_or_create_loop().run_until_complete(_do_downloads())
                 downloaded += results["downloaded"]
                 failed += results["failed"]
             except Exception:
