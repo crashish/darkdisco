@@ -265,11 +265,9 @@ def poll_source(self, source_id: str):
             _extract_channel_discoveries(session, source_id, mentions)
 
         if mentions:
-            # Process file attachments before serialization
-            mentions = _process_file_mentions(mentions)
-
-            # Serialize mentions for the matching task
-            # (file_data bytes are removed — text content extracted above)
+            # Skip inline OCR/file processing — it takes 30-60min on CPU and
+            # blocks the entire poll. Dispatch to matching immediately; OCR
+            # runs later via backfill_ocr task on persisted extracted_files.
             serialized = [
                 {
                     "source_name": m.source_name,
@@ -629,9 +627,9 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 f"{mention.source_name}:{mention.content}".encode()
             ).hexdigest()
 
-            # Check for exact duplicate
+            # Check for exact duplicate (use first() — multiple findings can share a hash)
             existing = session.execute(
-                select(Finding.id).where(Finding.content_hash == content_hash)
+                select(Finding.id).where(Finding.content_hash == content_hash).limit(1)
             ).scalar_one_or_none()
 
             if existing:
@@ -1061,12 +1059,10 @@ def download_pending_files(batch_size: int = 20):
         logger.info("Another download task is already running, skipping")
         return {"skipped": True}
 
-    # Acquire session lock (non-blocking — skip if poll is running)
-    tg_lock = r.lock("darkdisco:telegram_session_lock", timeout=120)
-    if not tg_lock.acquire(blocking=False):
-        logger.info("Poll task is running, skipping downloads this cycle")
-        lock.release()
-        return {"skipped": True, "reason": "poll_running"}
+    # Downloads use a separate session file (_download variant) via
+    # _load_connector_for_download, so no need for the main session lock.
+    # Only the download_files_lock above prevents concurrent downloads.
+    tg_lock = None  # kept for finally-block compatibility
 
     session = _get_sync_session()
     try:

@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 HISTORY_LIMIT_DEFAULT = 100
 INTER_CHANNEL_DELAY = 1.0  # seconds between channel reads
-MAX_DOWNLOAD_SIZE = 4 * 1024 * 1024 * 1024  # 4GB file download limit
+MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024  # 100MB file download limit
 FILE_DOWNLOAD_MAX_AGE_DAYS = 60  # Only download files from messages within this window
 
 
@@ -290,7 +290,7 @@ class TelegramConnector(BaseConnector):
                         f"{message.file.size / (1024*1024):.1f}MB",
                         channel_ref, message.id,
                     )
-                elif message.file.size > 50 * 1024 * 1024:
+                elif message.file.size > 5 * 1024 * 1024:
                     # Large files: record metadata for async download later
                     logger.info(
                         "Large file recorded for async download: %s (%s) in %s msg#%d",
@@ -302,15 +302,12 @@ class TelegramConnector(BaseConnector):
                         message._dd_extra_meta = {}
                     message._dd_extra_meta["download_status"] = "pending"
                 else:
-                    try:
-                        file_data = await self._client.download_media(
-                            message, file=bytes,
-                        )
-                    except Exception:
-                        logger.debug(
-                            "Failed to download file from message %d in %s",
-                            message.id, channel_ref,
-                        )
+                    # Defer ALL file downloads to the download task.
+                    # Inline downloads during polling block the entire poll
+                    # for minutes across 119 channels.
+                    if not hasattr(message, "_dd_extra_meta"):
+                        message._dd_extra_meta = {}
+                    message._dd_extra_meta["download_status"] = "pending"
 
             mention = _message_to_mention(message, entity, channel_ref, file_data)
             if mention is not None:
