@@ -1,0 +1,196 @@
+# Noise reduction filters for the watch term matcher.
+#
+# These lists are loaded at matcher init and applied to mentions that match
+# ONLY on institution_name or keyword type watch terms.  Matches on strong
+# signal types (bin_range, routing_number, domain, regex) bypass these
+# filters entirely.
+#
+# Restart the worker after editing:  docker compose restart worker
+
+# --------------------------------------------------------------------------
+# Fraud indicators — at least ONE must appear alongside the institution name
+# for the mention to be promoted to a finding.  Case-insensitive substring
+# match against the full mention text (title + content).
+# --------------------------------------------------------------------------
+fraud_indicators:
+  # Card / account fraud
+  - "fullz"
+  - "cvv"
+  - "cvv2"
+  - "cc dump"
+  - "card dump"
+  - "dump+pin"
+  - "track1"
+  - "track2"
+  - "track 1"
+  - "track 2"
+  - "magstripe"
+  - "emv"
+  - "skimmer"
+  - "cloned card"
+  - "carding"
+  - "bin list"
+
+  # Account takeover / credentials
+  - "log"
+  - "logs"
+  - "stealer"
+  - "infostealer"
+  - "cookie"
+  - "session token"
+  - "credential"
+  - "login"
+  - "password"
+  - "passwd"
+  - "combo"
+  - "combolist"
+  - "brute"
+  - "checker"
+  - "config"
+  - "cracked"
+  - "account access"
+  - "bank log"
+  - "bank drop"
+  - "cashout"
+  - "cash out"
+  - "cash app"
+  - "zelle"
+  - "ach"
+  - "wire"
+  - "wire transfer"
+
+  # Money mule / drop
+  - "mule"
+  - "drop"
+  - "money mule"
+  - "drop address"
+  - "reshipping"
+
+  # Phishing / social engineering
+  - "phish"
+  - "scam page"
+  - "scama"
+  - "letter"
+  - "spoof"
+  - "clone site"
+  - "fake page"
+  - "kit"
+  - "panel"
+  - "mailer"
+  - "smtp"
+  - "inbox"
+  - "redirect"
+
+  # Data / breach
+  - "breach"
+  - "leak"
+  - "dump"
+  - "database"
+  - "ssn"
+  - "dob"
+  - "social security"
+  - "data for sale"
+  - "selling"
+  - "for sale"
+  - "buy"
+  - "price"
+  - "btc"
+  - "bitcoin"
+  - "crypto"
+  - "escrow"
+  - "vouched"
+  - "wickr"
+  - "telegram"
+  - "jabber"
+  - "tox"
+
+  # Fraud methods
+  - "method"
+  - "tutorial"
+  - "sauce"
+  - "fraud bible"
+  - "cashout method"
+  - "exploit"
+  - "vuln"
+  - "0day"
+  - "zero day"
+
+  # Ransomware / extortion
+  - "ransom"
+  - "encrypt"
+  - "decrypt"
+  - "leaked data"
+  - "victim"
+  - "exfil"
+
+  # Check / document fraud
+  - "fake id"
+  - "fake check"
+  - "counterfeit"
+  - "template"
+  - "psd"
+  - "editable"
+
+# --------------------------------------------------------------------------
+# Negative patterns — if ANY of these match, the mention is suppressed.
+# These catch legitimate/benign conversations that happen to mention a bank.
+# Patterns are Python regex (case-insensitive).
+# --------------------------------------------------------------------------
+negative_patterns:
+  # Customer service / general banking
+  - "customer service"
+  - "what(?:'s| is) your experience with"
+  - "anyone (?:use|bank with|have an account)"
+  - "just opened an account"
+  - "opened a (?:checking|savings) account"
+  - "how do [iI] (?:open|close|transfer)"
+  - "direct deposit"
+  - "interest rate"
+  - "credit score"
+  - "annual fee"
+  - "minimum balance"
+  - "atm fee"
+  - "overdraft (?:fee|protection)"
+  - "mobile (?:app|banking|deposit)"
+  - "zelle (?:limit|not working|setup)"
+  - "\\bapp (?:update|crash|not working|review)\\b"
+  - "branch (?:near|location|hours|closed)"
+
+  # Employment / corporate
+  - "(?:apply|applying|applied) (?:for|to) (?:a )?(?:job|position|role)"
+  - "(?:hiring|we.re looking for)"
+  - "job (?:posting|listing|opening|fair)"
+  - "interview (?:with|at|for)"
+  - "intern(?:ship)?"
+  - "employee (?:review|benefit|handbook)"
+
+  # News / press
+  - "press release"
+  - "quarterly (?:earnings|report|results)"
+  - "annual report"
+  - "stock (?:price|market|ticker)"
+  - "(?:CEO|CFO|CTO) (?:of|at|said|announced)"
+  - "merger|acquisition"
+  - "ipo"
+
+  # Product reviews / comparison
+  - "(?:best|worst|top \\d+) (?:bank|credit union)"
+  - "recommend(?:ation)?"
+  - "review(?:s)? (?:of|for|on)"
+  - "compared? to"
+  - "vs\\.?\\s"
+  - "pros (?:and|&) cons"
+  - "rating"
+
+  # Complaints (legitimate, not threat)
+  - "filed a complaint"
+  - "(?:cfpb|bbb|attorney general)"
+  - "class action"
+  - "lawsuit"
+
+  # Promotions / marketing
+  - "sign.up bonus"
+  - "promo(?:tion| code)"
+  - "referral (?:code|bonus|link)"
+  - "cashback"
+  - "rewards? (?:program|points)"
