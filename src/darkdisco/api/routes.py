@@ -115,11 +115,11 @@ _VALID_TRANSITIONS: dict[FindingStatus, set[FindingStatus]] = {
         FindingStatus.resolved,
         FindingStatus.false_positive,
     },
-    FindingStatus.escalated: {FindingStatus.resolved, FindingStatus.confirmed, FindingStatus.reviewing},
-    FindingStatus.confirmed: {FindingStatus.resolved, FindingStatus.escalated, FindingStatus.reviewing},
-    FindingStatus.dismissed: {FindingStatus.reviewing, FindingStatus.false_positive, FindingStatus.resolved},  # reopen or reclassify
-    FindingStatus.resolved: {FindingStatus.reviewing, FindingStatus.false_positive, FindingStatus.dismissed},  # reopen or reclassify
-    FindingStatus.false_positive: {FindingStatus.reviewing},  # reopen
+    FindingStatus.escalated: {FindingStatus.resolved, FindingStatus.confirmed, FindingStatus.dismissed, FindingStatus.false_positive, FindingStatus.reviewing},
+    FindingStatus.confirmed: {FindingStatus.resolved, FindingStatus.escalated, FindingStatus.dismissed, FindingStatus.false_positive, FindingStatus.reviewing},
+    FindingStatus.dismissed: {FindingStatus.reviewing, FindingStatus.confirmed, FindingStatus.false_positive, FindingStatus.resolved},
+    FindingStatus.resolved: {FindingStatus.reviewing, FindingStatus.confirmed, FindingStatus.false_positive, FindingStatus.dismissed},
+    FindingStatus.false_positive: {FindingStatus.reviewing, FindingStatus.confirmed, FindingStatus.dismissed},
 }
 
 
