@@ -619,3 +619,42 @@ class BinRoutingSummary(BaseModel):
     routing_added: int
     watch_terms_created: int
     results: list[BinRoutingResult]
+
+
+# ---------------------------------------------------------------------------
+# Reports
+# ---------------------------------------------------------------------------
+
+class ReportSections(BaseModel):
+    """Toggle individual report sections."""
+    executive_summary: bool = True
+    charts: bool = True
+    findings_detail: bool = True
+    findings_by_severity: bool = True
+    source_activity: bool = True
+    institution_exposure: bool = True
+    classification_breakdown: bool = True
+    timeline: bool = True
+
+
+class ReportChartOptions(BaseModel):
+    """Toggle individual charts."""
+    severity_pie: bool = True
+    status_pie: bool = True
+    trend_line: bool = True
+    source_bar: bool = True
+    institution_bar: bool = True
+    severity_trend: bool = True
+
+
+class ReportRequest(BaseModel):
+    """Request body for report generation."""
+    title: str = "DarkDisco Threat Intelligence Report"
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+    client_id: str | None = None
+    institution_id: str | None = None
+    severities: list[str] | None = None
+    statuses: list[str] | None = None
+    sections: ReportSections = Field(default_factory=ReportSections)
+    charts: ReportChartOptions = Field(default_factory=ReportChartOptions)

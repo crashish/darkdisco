@@ -70,6 +70,7 @@ from darkdisco.api.schemas import (
     InstitutionImportResult,
     DiscoveredChannelOut,
     DiscoveredChannelUpdate,
+    ReportRequest,
     WatchTermCreate,
     WatchTermOut,
     WatchTermUpdate,
@@ -2955,4 +2956,64 @@ async def get_ocr_stats(
         "avg_confidence": round(float(avg_confidence), 3),
         "recent": recent,
     }
+
+
+# ---------------------------------------------------------------------------
+# Reports
+# ---------------------------------------------------------------------------
+
+@protected.post("/reports/generate")
+async def generate_report_pdf(
+    body: ReportRequest,
+    db: AsyncSession = Depends(get_session),
+):
+    """Generate a PDF report and return it as a download."""
+    from darkdisco.reporting.engine import generate_pdf
+
+    pdf_bytes = await generate_pdf(
+        db,
+        title=body.title,
+        date_from=body.date_from,
+        date_to=body.date_to,
+        client_id=body.client_id,
+        institution_id=body.institution_id,
+        severities=body.severities,
+        statuses=body.statuses,
+        sections=body.sections.model_dump(),
+        chart_options=body.charts.model_dump(),
+    )
+
+    filename = f"darkdisco-report-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@protected.post("/reports/preview")
+async def preview_report_html(
+    body: ReportRequest,
+    db: AsyncSession = Depends(get_session),
+):
+    """Generate an HTML preview of the report."""
+    from darkdisco.reporting.engine import render_report_html
+
+    html = await render_report_html(
+        db,
+        title=body.title,
+        date_from=body.date_from,
+        date_to=body.date_to,
+        client_id=body.client_id,
+        institution_id=body.institution_id,
+        severities=body.severities,
+        statuses=body.statuses,
+        sections=body.sections.model_dump(),
+        chart_options=body.charts.model_dump(),
+    )
+
+    return StreamingResponse(
+        iter([html.encode()]),
+        media_type="text/html",
+    )
 

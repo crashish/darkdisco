@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+<style>
+  @page {
+    size: letter;
+    margin: 1in 0.75in;
+    @bottom-center { content: "Page " counter(page) " of " counter(pages); font-size: 9px; color: #6b7280; }
+    @top-right { content: "CONFIDENTIAL"; font-size: 8px; color: #dc2626; letter-spacing: 1px; }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 11px; color: #1f2937; line-height: 1.5; }
+
+  .cover { page-break-after: always; text-align: center; padding-top: 3in; }
+  .cover h1 { font-size: 28px; color: #111827; margin-bottom: 8px; }
+  .cover .subtitle { font-size: 16px; color: #6b7280; margin-bottom: 40px; }
+  .cover .meta { font-size: 12px; color: #9ca3af; }
+  .cover .meta span { display: block; margin: 4px 0; }
+
+  h2 { font-size: 18px; color: #111827; border-bottom: 2px solid #3b82f6; padding-bottom: 4px; margin: 24px 0 12px; page-break-after: avoid; }
+  h3 { font-size: 14px; color: #374151; margin: 16px 0 8px; page-break-after: avoid; }
+
+  .section { page-break-inside: avoid; margin-bottom: 16px; }
+  .stats-grid { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat-card { flex: 1; min-width: 100px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; text-align: center; }
+  .stat-card .value { font-size: 24px; font-weight: bold; color: #111827; }
+  .stat-card .label { font-size: 10px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .chart-container { text-align: center; margin: 16px 0; page-break-inside: avoid; }
+  .chart-container img { max-width: 100%; height: auto; }
+  .chart-row { display: flex; gap: 16px; margin: 16px 0; }
+  .chart-row .chart-container { flex: 1; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 10px; margin: 8px 0; }
+  th { background: #f3f4f6; color: #374151; font-weight: 600; text-align: left; padding: 6px 8px; border-bottom: 2px solid #d1d5db; }
+  td { padding: 5px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) { background: #f9fafb; }
+
+  .severity { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 9px; font-weight: 600; text-transform: uppercase; }
+  .severity-critical { background: #fef2f2; color: #dc2626; }
+  .severity-high { background: #fff7ed; color: #ea580c; }
+  .severity-medium { background: #fefce8; color: #ca8a04; }
+  .severity-low { background: #eff6ff; color: #2563eb; }
+  .severity-info { background: #f3f4f6; color: #6b7280; }
+
+  .status { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 9px; font-weight: 600; }
+  .status-new { background: #dbeafe; color: #1d4ed8; }
+  .status-reviewing { background: #fef3c7; color: #b45309; }
+  .status-escalated { background: #fef2f2; color: #dc2626; }
+  .status-resolved { background: #dcfce7; color: #15803d; }
+  .status-confirmed { background: #ede9fe; color: #7c3aed; }
+  .status-dismissed { background: #f3f4f6; color: #6b7280; }
+  .status-false_positive { background: #f3f4f6; color: #9ca3af; }
+
+  .finding-detail { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; margin: 8px 0; page-break-inside: avoid; }
+  .finding-detail h4 { font-size: 12px; margin-bottom: 6px; }
+  .finding-meta { display: flex; gap: 16px; font-size: 10px; color: #6b7280; margin-bottom: 6px; }
+  .finding-summary { font-size: 10px; color: #4b5563; }
+
+  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 9px; color: #9ca3af; text-align: center; }
+  .toc { page-break-after: always; }
+  .toc ul { list-style: none; padding-left: 0; }
+  .toc li { padding: 4px 0; border-bottom: 1px dotted #d1d5db; }
+  .toc a { color: #3b82f6; text-decoration: none; }
+</style>
+</head>
+<body>
+
+{# ─── Cover Page ─── #}
+<div class="cover">
+  <h1>{{ title }}</h1>
+  <div class="subtitle">Dark Web Threat Intelligence Report</div>
+  <div class="meta">
+    <span>{{ date_range_label }}</span>
+    <span>Generated: {{ generated_at }}</span>
+    {% if client_name %}<span>Client: {{ client_name }}</span>{% endif %}
+  </div>
+</div>
+
+{# ─── Executive Summary ─── #}
+{% if sections.executive_summary %}
+<h2>Executive Summary</h2>
+<div class="section">
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="value">{{ stats.total_findings }}</div>
+      <div class="label">Total Findings</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: #dc2626;">{{ stats.critical_count }}</div>
+      <div class="label">Critical</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: #ea580c;">{{ stats.high_count }}</div>
+      <div class="label">High</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">{{ stats.institutions_affected }}</div>
+      <div class="label">Institutions Affected</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">{{ stats.sources_active }}</div>
+      <div class="label">Sources Active</div>
+    </div>
+  </div>
+  {% if stats.summary_text %}
+  <p>{{ stats.summary_text }}</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ─── Charts Section ─── #}
+{% if sections.charts and charts %}
+<h2>Analytics</h2>
+
+{% if charts.severity_pie or charts.status_pie %}
+<div class="chart-row">
+  {% if charts.severity_pie %}
+  <div class="chart-container">
+    <img src="data:image/png;base64,{{ charts.severity_pie }}" alt="Severity Distribution">
+  </div>
+  {% endif %}
+  {% if charts.status_pie %}
+  <div class="chart-container">
+    <img src="data:image/png;base64,{{ charts.status_pie }}" alt="Status Distribution">
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if charts.trend_line %}
+<div class="chart-container">
+  <img src="data:image/png;base64,{{ charts.trend_line }}" alt="Findings Trend">
+</div>
+{% endif %}
+
+{% if charts.source_bar %}
+<div class="chart-container">
+  <img src="data:image/png;base64,{{ charts.source_bar }}" alt="Findings by Source">
+</div>
+{% endif %}
+
+{% if charts.institution_bar %}
+<div class="chart-container">
+  <img src="data:image/png;base64,{{ charts.institution_bar }}" alt="Findings by Institution">
+</div>
+{% endif %}
+
+{% if charts.severity_trend %}
+<div class="chart-container">
+  <img src="data:image/png;base64,{{ charts.severity_trend }}" alt="Severity Trend">
+</div>
+{% endif %}
+{% endif %}
+
+{# ─── Findings Detail ─── #}
+{% if sections.findings_detail %}
+<h2>Findings Detail</h2>
+
+{% if sections.findings_by_severity %}
+{% for sev_group in severity_groups %}
+<h3>{{ sev_group.label }} ({{ sev_group.findings | length }})</h3>
+{% for f in sev_group.findings %}
+<div class="finding-detail">
+  <h4>{{ f.title }}</h4>
+  <div class="finding-meta">
+    <span class="severity severity-{{ f.severity }}">{{ f.severity }}</span>
+    <span class="status status-{{ f.status }}">{{ f.status | replace("_", " ") }}</span>
+    <span>{{ f.institution_name or "—" }}</span>
+    <span>{{ f.source_type or "—" }}</span>
+    <span>{{ f.discovered_at_fmt }}</span>
+  </div>
+  {% if f.summary %}
+  <div class="finding-summary">{{ f.summary }}</div>
+  {% endif %}
+  {% if f.matched_terms %}
+  <div class="finding-summary" style="margin-top: 4px;"><strong>Matched:</strong> {{ f.matched_terms | join(", ") }}</div>
+  {% endif %}
+</div>
+{% endfor %}
+{% endfor %}
+
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th style="width: 30%">Title</th>
+      <th>Severity</th>
+      <th>Status</th>
+      <th>Institution</th>
+      <th>Source</th>
+      <th>Discovered</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in findings %}
+    <tr>
+      <td>{{ f.title }}</td>
+      <td><span class="severity severity-{{ f.severity }}">{{ f.severity }}</span></td>
+      <td><span class="status status-{{ f.status }}">{{ f.status | replace("_", " ") }}</span></td>
+      <td>{{ f.institution_name or "—" }}</td>
+      <td>{{ f.source_type or "—" }}</td>
+      <td>{{ f.discovered_at_fmt }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endif %}
+
+{# ─── Source Activity ─── #}
+{% if sections.source_activity %}
+<h2>Source Activity</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Source</th>
+      <th>Type</th>
+      <th>Findings</th>
+      <th>Last Polled</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in sources %}
+    <tr>
+      <td>{{ s.name }}</td>
+      <td>{{ s.source_type | replace("_", " ") | title }}</td>
+      <td>{{ s.finding_count }}</td>
+      <td>{{ s.last_polled_fmt }}</td>
+      <td>{{ "Enabled" if s.enabled else "Disabled" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{# ─── Institution Exposure ─── #}
+{% if sections.institution_exposure %}
+<h2>Institution Exposure</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Institution</th>
+      <th>Client</th>
+      <th>Findings</th>
+      <th>Critical</th>
+      <th>High</th>
+      <th>Unresolved</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for inst in institutions %}
+    <tr>
+      <td>{{ inst.name }}</td>
+      <td>{{ inst.client_name }}</td>
+      <td>{{ inst.total }}</td>
+      <td style="color: #dc2626; font-weight: 600;">{{ inst.critical }}</td>
+      <td style="color: #ea580c; font-weight: 600;">{{ inst.high }}</td>
+      <td>{{ inst.unresolved }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{# ─── Classification Breakdown ─── #}
+{% if sections.classification_breakdown %}
+<h2>Classification Breakdown</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Classification</th>
+      <th>Count</th>
+      <th>% of Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for cls in classifications %}
+    <tr>
+      <td>{{ cls.label }}</td>
+      <td>{{ cls.count }}</td>
+      <td>{{ cls.pct }}%</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{# ─── Timeline ─── #}
+{% if sections.timeline %}
+<h2>Timeline</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>New</th>
+      <th>Critical/High</th>
+      <th>Resolved</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for day in timeline %}
+    <tr>
+      <td>{{ day.date }}</td>
+      <td>{{ day.new }}</td>
+      <td style="color: #dc2626;">{{ day.critical_high }}</td>
+      <td style="color: #22c55e;">{{ day.resolved }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<div class="footer">
+  DarkDisco Threat Intelligence &mdash; {{ generated_at }} &mdash; CONFIDENTIAL
+</div>
+
+</body>
+</html>
