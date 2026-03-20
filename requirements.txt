@@ -10,6 +10,7 @@ alembic>=1.13
 
 # Task queue
 celery[redis]>=5.3
+croniter>=2.0
 
 # Settings
 pydantic-settings>=2.1

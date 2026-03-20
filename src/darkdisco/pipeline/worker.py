@@ -10,7 +10,7 @@ import asyncio
 import hashlib
 import importlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from celery import Celery
 from sqlalchemy import select
@@ -70,6 +70,10 @@ app.conf.update(
         "process-channel-discoveries": {
             "task": "darkdisco.pipeline.worker.process_channel_discoveries",
             "schedule": 600.0,  # 10 minutes
+        },
+        "run-scheduled-reports": {
+            "task": "darkdisco.pipeline.worker.run_scheduled_reports",
+            "schedule": 60.0,  # 1 minute
         },
     },
 )
@@ -1701,3 +1705,232 @@ def _rematch_ocr_mentions(mention_source_pairs: list[tuple[str, str]]):
         )
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# Scheduled report generation
+# ---------------------------------------------------------------------------
+
+
+def _compute_date_range(mode: str) -> tuple[datetime, datetime]:
+    """Compute date_from and date_to based on date range mode."""
+    now = datetime.now(timezone.utc)
+    if mode == "last_24h":
+        return now - timedelta(hours=24), now
+    elif mode == "last_7d":
+        return now - timedelta(days=7), now
+    elif mode == "last_30d":
+        return now - timedelta(days=30), now
+    elif mode == "last_quarter":
+        return now - timedelta(days=90), now
+    else:
+        return now - timedelta(days=7), now
+
+
+def _compute_next_run(schedule) -> datetime | None:
+    """Compute next run time for a schedule based on cron or interval."""
+    now = datetime.now(timezone.utc)
+    if schedule.interval_seconds:
+        return now + timedelta(seconds=schedule.interval_seconds)
+    if schedule.cron_expression:
+        try:
+            from croniter import croniter
+            cron = croniter(schedule.cron_expression, now)
+            return cron.get_next(datetime)
+        except Exception:
+            logger.warning("Invalid cron expression for schedule %s: %s",
+                           schedule.id, schedule.cron_expression)
+            return None
+    return None
+
+
+@app.task(name="darkdisco.pipeline.worker.run_scheduled_reports")
+def run_scheduled_reports():
+    """Check for due report schedules and generate PDFs."""
+    from darkdisco.common.models import GeneratedReport, ReportSchedule, ReportTemplate
+
+    session = _get_sync_session()
+    try:
+        now = datetime.now(timezone.utc)
+        schedules = session.execute(
+            select(ReportSchedule)
+            .where(
+                ReportSchedule.enabled == True,  # noqa: E712
+                ReportSchedule.next_run_at <= now,
+            )
+        ).scalars().all()
+
+        if not schedules:
+            return {"generated": 0}
+
+        generated = 0
+        for schedule in schedules:
+            try:
+                generate_scheduled_report.delay(schedule.id)
+                generated += 1
+            except Exception:
+                logger.exception("Failed to dispatch report generation for schedule %s", schedule.id)
+
+        return {"generated": generated}
+    finally:
+        session.close()
+
+
+@app.task(name="darkdisco.pipeline.worker.generate_scheduled_report",
+          bind=True, max_retries=2, soft_time_limit=600, time_limit=900)
+def generate_scheduled_report(self, schedule_id: str):
+    """Generate a single scheduled report: create PDF, store in S3, update schedule."""
+    from uuid import uuid4 as _uuid4
+
+    import boto3
+
+    from darkdisco.common.models import GeneratedReport, ReportSchedule, ReportTemplate
+    from darkdisco.reporting.engine import generate_pdf
+
+    session = _get_sync_session()
+    try:
+        schedule = session.get(ReportSchedule, schedule_id)
+        if not schedule or not schedule.enabled:
+            return {"status": "skipped", "reason": "not found or disabled"}
+
+        template = session.get(ReportTemplate, schedule.template_id)
+        if not template:
+            return {"status": "skipped", "reason": "template not found"}
+
+        config = template.config or {}
+        date_from, date_to = _compute_date_range(schedule.date_range_mode.value)
+
+        # Generate PDF using async engine via event loop bridge
+        from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+        from sqlalchemy.orm import sessionmaker as async_sessionmaker
+
+        async_engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+
+        async def _generate():
+            async with AsyncSession(async_engine) as async_session:
+                pdf_bytes = await generate_pdf(
+                    async_session,
+                    title=config.get("title", schedule.name),
+                    date_from=date_from,
+                    date_to=date_to,
+                    client_id=config.get("client_id"),
+                    institution_id=config.get("institution_id"),
+                    severities=config.get("severities"),
+                    statuses=config.get("statuses"),
+                    sections=config.get("sections", {}),
+                    chart_options=config.get("charts", {}),
+                )
+            await async_engine.dispose()
+            return pdf_bytes
+
+        loop = _get_or_create_loop()
+        pdf_bytes = loop.run_until_complete(_generate())
+
+        # Store in S3
+        report_id = str(_uuid4())
+        s3_key = f"reports/{schedule.owner_id}/{report_id}.pdf"
+
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=settings.s3_endpoint,
+            aws_access_key_id=settings.s3_access_key,
+            aws_secret_access_key=settings.s3_secret_key,
+        )
+        s3.put_object(
+            Bucket=settings.s3_bucket,
+            Key=s3_key,
+            Body=pdf_bytes,
+            ContentType="application/pdf",
+        )
+
+        # Record in DB
+        generated_report = GeneratedReport(
+            id=report_id,
+            schedule_id=schedule.id,
+            template_id=schedule.template_id,
+            owner_id=schedule.owner_id,
+            title=config.get("title", schedule.name),
+            s3_key=s3_key,
+            file_size=len(pdf_bytes),
+            date_range_mode=schedule.date_range_mode.value,
+            date_from=date_from,
+            date_to=date_to,
+            status="completed",
+        )
+        session.add(generated_report)
+
+        # Update schedule timing
+        now = datetime.now(timezone.utc)
+        schedule.last_run_at = now
+        schedule.next_run_at = _compute_next_run(schedule)
+
+        session.commit()
+
+        # Send email if delivery method includes email
+        if schedule.delivery_method.value in ("email", "both") and schedule.recipients:
+            _send_report_email(schedule, pdf_bytes, config.get("title", schedule.name))
+
+        logger.info("Generated scheduled report %s for schedule %s", report_id, schedule_id)
+        return {"status": "completed", "report_id": report_id}
+
+    except Exception as exc:
+        session.rollback()
+        # Record failure
+        try:
+            generated_report = GeneratedReport(
+                schedule_id=schedule_id,
+                owner_id=schedule.owner_id if schedule else "unknown",
+                template_id=schedule.template_id if schedule else None,
+                title="Failed generation",
+                s3_key="",
+                status="failed",
+                error_message=str(exc),
+            )
+            session.add(generated_report)
+            session.commit()
+        except Exception:
+            logger.exception("Failed to record report generation failure")
+        raise self.retry(exc=exc, countdown=60 * (self.request.retries + 1))
+    finally:
+        session.close()
+
+
+def _send_report_email(schedule, pdf_bytes: bytes, title: str):
+    """Send generated report via email to recipients."""
+    import smtplib
+    from email.message import EmailMessage
+
+    if not settings.smtp_host:
+        logger.warning("SMTP not configured, skipping email delivery for schedule %s", schedule.id)
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = f"Scheduled Report: {title}"
+    msg["From"] = settings.smtp_from_address
+    msg["To"] = ", ".join(schedule.recipients)
+    msg.set_content(
+        f"Your scheduled report '{title}' has been generated.\n\n"
+        f"Date range: {schedule.date_range_mode.value}\n"
+        f"Please find the PDF attached."
+    )
+    msg.add_attachment(
+        pdf_bytes,
+        maintype="application",
+        subtype="pdf",
+        filename=f"{title.replace(' ', '_')}.pdf",
+    )
+
+    try:
+        if settings.smtp_use_tls:
+            server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port)
+        else:
+            server = smtplib.SMTP(settings.smtp_host, settings.smtp_port)
+            if settings.smtp_use_starttls:
+                server.starttls()
+        if settings.smtp_username:
+            server.login(settings.smtp_username, settings.smtp_password)
+        server.send_message(msg)
+        server.quit()
+        logger.info("Sent report email for schedule %s to %s", schedule.id, schedule.recipients)
+    except Exception:
+        logger.exception("Failed to send report email for schedule %s", schedule.id)

@@ -20,6 +20,8 @@ from darkdisco.common.models import (
     Severity,
     Source,
 )
+from markupsafe import Markup, escape
+
 from darkdisco.reporting import charts
 
 logger = logging.getLogger(__name__)
@@ -123,10 +125,61 @@ async def _query_institutions(
     return sorted(inst_data.values(), key=lambda x: x["total"], reverse=True)
 
 
+def _highlight_content(raw_content: str, matched_terms: list[dict]) -> Markup:
+    """Apply <mark> tags to raw_content at highlight offsets from matched_terms.
+
+    Handles overlapping ranges by merging them before applying markup.
+    HTML-escapes content before inserting highlight tags.
+    """
+    # Collect all highlight spans
+    spans: list[tuple[int, int]] = []
+    for term in matched_terms:
+        for hl in term.get("highlights", []):
+            start = hl.get("start", 0)
+            end = hl.get("end", 0)
+            if 0 <= start < end <= len(raw_content):
+                spans.append((start, end))
+
+    if not spans:
+        return Markup(escape(raw_content))
+
+    # Merge overlapping spans
+    spans.sort()
+    merged: list[tuple[int, int]] = [spans[0]]
+    for start, end in spans[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end:
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+
+    # Build output with escaped text and <mark> tags
+    parts: list[str] = []
+    pos = 0
+    for start, end in merged:
+        parts.append(str(escape(raw_content[pos:start])))
+        parts.append("<mark>")
+        parts.append(str(escape(raw_content[start:end])))
+        parts.append("</mark>")
+        pos = end
+    parts.append(str(escape(raw_content[pos:])))
+
+    return Markup("".join(parts))
+
+
 def _build_finding_dicts(findings: list[Finding]) -> list[dict]:
     """Convert Finding ORM objects to dicts for template and chart use."""
-    return [
-        {
+    result = []
+    for f in findings:
+        matched_terms = f.matched_terms or []
+        # Extract unique term values for display
+        term_values = list(dict.fromkeys(t.get("value", "") for t in matched_terms if t.get("value")))
+        # Build highlighted content if raw_content and highlights exist
+        highlighted_content = None
+        if f.raw_content and matched_terms:
+            highlighted_content = _highlight_content(f.raw_content, matched_terms)
+
+        result.append({
             "id": f.id,
             "title": f.title,
             "severity": f.severity.value if isinstance(f.severity, Severity) else str(f.severity),
@@ -136,12 +189,12 @@ def _build_finding_dicts(findings: list[Finding]) -> list[dict]:
             "source_name": f.source_name,
             "summary": f.summary,
             "classification": f.classification,
-            "matched_terms": f.matched_terms or [],
+            "matched_terms": term_values,
+            "highlighted_content": highlighted_content,
             "discovered_at": f.discovered_at,
             "discovered_at_fmt": _fmt_dt(f.discovered_at),
-        }
-        for f in findings
-    ]
+        })
+    return result
 
 
 def _build_severity_groups(finding_dicts: list[dict]) -> list[dict]:

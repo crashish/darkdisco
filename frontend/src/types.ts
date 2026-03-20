@@ -211,3 +211,38 @@ export interface ReportTemplate {
   created_at: string;
   updated_at: string;
 }
+
+export type DateRangeMode = 'last_24h' | 'last_7d' | 'last_30d' | 'last_quarter' | 'custom';
+export type DeliveryMethod = 's3_store' | 'email' | 'both';
+
+export interface ReportSchedule {
+  id: string;
+  template_id: string;
+  owner_id: string;
+  name: string;
+  cron_expression: string | null;
+  interval_seconds: number | null;
+  date_range_mode: DateRangeMode;
+  enabled: boolean;
+  delivery_method: DeliveryMethod;
+  recipients: string[] | null;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GeneratedReport {
+  id: string;
+  schedule_id: string | null;
+  template_id: string | null;
+  owner_id: string;
+  title: string;
+  file_size: number | null;
+  date_range_mode: string | null;
+  date_from: string | null;
+  date_to: string | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}

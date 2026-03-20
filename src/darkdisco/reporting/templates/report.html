@@ -11,7 +11,7 @@
     @top-right { content: "CONFIDENTIAL"; font-size: 8px; color: #dc2626; letter-spacing: 1px; }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 11px; color: #1f2937; line-height: 1.5; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, "Noto Color Emoji", sans-serif; font-size: 11px; color: #1f2937; line-height: 1.5; }
 
   .cover { page-break-after: always; text-align: center; padding-top: 3in; }
   .cover h1 { font-size: 28px; color: #111827; margin-bottom: 8px; }
@@ -58,6 +58,10 @@
   .finding-detail h4 { font-size: 12px; margin-bottom: 6px; }
   .finding-meta { display: flex; gap: 16px; font-size: 10px; color: #6b7280; margin-bottom: 6px; }
   .finding-summary { font-size: 10px; color: #4b5563; }
+  .finding-content { font-size: 10px; color: #374151; margin-top: 6px; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: hidden; background: #fff; border: 1px solid #e5e7eb; border-radius: 4px; padding: 8px; }
+  .finding-content mark { background: #fef08a; color: #1f2937; padding: 0 1px; border-radius: 2px; }
+  .matched-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .matched-pill { display: inline-block; background: #dbeafe; color: #1e40af; font-size: 9px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
 
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 9px; color: #9ca3af; text-align: center; }
   .toc { page-break-after: always; }
@@ -171,8 +175,14 @@
   {% if f.summary %}
   <div class="finding-summary">{{ f.summary }}</div>
   {% endif %}
+  {% if f.highlighted_content %}
+  <div class="finding-content">{{ f.highlighted_content }}</div>
+  {% endif %}
   {% if f.matched_terms %}
-  <div class="finding-summary" style="margin-top: 4px;"><strong>Matched:</strong> {{ f.matched_terms | join(", ") }}</div>
+  <div class="matched-pills">
+    <strong style="font-size: 9px; color: #6b7280; line-height: 20px;">Matched:</strong>
+    {% for term in f.matched_terms %}<span class="matched-pill">{{ term }}</span>{% endfor %}
+  </div>
   {% endif %}
 </div>
 {% endfor %}
