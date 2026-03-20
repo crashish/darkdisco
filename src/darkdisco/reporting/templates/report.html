@@ -173,10 +173,14 @@
   <div class="finding-meta">
     <span class="severity severity-{{ f.severity }}">{{ f.severity }}</span>
     <span class="status status-{{ f.status }}">{{ f.status | replace("_", " ") }}</span>
+    {% if f.classification %}<span class="matched-pill">{{ f.classification }}</span>{% endif %}
     <span>{{ f.institution_name or "—" }}</span>
     <span>{{ f.source_type or "—" }}</span>
     <span>{{ f.discovered_at_fmt }}</span>
   </div>
+  {% if f.analyst_notes %}
+  <div class="finding-summary" style="margin-bottom: 4px;"><strong>Analyst:</strong> {{ f.analyst_notes }}</div>
+  {% endif %}
   {% if f.highlighted_content %}
   <div class="finding-content">{{ f.highlighted_content }}</div>
   {% elif f.summary %}

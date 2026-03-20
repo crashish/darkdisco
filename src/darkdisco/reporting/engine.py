@@ -247,6 +247,7 @@ def _build_finding_dicts(findings: list[Finding], *, truncate: bool = True) -> l
             "source_name": f.source_name,
             "summary": f.summary,
             "classification": f.classification,
+            "analyst_notes": f.analyst_notes,
             "matched_terms": term_values,
             "highlighted_content": highlighted_content,
             "discovered_at": f.discovered_at,
