@@ -652,6 +652,7 @@ class ReportChartOptions(BaseModel):
 class ReportRequest(BaseModel):
     """Request body for report generation."""
     title: str = "DarkDisco Threat Intelligence Report"
+    subtitle: str = "Dark Web Threat Intelligence Report"
     date_from: datetime | None = None
     date_to: datetime | None = None
     client_id: str | None = None

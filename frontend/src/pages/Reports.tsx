@@ -120,6 +120,7 @@ function parseDateShorthand(input: string): { from: string; to: string } | null 
 
 export default function Reports() {
   const [title, setTitle] = useState('DarkDisco Threat Intelligence Report');
+  const [subtitle, setSubtitle] = useState('Dark Web Threat Intelligence Report');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [institutions, setInstitutions] = useState<Institution[]>([]);
@@ -179,6 +180,7 @@ export default function Reports() {
   const buildRequest = useCallback(() => {
     const req: Record<string, unknown> = {
       title,
+      subtitle,
       sections,
       charts,
       truncate_content: truncateContent,
@@ -194,6 +196,7 @@ export default function Reports() {
   const loadTemplate = (tmpl: ReportTemplate) => {
     const c = tmpl.config;
     setTitle(c.title || 'DarkDisco Threat Intelligence Report');
+    setSubtitle(c.subtitle || 'Dark Web Threat Intelligence Report');
     setSevFilter(c.severities ? new Set(c.severities) : new Set());
     setStatusFilter(c.statuses ? new Set(c.statuses) : new Set());
     setInstFilter(c.institution_id ? new Set([c.institution_id]) : new Set());
@@ -207,6 +210,7 @@ export default function Reports() {
     if (!saveTemplateName.trim()) return;
     const config = {
       title,
+      subtitle,
       client_id: undefined as string | undefined,
       institution_id: instFilter.size === 1 ? Array.from(instFilter)[0] : undefined,
       severities: sevFilter.size > 0 ? Array.from(sevFilter) : undefined,
@@ -777,6 +781,16 @@ export default function Reports() {
               onChange={e => setTitle(e.target.value)}
               style={inputStyle}
               placeholder="Report title..."
+            />
+            <label style={{ fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8, marginTop: 12, display: 'block' }}>
+              Subtitle
+            </label>
+            <input
+              type="text"
+              value={subtitle}
+              onChange={e => setSubtitle(e.target.value)}
+              style={inputStyle}
+              placeholder="Report subtitle..."
             />
           </div>
 

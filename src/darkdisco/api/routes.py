@@ -1761,6 +1761,7 @@ async def promote_mention(
         source_id=mention.source_id,
         severity=body.severity,
         title=body.title,
+        subtitle=getattr(body, 'subtitle', 'Dark Web Threat Intelligence Report'),
         summary=body.summary,
         raw_content=mention.content,
         content_hash=mention.content_hash,
@@ -2653,6 +2654,7 @@ async def pipeline_dry_run(
     mention = RawMention(
         source_name=body.source_name,
         title=body.title,
+        subtitle=getattr(body, 'subtitle', 'Dark Web Threat Intelligence Report'),
         content=body.content,
         metadata={},
     )
@@ -3033,6 +3035,7 @@ async def generate_report_pdf(
     pdf_bytes = await generate_pdf(
         db,
         title=body.title,
+        subtitle=getattr(body, 'subtitle', 'Dark Web Threat Intelligence Report'),
         date_from=body.date_from,
         date_to=body.date_to,
         client_id=body.client_id,
@@ -3063,6 +3066,7 @@ async def preview_report_html(
     html = await render_report_html(
         db,
         title=body.title,
+        subtitle=getattr(body, 'subtitle', 'Dark Web Threat Intelligence Report'),
         date_from=body.date_from,
         date_to=body.date_to,
         client_id=body.client_id,

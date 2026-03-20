@@ -349,6 +349,7 @@ async def render_report_html(
     session: AsyncSession,
     *,
     title: str = "DarkDisco Threat Intelligence Report",
+    subtitle: str = "Dark Web Threat Intelligence Report",
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     client_id: str | None = None,
@@ -448,6 +449,7 @@ async def render_report_html(
     template = env.get_template("report.html")
     return template.render(
         title=title,
+        subtitle=subtitle,
         date_range_label=date_range_label,
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         client_name=client_name,

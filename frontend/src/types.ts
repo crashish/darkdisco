@@ -182,6 +182,7 @@ export interface ReportChartOptions {
 
 export interface ReportRequest {
   title: string;
+  subtitle?: string;
   date_from?: string;
   date_to?: string;
   client_id?: string;
@@ -195,6 +196,7 @@ export interface ReportRequest {
 
 export interface ReportTemplateConfig {
   title: string;
+  subtitle?: string;
   client_id?: string;
   institution_id?: string;
   severities?: string[];
