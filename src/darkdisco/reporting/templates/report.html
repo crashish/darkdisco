@@ -10,8 +10,13 @@
     @bottom-center { content: "Page " counter(page) " of " counter(pages); font-size: 9px; color: #6b7280; }
     @top-right { content: "CONFIDENTIAL"; font-size: 8px; color: #dc2626; letter-spacing: 1px; }
   }
+  @font-face {
+    font-family: "Emoji";
+    src: local("Noto Color Emoji"), local("Noto Emoji"), local("Apple Color Emoji"), local("Segoe UI Emoji");
+    unicode-range: U+200D, U+2030-205E, U+2070-209F, U+20A0-20CF, U+2100-214F, U+2150-218F, U+2190-21FF, U+2200-22FF, U+2300-23FF, U+2460-24FF, U+2500-257F, U+2580-259F, U+25A0-25FF, U+2600-26FF, U+2700-27BF, U+2900-297F, U+2B00-2BFF, U+FE00-FE0F, U+1F000-1FAFF;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: "Helvetica Neue", Helvetica, Arial, "Noto Color Emoji", sans-serif; font-size: 11px; color: #1f2937; line-height: 1.5; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, "Emoji", sans-serif; font-size: 11px; color: #1f2937; line-height: 1.5; }
 
   .cover { page-break-after: always; text-align: center; padding-top: 3in; }
   .cover h1 { font-size: 28px; color: #111827; margin-bottom: 8px; }
@@ -172,11 +177,10 @@
     <span>{{ f.source_type or "—" }}</span>
     <span>{{ f.discovered_at_fmt }}</span>
   </div>
-  {% if f.summary %}
-  <div class="finding-summary">{{ f.summary }}</div>
-  {% endif %}
   {% if f.highlighted_content %}
   <div class="finding-content">{{ f.highlighted_content }}</div>
+  {% elif f.summary %}
+  <div class="finding-summary">{{ f.summary }}</div>
   {% endif %}
   {% if f.matched_terms %}
   <div class="matched-pills">
