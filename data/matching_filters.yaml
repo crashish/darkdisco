@@ -194,3 +194,31 @@ negative_patterns:
   - "referral (?:code|bonus|link)"
   - "cashback"
   - "rewards? (?:program|points)"
+
+  # Generic fraud service advertisements (not institution-specific threats)
+  # These are recurring spam ads for fraud tools/services that match on
+  # generic keywords like "Global", "United" from country lists.
+  # Patterns target the AD TEMPLATE STRUCTURE, not just keywords, to avoid
+  # suppressing legitimate threat findings that happen to mention these services.
+
+  # Bank loading / payment gateway service ads (structural patterns)
+  - "bank loading (?:usa|uk|eu|canada)"
+  - "premium global document solutions"
+  - "(?:llc formation|ltd registration).{0,60}(?:ein|itin|ssn)"
+  - "(?:ein|itin) documents?.{0,60}(?:selfie with id|driver license)"
+  - "(?:gateways?|portals?).{0,30}(?:2d.{0,5}3d|3d.{0,5}2d).{0,10}secure"
+
+  # VoIP / SIP service ads (only the full ad template, not keyword mentions)
+  # These ads list countries + services together in a structured format
+  - "(?:did numbers?|sip trunks?).{0,30}(?:countries available|available countries)"
+  - "voip route.{0,10}(?:3cx|autodialer).{0,20}service provider"
+
+  # Lead generation ads (structural: list format with multiple lead types)
+  - "(?:b2b.{0,5}b2c|b2c.{0,5}b2b) leads?"
+  - "all leads are geo.targeted"
+
+  # Generic country flag lists in service ads
+  # 4+ flag emojis in sequence = service ad listing coverage, not threat content
+  - "(?:🇺🇸|🇬🇧|🇨🇦|🇦🇺).{0,5}(?:🇩🇪|🇫🇷|🇮🇹|🇪🇸).{0,5}(?:🇳🇱|🇧🇪|🇨🇭|🇦🇹)"
+  - "countries (?:available|supported|covered).{0,60}(?:usa|united states|united kingdom)"
+  - "global coverage.{0,20}(?:🇺🇸|🇬🇧|🇨🇦)"
