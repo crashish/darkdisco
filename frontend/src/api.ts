@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -395,4 +395,39 @@ export async function promoteMention(mentionId: string, body: {
     method: 'POST',
     body: JSON.stringify(body),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Report Templates
+// ---------------------------------------------------------------------------
+
+export async function fetchReportTemplates(): Promise<ReportTemplate[]> {
+  return apiFetch('/reports/templates', []);
+}
+
+export async function createReportTemplate(name: string, description: string | null, config: ReportTemplateConfig): Promise<ReportTemplate> {
+  return apiFetch('/reports/templates', {} as ReportTemplate, {
+    method: 'POST',
+    body: JSON.stringify({ name, description, config }),
+  });
+}
+
+export async function updateReportTemplate(id: string, data: { name?: string; description?: string | null; config?: ReportTemplateConfig }): Promise<ReportTemplate> {
+  return apiFetch(`/reports/templates/${id}`, {} as ReportTemplate, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteReportTemplate(id: string): Promise<void> {
+  const token = localStorage.getItem('dd_token');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/reports/templates/${id}`, { method: 'DELETE', headers });
+  if (res.status === 401) {
+    localStorage.removeItem('dd_token');
+    window.dispatchEvent(new CustomEvent('auth:logout', { detail: 'unauthorized' }));
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
 }

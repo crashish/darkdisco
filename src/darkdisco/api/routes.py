@@ -71,6 +71,9 @@ from darkdisco.api.schemas import (
     DiscoveredChannelOut,
     DiscoveredChannelUpdate,
     ReportRequest,
+    ReportTemplateCreate,
+    ReportTemplateOut,
+    ReportTemplateUpdate,
     WatchTermCreate,
     WatchTermOut,
     WatchTermUpdate,
@@ -88,6 +91,7 @@ from darkdisco.common.models import (
     FindingStatus,
     ImageOCRCache,
     Institution,
+    ReportTemplate,
     Notification,
     RawMention,
     Severity,
@@ -3016,4 +3020,90 @@ async def preview_report_html(
         iter([html.encode()]),
         media_type="text/html",
     )
+
+
+# ---------------------------------------------------------------------------
+# Report Templates
+# ---------------------------------------------------------------------------
+
+@protected.get("/reports/templates", response_model=list[ReportTemplateOut])
+async def list_report_templates(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """List report templates owned by the current user."""
+    result = await db.execute(
+        select(ReportTemplate)
+        .where(ReportTemplate.owner_id == user.id)
+        .order_by(ReportTemplate.updated_at.desc())
+    )
+    return result.scalars().all()
+
+
+@protected.post("/reports/templates", response_model=ReportTemplateOut, status_code=201)
+async def create_report_template(
+    body: ReportTemplateCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Save current report configuration as a named template."""
+    template = ReportTemplate(
+        name=body.name,
+        description=body.description,
+        owner_id=user.id,
+        config=body.config.model_dump(),
+    )
+    db.add(template)
+    await db.commit()
+    await db.refresh(template)
+    return template
+
+
+@protected.get("/reports/templates/{template_id}", response_model=ReportTemplateOut)
+async def get_report_template(
+    template_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Get a specific report template."""
+    template = await db.get(ReportTemplate, template_id)
+    if not template or template.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
+
+
+@protected.put("/reports/templates/{template_id}", response_model=ReportTemplateOut)
+async def update_report_template(
+    template_id: str,
+    body: ReportTemplateUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Update a report template."""
+    template = await db.get(ReportTemplate, template_id)
+    if not template or template.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if body.name is not None:
+        template.name = body.name
+    if body.description is not None:
+        template.description = body.description
+    if body.config is not None:
+        template.config = body.config.model_dump()
+    await db.commit()
+    await db.refresh(template)
+    return template
+
+
+@protected.delete("/reports/templates/{template_id}", status_code=204)
+async def delete_report_template(
+    template_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Delete a report template."""
+    template = await db.get(ReportTemplate, template_id)
+    if not template or template.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Template not found")
+    await db.delete(template)
+    await db.commit()
 

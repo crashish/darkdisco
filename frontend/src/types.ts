@@ -191,3 +191,23 @@ export interface ReportRequest {
   sections: ReportSections;
   charts: ReportChartOptions;
 }
+
+export interface ReportTemplateConfig {
+  title: string;
+  client_id?: string;
+  institution_id?: string;
+  severities?: string[];
+  statuses?: string[];
+  sections: ReportSections;
+  charts: ReportChartOptions;
+}
+
+export interface ReportTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  owner_id: string;
+  config: ReportTemplateConfig;
+  created_at: string;
+  updated_at: string;
+}

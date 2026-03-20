@@ -399,6 +399,20 @@ class User(Base):
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ReportTemplate(Base):
+    """Saved report configuration template."""
+
+    __tablename__ = "report_templates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class AlertRule(Base):
     """Automated alerting rule — triggers notifications on new findings matching criteria."""
 
