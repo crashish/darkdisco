@@ -1552,6 +1552,49 @@ async def mention_archive_contents(
     return {"mention_id": mention_id, "files": files, "total": len(files)}
 
 
+@protected.get("/extracted-files")
+async def list_extracted_files(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    extension: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """List all extracted files with pagination."""
+    stmt = (
+        select(ExtractedFile, RawMention.metadata_.label("mention_meta"))
+        .join(RawMention, RawMention.id == ExtractedFile.mention_id)
+        .order_by(ExtractedFile.created_at.desc())
+    )
+    count_stmt = select(func.count()).select_from(ExtractedFile)
+
+    if extension:
+        stmt = stmt.where(ExtractedFile.extension == extension)
+        count_stmt = count_stmt.where(ExtractedFile.extension == extension)
+
+    total = (await db.execute(count_stmt)).scalar() or 0
+    result = await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
+    rows = result.all()
+
+    files = []
+    for row in rows:
+        ef = row[0]
+        mention_meta = row[1] or {}
+        files.append({
+            "id": ef.id,
+            "mention_id": ef.mention_id,
+            "filename": ef.filename,
+            "size": ef.size or 0,
+            "extension": ef.extension,
+            "is_text": ef.is_text,
+            "s3_key": ef.s3_key,
+            "sha256": ef.sha256,
+            "archive_name": mention_meta.get("file_name", ""),
+            "created_at": ef.created_at.isoformat() if ef.created_at else None,
+        })
+
+    return {"items": files, "total": total, "page": page, "page_size": page_size}
+
+
 @protected.get("/extracted-files/search")
 async def search_extracted_files(
     q: str = Query(..., min_length=1),

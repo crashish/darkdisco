@@ -351,31 +351,23 @@ export default function Files() {
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [archivesLoading, setArchivesLoading] = useState(true);
 
-  // Load archive list on mount
+  // Load extracted files list on mount
   useEffect(() => {
     async function loadArchives() {
       setArchivesLoading(true);
       try {
-        const res = await authedFetch(`${BASE}/mentions?has_media=true&page_size=200`);
+        const res = await authedFetch(`${BASE}/extracted-files?page=1&page_size=200`);
         if (!res.ok) return;
         const data = await res.json();
-        const items = (data.items || [])
-          .filter((m: Record<string, unknown>) => {
-            const meta = m.metadata as Record<string, unknown> | undefined;
-            return meta?.s3_key;
-          })
-          .map((m: Record<string, unknown>) => {
-            const meta = m.metadata as Record<string, unknown> | undefined;
-            return {
-              mention_id: m.id as string,
-              file_name: (meta?.file_name as string) || 'unknown',
-              file_size: (meta?.file_size as number) || 0,
-              file_mime: (meta?.file_mime as string) || '',
-              source_name: (m.source_name as string) || '',
-              collected_at: (m.collected_at as string) || '',
-              file_count: 0,
-            };
-          });
+        const items = (data.items || []).map((f: Record<string, unknown>) => ({
+          mention_id: f.mention_id as string,
+          file_name: (f.filename as string) || 'unknown',
+          file_size: (f.size as number) || 0,
+          file_mime: (f.extension as string) || '',
+          source_name: (f.archive_name as string) || '',
+          collected_at: (f.created_at as string) || '',
+          file_count: 0,
+        }));
         setArchives(items);
       } catch { /* ignore */ }
       setArchivesLoading(false);
