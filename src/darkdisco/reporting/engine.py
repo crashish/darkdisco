@@ -125,11 +125,14 @@ async def _query_institutions(
     return sorted(inst_data.values(), key=lambda x: x["total"], reverse=True)
 
 
-def _highlight_content(raw_content: str, matched_terms: list[dict]) -> Markup:
-    """Apply <mark> tags to raw_content at highlight offsets from matched_terms.
+_CONTEXT_CHARS = 120  # chars of context around each highlight match
 
-    Handles overlapping ranges by merging them before applying markup.
-    HTML-escapes content before inserting highlight tags.
+
+def _highlight_content(raw_content: str, matched_terms: list[dict]) -> Markup:
+    """Build a truncated excerpt of raw_content with <mark> tags around matches.
+
+    Shows a context window around each match rather than the full content,
+    joining non-contiguous segments with ellipsis. Keeps report concise.
     """
     # Collect all highlight spans
     spans: list[tuple[int, int]] = []
@@ -141,7 +144,11 @@ def _highlight_content(raw_content: str, matched_terms: list[dict]) -> Markup:
                 spans.append((start, end))
 
     if not spans:
-        return Markup(escape(raw_content))
+        # No highlights — just show a truncated preview
+        preview = raw_content[:400]
+        if len(raw_content) > 400:
+            preview += "…"
+        return Markup(escape(preview))
 
     # Merge overlapping spans
     spans.sort()
@@ -153,16 +160,54 @@ def _highlight_content(raw_content: str, matched_terms: list[dict]) -> Markup:
         else:
             merged.append((start, end))
 
-    # Build output with escaped text and <mark> tags
-    parts: list[str] = []
-    pos = 0
+    # Build context windows around each match
+    windows: list[tuple[int, int]] = []
     for start, end in merged:
-        parts.append(str(escape(raw_content[pos:start])))
-        parts.append("<mark>")
-        parts.append(str(escape(raw_content[start:end])))
-        parts.append("</mark>")
-        pos = end
-    parts.append(str(escape(raw_content[pos:])))
+        win_start = max(0, start - _CONTEXT_CHARS)
+        win_end = min(len(raw_content), end + _CONTEXT_CHARS)
+        windows.append((win_start, win_end))
+
+    # Merge overlapping windows
+    merged_windows: list[tuple[int, int]] = [windows[0]]
+    for win_start, win_end in windows[1:]:
+        prev_start, prev_end = merged_windows[-1]
+        if win_start <= prev_end:
+            merged_windows[-1] = (prev_start, max(prev_end, win_end))
+        else:
+            merged_windows.append((win_start, win_end))
+
+    # Build output: excerpt with highlights, ellipsis between segments
+    parts: list[str] = []
+    for i, (win_start, win_end) in enumerate(merged_windows):
+        if i == 0 and win_start > 0:
+            parts.append("…")
+        elif i > 0:
+            parts.append(" … ")
+
+        segment = raw_content[win_start:win_end]
+        # Apply highlight marks within this segment
+        seg_parts: list[str] = []
+        seg_pos = win_start
+        for mark_start, mark_end in merged:
+            if mark_end <= win_start or mark_start >= win_end:
+                continue
+            # Clamp to window
+            ms = max(mark_start, win_start)
+            me = min(mark_end, win_end)
+            # Text before this mark
+            if ms > seg_pos:
+                seg_parts.append(str(escape(raw_content[seg_pos:ms])))
+            seg_parts.append("<mark>")
+            seg_parts.append(str(escape(raw_content[ms:me])))
+            seg_parts.append("</mark>")
+            seg_pos = me
+        # Remaining text in window
+        if seg_pos < win_end:
+            seg_parts.append(str(escape(raw_content[seg_pos:win_end])))
+        parts.append("".join(seg_parts))
+
+        if win_end < len(raw_content) and i == len(merged_windows) - 1:
+            parts.append("…")
 
     return Markup("".join(parts))
 
