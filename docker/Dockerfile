@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unrar-free \
     tesseract-ocr \
     tesseract-ocr-eng \
+    fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies
