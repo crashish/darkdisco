@@ -658,3 +658,40 @@ class ReportRequest(BaseModel):
     statuses: list[str] | None = None
     sections: ReportSections = Field(default_factory=ReportSections)
     charts: ReportChartOptions = Field(default_factory=ReportChartOptions)
+
+
+class ReportTemplateConfig(BaseModel):
+    """Saved report configuration (everything except date range)."""
+    title: str = "DarkDisco Threat Intelligence Report"
+    client_id: str | None = None
+    institution_id: str | None = None
+    severities: list[str] | None = None
+    statuses: list[str] | None = None
+    sections: ReportSections = Field(default_factory=ReportSections)
+    charts: ReportChartOptions = Field(default_factory=ReportChartOptions)
+
+
+class ReportTemplateCreate(BaseModel):
+    """Create a report template."""
+    name: str
+    description: str | None = None
+    config: ReportTemplateConfig
+
+
+class ReportTemplateUpdate(BaseModel):
+    """Update a report template."""
+    name: str | None = None
+    description: str | None = None
+    config: ReportTemplateConfig | None = None
+
+
+class ReportTemplateOut(BaseModel):
+    """Report template response."""
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    name: str
+    description: str | None
+    owner_id: str
+    config: dict
+    created_at: datetime
+    updated_at: datetime

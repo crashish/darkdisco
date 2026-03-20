@@ -1,6 +1,8 @@
 {
-  "database": "dolt",
   "backend": "dolt",
+  "database": "dolt",
+  "dolt_database": "darkdisco",
   "dolt_mode": "server",
-  "dolt_database": "da"
+  "dolt_server_host": "127.0.0.1",
+  "dolt_server_port": 3307
 }

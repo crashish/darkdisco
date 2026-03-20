@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchInstitutions } from '../api';
+import { fetchInstitutions, fetchReportTemplates, createReportTemplate, updateReportTemplate, deleteReportTemplate } from '../api';
 import { colors, card, font, statusLabel } from '../theme';
 import MultiSelect from '../components/MultiSelect';
-import type { Institution, Severity, FindingStatus, ReportSections, ReportChartOptions } from '../types';
-import { Calendar, Download, Loader2, Eye, ChevronDown, ChevronRight } from 'lucide-react';
+import type { Institution, Severity, FindingStatus, ReportSections, ReportChartOptions, ReportTemplate } from '../types';
+import { Calendar, Download, Loader2, Eye, ChevronDown, ChevronRight, Save, FolderOpen, Trash2, Pencil } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allSeverities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -134,10 +134,21 @@ export default function Reports() {
   const [error, setError] = useState<string | null>(null);
   const [sectionsOpen, setSectionsOpen] = useState(true);
   const [chartsOpen, setChartsOpen] = useState(false);
+  const [templates, setTemplates] = useState<ReportTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [saveTemplateName, setSaveTemplateName] = useState('');
+  const [saveTemplateDesc, setSaveTemplateDesc] = useState('');
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+
+  const loadTemplates = useCallback(() => {
+    fetchReportTemplates().then(setTemplates).catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetchInstitutions().then(setInstitutions);
-  }, []);
+    loadTemplates();
+  }, [loadTemplates]);
 
   const buildRequest = useCallback(() => {
     const req: Record<string, unknown> = {
@@ -152,6 +163,53 @@ export default function Reports() {
     if (instFilter.size === 1) req.institution_id = Array.from(instFilter)[0];
     return req;
   }, [title, dateFrom, dateTo, sevFilter, statusFilter, instFilter, sections, charts]);
+
+  const loadTemplate = (tmpl: ReportTemplate) => {
+    const c = tmpl.config;
+    setTitle(c.title || 'DarkDisco Threat Intelligence Report');
+    setSevFilter(c.severities ? new Set(c.severities) : new Set());
+    setStatusFilter(c.statuses ? new Set(c.statuses) : new Set());
+    setInstFilter(c.institution_id ? new Set([c.institution_id]) : new Set());
+    setSections(c.sections || { ...defaultSections });
+    setCharts(c.charts || { ...defaultCharts });
+    setSelectedTemplateId(tmpl.id);
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!saveTemplateName.trim()) return;
+    const config = {
+      title,
+      client_id: undefined as string | undefined,
+      institution_id: instFilter.size === 1 ? Array.from(instFilter)[0] : undefined,
+      severities: sevFilter.size > 0 ? Array.from(sevFilter) : undefined,
+      statuses: statusFilter.size > 0 ? Array.from(statusFilter) : undefined,
+      sections,
+      charts,
+    };
+    if (editingTemplateId) {
+      await updateReportTemplate(editingTemplateId, { name: saveTemplateName, description: saveTemplateDesc || null, config });
+    } else {
+      await createReportTemplate(saveTemplateName, saveTemplateDesc || null, config);
+    }
+    setShowSaveDialog(false);
+    setSaveTemplateName('');
+    setSaveTemplateDesc('');
+    setEditingTemplateId(null);
+    loadTemplates();
+  };
+
+  const handleDeleteTemplate = async (id: string) => {
+    await deleteReportTemplate(id);
+    if (selectedTemplateId === id) setSelectedTemplateId('');
+    loadTemplates();
+  };
+
+  const handleEditTemplate = (tmpl: ReportTemplate) => {
+    setSaveTemplateName(tmpl.name);
+    setSaveTemplateDesc(tmpl.description || '');
+    setEditingTemplateId(tmpl.id);
+    setShowSaveDialog(true);
+  };
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -240,6 +298,110 @@ export default function Reports() {
       <p style={{ color: colors.textDim, fontSize: 14, marginBottom: 24 }}>
         Generate threat intelligence reports as PDF
       </p>
+
+      {/* Templates */}
+      <div style={{ ...card, marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: templates.length > 0 ? 12 : 0 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <FolderOpen size={14} />
+            Saved Templates
+          </label>
+          <button
+            onClick={() => { setEditingTemplateId(null); setSaveTemplateName(''); setSaveTemplateDesc(''); setShowSaveDialog(true); }}
+            style={{ ...btnSecondary, padding: '6px 12px', fontSize: 12 }}
+          >
+            <Save size={14} />
+            Save Current
+          </button>
+        </div>
+        {templates.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {templates.map(tmpl => (
+              <div
+                key={tmpl.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '6px 10px', borderRadius: 6,
+                  border: `1px solid ${selectedTemplateId === tmpl.id ? colors.accent : colors.border}`,
+                  background: selectedTemplateId === tmpl.id ? colors.accent + '15' : colors.bgSurface,
+                  fontSize: 13,
+                }}
+              >
+                <button
+                  onClick={() => loadTemplate(tmpl)}
+                  style={{ background: 'none', border: 'none', color: colors.text, cursor: 'pointer', padding: 0, fontSize: 13 }}
+                  title={tmpl.description || 'Load template'}
+                >
+                  {tmpl.name}
+                </button>
+                <button
+                  onClick={() => handleEditTemplate(tmpl)}
+                  style={{ background: 'none', border: 'none', color: colors.textMuted, cursor: 'pointer', padding: 0 }}
+                  title="Edit template"
+                >
+                  <Pencil size={12} />
+                </button>
+                <button
+                  onClick={() => handleDeleteTemplate(tmpl.id)}
+                  style={{ background: 'none', border: 'none', color: colors.textMuted, cursor: 'pointer', padding: 0 }}
+                  title="Delete template"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {templates.length === 0 && (
+          <p style={{ color: colors.textMuted, fontSize: 12, marginTop: 8 }}>
+            No saved templates. Configure your report and click "Save Current" to create one.
+          </p>
+        )}
+      </div>
+
+      {/* Save Template Dialog */}
+      {showSaveDialog && (
+        <div style={{
+          ...card, marginBottom: 24,
+          border: `1px solid ${colors.accent}`,
+        }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10, display: 'block' }}>
+            {editingTemplateId ? 'Edit Template' : 'Save as Template'}
+          </label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input
+              type="text"
+              value={saveTemplateName}
+              onChange={e => setSaveTemplateName(e.target.value)}
+              placeholder="Template name..."
+              style={inputStyle}
+              autoFocus
+            />
+            <input
+              type="text"
+              value={saveTemplateDesc}
+              onChange={e => setSaveTemplateDesc(e.target.value)}
+              placeholder="Description (optional)..."
+              style={inputStyle}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={handleSaveTemplate}
+                disabled={!saveTemplateName.trim()}
+                style={{ ...btnPrimary, padding: '8px 16px', fontSize: 13, opacity: saveTemplateName.trim() ? 1 : 0.5 }}
+              >
+                {editingTemplateId ? 'Update' : 'Save'}
+              </button>
+              <button
+                onClick={() => { setShowSaveDialog(false); setEditingTemplateId(null); }}
+                style={{ ...btnSecondary, padding: '8px 16px', fontSize: 13 }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
         {/* Left column: Configuration */}
