@@ -244,7 +244,6 @@
   <thead>
     <tr>
       <th>Institution</th>
-      <th>Client</th>
       <th>Findings</th>
       <th>Critical</th>
       <th>High</th>
@@ -255,7 +254,6 @@
     {% for inst in institutions %}
     <tr>
       <td>{{ inst.name }}</td>
-      <td>{{ inst.client_name }}</td>
       <td>{{ inst.total }}</td>
       <td style="color: #dc2626; font-weight: 600;">{{ inst.critical }}</td>
       <td style="color: #ea580c; font-weight: 600;">{{ inst.high }}</td>
