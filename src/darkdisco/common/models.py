@@ -413,6 +413,78 @@ class ReportTemplate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class DateRangeMode(str, enum.Enum):
+    last_24h = "last_24h"
+    last_7d = "last_7d"
+    last_30d = "last_30d"
+    last_quarter = "last_quarter"
+    custom = "custom"
+
+
+class DeliveryMethod(str, enum.Enum):
+    s3_store = "s3_store"
+    email = "email"
+    both = "both"
+
+
+class ReportSchedule(Base):
+    """Scheduled report generation configuration."""
+
+    __tablename__ = "report_schedules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    template_id: Mapped[str] = mapped_column(ForeignKey("report_templates.id"), nullable=False)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    cron_expression: Mapped[str | None] = mapped_column(String(100))
+    interval_seconds: Mapped[int | None] = mapped_column(Integer)
+    date_range_mode: Mapped[DateRangeMode] = mapped_column(
+        Enum(DateRangeMode), default=DateRangeMode.last_7d,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    delivery_method: Mapped[DeliveryMethod] = mapped_column(
+        Enum(DeliveryMethod), default=DeliveryMethod.s3_store,
+    )
+    recipients: Mapped[list | None] = mapped_column(JSONB)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    template: Mapped[ReportTemplate] = relationship()
+
+    __table_args__ = (
+        Index("ix_report_schedules_next_run", "next_run_at"),
+        Index("ix_report_schedules_owner", "owner_id"),
+    )
+
+
+class GeneratedReport(Base):
+    """A generated report stored in S3."""
+
+    __tablename__ = "generated_reports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    schedule_id: Mapped[str | None] = mapped_column(ForeignKey("report_schedules.id"))
+    template_id: Mapped[str | None] = mapped_column(ForeignKey("report_templates.id"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    s3_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    file_size: Mapped[int | None] = mapped_column(Integer)
+    date_range_mode: Mapped[str | None] = mapped_column(String(50))
+    date_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    date_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20), default="completed")
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_generated_reports_owner", "owner_id"),
+        Index("ix_generated_reports_schedule", "schedule_id"),
+        Index("ix_generated_reports_created", "created_at"),
+    )
+
+
 class AlertRule(Base):
     """Automated alerting rule — triggers notifications on new findings matching criteria."""
 

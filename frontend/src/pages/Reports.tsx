@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchInstitutions, fetchSources, fetchReportTemplates, createReportTemplate, updateReportTemplate, deleteReportTemplate } from '../api';
+import { fetchInstitutions, fetchSources, fetchReportTemplates, createReportTemplate, updateReportTemplate, deleteReportTemplate, fetchReportSchedules, createReportSchedule, updateReportSchedule, deleteReportSchedule, fetchGeneratedReports, downloadGeneratedReport } from '../api';
 import { colors, card, font, statusLabel } from '../theme';
 import MultiSelect from '../components/MultiSelect';
-import type { Institution, Source, Severity, FindingStatus, ReportSections, ReportChartOptions, ReportTemplate } from '../types';
-import { Calendar, Download, Loader2, Eye, ChevronDown, ChevronRight, Save, FolderOpen, Trash2, Pencil } from 'lucide-react';
+import type { Institution, Source, Severity, FindingStatus, ReportSections, ReportChartOptions, ReportTemplate, ReportSchedule, GeneratedReport, DateRangeMode, DeliveryMethod } from '../types';
+import { Calendar, Download, Loader2, Eye, ChevronDown, ChevronRight, Save, FolderOpen, Trash2, Pencil, Clock, Play, Pause, FileText } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allSeverities: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -143,15 +143,40 @@ export default function Reports() {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
 
+  // Schedule state
+  const [schedules, setSchedules] = useState<ReportSchedule[]>([]);
+  const [generatedReports, setGeneratedReports] = useState<GeneratedReport[]>([]);
+  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const [scheduleName, setScheduleName] = useState('');
+  const [scheduleTemplateId, setScheduleTemplateId] = useState('');
+  const [scheduleCron, setScheduleCron] = useState('');
+  const [scheduleInterval, setScheduleInterval] = useState('');
+  const [scheduleDateRange, setScheduleDateRange] = useState<DateRangeMode>('last_7d');
+  const [scheduleDelivery, setScheduleDelivery] = useState<DeliveryMethod>('s3_store');
+  const [scheduleRecipients, setScheduleRecipients] = useState('');
+  const [schedulesOpen, setSchedulesOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   const loadTemplates = useCallback(() => {
     fetchReportTemplates().then(setTemplates).catch(() => {});
+  }, []);
+
+  const loadSchedules = useCallback(() => {
+    fetchReportSchedules().then(setSchedules).catch(() => {});
+  }, []);
+
+  const loadGeneratedReports = useCallback(() => {
+    fetchGeneratedReports().then(setGeneratedReports).catch(() => {});
   }, []);
 
   useEffect(() => {
     fetchInstitutions().then(setInstitutions);
     fetchSources().then(setSources);
     loadTemplates();
-  }, [loadTemplates]);
+    loadSchedules();
+    loadGeneratedReports();
+  }, [loadTemplates, loadSchedules, loadGeneratedReports]);
 
   const buildRequest = useCallback(() => {
     const req: Record<string, unknown> = {
@@ -212,6 +237,80 @@ export default function Reports() {
     setSaveTemplateDesc(tmpl.description || '');
     setEditingTemplateId(tmpl.id);
     setShowSaveDialog(true);
+  };
+
+  const resetScheduleForm = () => {
+    setScheduleName('');
+    setScheduleTemplateId('');
+    setScheduleCron('');
+    setScheduleInterval('');
+    setScheduleDateRange('last_7d');
+    setScheduleDelivery('s3_store');
+    setScheduleRecipients('');
+    setEditingScheduleId(null);
+  };
+
+  const handleSaveSchedule = async () => {
+    if (!scheduleName.trim() || !scheduleTemplateId) return;
+    const data: Record<string, unknown> = {
+      name: scheduleName,
+      template_id: scheduleTemplateId,
+      date_range_mode: scheduleDateRange,
+      delivery_method: scheduleDelivery,
+      enabled: true,
+    };
+    if (scheduleCron.trim()) data.cron_expression = scheduleCron.trim();
+    if (scheduleInterval.trim()) data.interval_seconds = parseInt(scheduleInterval, 10);
+    if (scheduleRecipients.trim()) data.recipients = scheduleRecipients.split(',').map(r => r.trim()).filter(Boolean);
+
+    if (editingScheduleId) {
+      await updateReportSchedule(editingScheduleId, data as Parameters<typeof updateReportSchedule>[1]);
+    } else {
+      await createReportSchedule(data as Parameters<typeof createReportSchedule>[0]);
+    }
+    setShowScheduleDialog(false);
+    resetScheduleForm();
+    loadSchedules();
+  };
+
+  const handleToggleSchedule = async (sched: ReportSchedule) => {
+    await updateReportSchedule(sched.id, { enabled: !sched.enabled });
+    loadSchedules();
+  };
+
+  const handleDeleteSchedule = async (id: string) => {
+    await deleteReportSchedule(id);
+    loadSchedules();
+  };
+
+  const handleEditSchedule = (sched: ReportSchedule) => {
+    setScheduleName(sched.name);
+    setScheduleTemplateId(sched.template_id);
+    setScheduleCron(sched.cron_expression || '');
+    setScheduleInterval(sched.interval_seconds ? String(sched.interval_seconds) : '');
+    setScheduleDateRange(sched.date_range_mode);
+    setScheduleDelivery(sched.delivery_method);
+    setScheduleRecipients(sched.recipients?.join(', ') || '');
+    setEditingScheduleId(sched.id);
+    setShowScheduleDialog(true);
+  };
+
+  const handleDownloadReport = async (reportId: string) => {
+    await downloadGeneratedReport(reportId);
+  };
+
+  const formatFileSize = (bytes: number | null) => {
+    if (!bytes) return '—';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const formatInterval = (seconds: number | null) => {
+    if (!seconds) return '—';
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+    return `${Math.round(seconds / 86400)}d`;
   };
 
   const handleGenerate = async () => {
@@ -405,6 +504,263 @@ export default function Reports() {
           </div>
         </div>
       )}
+
+      {/* Scheduled Reports */}
+      <div style={{ ...card, marginBottom: 24 }}>
+        <button
+          onClick={() => setSchedulesOpen(o => !o)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+            background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em',
+          }}
+        >
+          {schedulesOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <Clock size={14} />
+          Scheduled Reports ({schedules.length})
+        </button>
+
+        {schedulesOpen && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+              <button
+                onClick={() => { resetScheduleForm(); setShowScheduleDialog(true); }}
+                style={{ ...btnSecondary, padding: '6px 12px', fontSize: 12 }}
+              >
+                <Clock size={14} />
+                New Schedule
+              </button>
+            </div>
+
+            {/* Schedule creation/edit dialog */}
+            {showScheduleDialog && (
+              <div style={{ ...card, marginBottom: 16, border: `1px solid ${colors.accent}` }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10, display: 'block' }}>
+                  {editingScheduleId ? 'Edit Schedule' : 'New Schedule'}
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <input
+                    type="text"
+                    value={scheduleName}
+                    onChange={e => setScheduleName(e.target.value)}
+                    placeholder="Schedule name..."
+                    style={inputStyle}
+                    autoFocus
+                  />
+                  <select
+                    value={scheduleTemplateId}
+                    onChange={e => setScheduleTemplateId(e.target.value)}
+                    style={selectStyle}
+                  >
+                    <option value="">Select template...</option>
+                    {templates.map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 11, color: colors.textMuted, display: 'block', marginBottom: 4 }}>
+                        Cron Expression (e.g. 0 8 * * 1)
+                      </label>
+                      <input
+                        type="text"
+                        value={scheduleCron}
+                        onChange={e => setScheduleCron(e.target.value)}
+                        placeholder="0 8 * * 1"
+                        style={inputStyle}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 11, color: colors.textMuted, display: 'block', marginBottom: 4 }}>
+                        Or Interval (seconds)
+                      </label>
+                      <input
+                        type="number"
+                        value={scheduleInterval}
+                        onChange={e => setScheduleInterval(e.target.value)}
+                        placeholder="86400"
+                        style={inputStyle}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 11, color: colors.textMuted, display: 'block', marginBottom: 4 }}>
+                        Date Range
+                      </label>
+                      <select value={scheduleDateRange} onChange={e => setScheduleDateRange(e.target.value as DateRangeMode)} style={selectStyle}>
+                        <option value="last_24h">Last 24 Hours</option>
+                        <option value="last_7d">Last 7 Days</option>
+                        <option value="last_30d">Last 30 Days</option>
+                        <option value="last_quarter">Last Quarter</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 11, color: colors.textMuted, display: 'block', marginBottom: 4 }}>
+                        Delivery
+                      </label>
+                      <select value={scheduleDelivery} onChange={e => setScheduleDelivery(e.target.value as DeliveryMethod)} style={selectStyle}>
+                        <option value="s3_store">Store (S3)</option>
+                        <option value="email">Email</option>
+                        <option value="both">Both</option>
+                      </select>
+                    </div>
+                  </div>
+                  {(scheduleDelivery === 'email' || scheduleDelivery === 'both') && (
+                    <input
+                      type="text"
+                      value={scheduleRecipients}
+                      onChange={e => setScheduleRecipients(e.target.value)}
+                      placeholder="email1@example.com, email2@example.com"
+                      style={inputStyle}
+                    />
+                  )}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      onClick={handleSaveSchedule}
+                      disabled={!scheduleName.trim() || !scheduleTemplateId}
+                      style={{ ...btnPrimary, padding: '8px 16px', fontSize: 13, opacity: (scheduleName.trim() && scheduleTemplateId) ? 1 : 0.5 }}
+                    >
+                      {editingScheduleId ? 'Update' : 'Create'}
+                    </button>
+                    <button
+                      onClick={() => { setShowScheduleDialog(false); resetScheduleForm(); }}
+                      style={{ ...btnSecondary, padding: '8px 16px', fontSize: 13 }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Schedule list */}
+            {schedules.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {schedules.map(sched => {
+                  const tmpl = templates.find(t => t.id === sched.template_id);
+                  return (
+                    <div
+                      key={sched.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '10px 12px', borderRadius: 6,
+                        border: `1px solid ${colors.border}`,
+                        background: sched.enabled ? colors.bgSurface : colors.bg,
+                        opacity: sched.enabled ? 1 : 0.6,
+                      }}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>{sched.name}</div>
+                        <div style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                          Template: {tmpl?.name || 'Unknown'} · Range: {sched.date_range_mode.replace('_', ' ')}
+                          {sched.cron_expression && ` · Cron: ${sched.cron_expression}`}
+                          {sched.interval_seconds && ` · Every ${formatInterval(sched.interval_seconds)}`}
+                        </div>
+                        <div style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                          {sched.last_run_at && `Last run: ${new Date(sched.last_run_at).toLocaleString()}`}
+                          {sched.next_run_at && ` · Next: ${new Date(sched.next_run_at).toLocaleString()}`}
+                          {!sched.last_run_at && !sched.next_run_at && 'Never run'}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleToggleSchedule(sched)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: sched.enabled ? colors.accent : colors.textMuted }}
+                        title={sched.enabled ? 'Disable' : 'Enable'}
+                      >
+                        {sched.enabled ? <Pause size={14} /> : <Play size={14} />}
+                      </button>
+                      <button
+                        onClick={() => handleEditSchedule(sched)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: colors.textMuted }}
+                        title="Edit"
+                      >
+                        <Pencil size={12} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteSchedule(sched.id)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: colors.textMuted }}
+                        title="Delete"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p style={{ color: colors.textMuted, fontSize: 12 }}>
+                No scheduled reports. Create one from a saved template.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Generated Reports History */}
+      <div style={{ ...card, marginBottom: 24 }}>
+        <button
+          onClick={() => { setHistoryOpen(o => !o); if (!historyOpen) loadGeneratedReports(); }}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+            background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em',
+          }}
+        >
+          {historyOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <FileText size={14} />
+          Generated Reports ({generatedReports.length})
+        </button>
+
+        {historyOpen && (
+          <div style={{ marginTop: 12 }}>
+            {generatedReports.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {generatedReports.map(report => (
+                  <div
+                    key={report.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 12px', borderRadius: 6,
+                      border: `1px solid ${colors.border}`,
+                      background: colors.bgSurface,
+                    }}
+                  >
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, color: colors.text }}>{report.title}</div>
+                      <div style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                        {new Date(report.created_at).toLocaleString()}
+                        {report.file_size && ` · ${formatFileSize(report.file_size)}`}
+                        {report.date_range_mode && ` · ${report.date_range_mode.replace('_', ' ')}`}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: 11, padding: '2px 6px', borderRadius: 4,
+                      background: report.status === 'completed' ? '#1a3a1a' : '#3a1a1a',
+                      color: report.status === 'completed' ? '#4ade80' : '#f87171',
+                    }}>
+                      {report.status}
+                    </span>
+                    {report.status === 'completed' && (
+                      <button
+                        onClick={() => handleDownloadReport(report.id)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: colors.accent }}
+                        title="Download"
+                      >
+                        <Download size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: colors.textMuted, fontSize: 12 }}>
+                No generated reports yet. Reports will appear here after scheduled generation runs.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
         {/* Left column: Configuration */}

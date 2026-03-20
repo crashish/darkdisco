@@ -7,6 +7,8 @@ from datetime import datetime
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from darkdisco.common.models import (
+    DateRangeMode,
+    DeliveryMethod,
     DiscoveryStatus,
     FindingStatus,
     Severity,
@@ -695,3 +697,67 @@ class ReportTemplateOut(BaseModel):
     config: dict
     created_at: datetime
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Report Schedules
+# ---------------------------------------------------------------------------
+
+class ReportScheduleCreate(BaseModel):
+    """Create a scheduled report."""
+    template_id: str
+    name: str
+    cron_expression: str | None = None
+    interval_seconds: int | None = None
+    date_range_mode: DateRangeMode = DateRangeMode.last_7d
+    enabled: bool = True
+    delivery_method: DeliveryMethod = DeliveryMethod.s3_store
+    recipients: list[str] | None = None
+
+
+class ReportScheduleUpdate(BaseModel):
+    """Update a scheduled report."""
+    name: str | None = None
+    template_id: str | None = None
+    cron_expression: str | None = None
+    interval_seconds: int | None = None
+    date_range_mode: DateRangeMode | None = None
+    enabled: bool | None = None
+    delivery_method: DeliveryMethod | None = None
+    recipients: list[str] | None = None
+
+
+class ReportScheduleOut(BaseModel):
+    """Report schedule response."""
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    template_id: str
+    owner_id: str
+    name: str
+    cron_expression: str | None
+    interval_seconds: int | None
+    date_range_mode: DateRangeMode
+    enabled: bool
+    delivery_method: DeliveryMethod
+    recipients: list[str] | None
+    last_run_at: datetime | None
+    next_run_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GeneratedReportOut(BaseModel):
+    """Generated report response."""
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    schedule_id: str | None
+    template_id: str | None
+    owner_id: str
+    title: str
+    file_size: int | None
+    date_range_mode: str | None
+    date_from: datetime | None
+    date_to: datetime | None
+    status: str
+    error_message: str | None
+    created_at: datetime

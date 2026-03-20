@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig, ReportSchedule, GeneratedReport, DateRangeMode, DeliveryMethod } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -430,4 +430,90 @@ export async function deleteReportTemplate(id: string): Promise<void> {
     throw new Error('Unauthorized');
   }
   if (!res.ok) throw new Error(`${res.status}`);
+}
+
+// ---------------------------------------------------------------------------
+// Report Schedules
+// ---------------------------------------------------------------------------
+
+export async function fetchReportSchedules(): Promise<ReportSchedule[]> {
+  return apiFetch('/reports/schedules', []);
+}
+
+export async function createReportSchedule(data: {
+  template_id: string;
+  name: string;
+  cron_expression?: string;
+  interval_seconds?: number;
+  date_range_mode?: DateRangeMode;
+  enabled?: boolean;
+  delivery_method?: DeliveryMethod;
+  recipients?: string[];
+}): Promise<ReportSchedule> {
+  return apiFetch('/reports/schedules', {} as ReportSchedule, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateReportSchedule(id: string, data: Partial<{
+  name: string;
+  template_id: string;
+  cron_expression: string;
+  interval_seconds: number;
+  date_range_mode: DateRangeMode;
+  enabled: boolean;
+  delivery_method: DeliveryMethod;
+  recipients: string[];
+}>): Promise<ReportSchedule> {
+  return apiFetch(`/reports/schedules/${id}`, {} as ReportSchedule, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteReportSchedule(id: string): Promise<void> {
+  const token = localStorage.getItem('dd_token');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/reports/schedules/${id}`, { method: 'DELETE', headers });
+  if (res.status === 401) {
+    localStorage.removeItem('dd_token');
+    window.dispatchEvent(new CustomEvent('auth:logout', { detail: 'unauthorized' }));
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
+}
+
+// ---------------------------------------------------------------------------
+// Generated Reports
+// ---------------------------------------------------------------------------
+
+export async function fetchGeneratedReports(scheduleId?: string): Promise<GeneratedReport[]> {
+  const qs = scheduleId ? `?schedule_id=${scheduleId}` : '';
+  return apiFetch(`/reports/generated${qs}`, []);
+}
+
+export async function downloadGeneratedReport(id: string): Promise<void> {
+  const token = localStorage.getItem('dd_token');
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/reports/generated/${id}/download`, { headers });
+  if (res.status === 401) {
+    localStorage.removeItem('dd_token');
+    window.dispatchEvent(new CustomEvent('auth:logout', { detail: 'unauthorized' }));
+    return;
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const disp = res.headers.get('content-disposition');
+  const match = disp?.match(/filename="?([^"]+)"?/);
+  a.download = match?.[1] || 'report.pdf';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }

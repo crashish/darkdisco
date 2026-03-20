@@ -38,6 +38,7 @@ from darkdisco.api.schemas import (
     DryRunRequest,
     DryRunResult,
     FindingAuditLogOut,
+    GeneratedReportOut,
     FindingCreate,
     FindingNoteAdd,
     FindingOut,
@@ -71,6 +72,9 @@ from darkdisco.api.schemas import (
     DiscoveredChannelOut,
     DiscoveredChannelUpdate,
     ReportRequest,
+    ReportScheduleCreate,
+    ReportScheduleOut,
+    ReportScheduleUpdate,
     ReportTemplateCreate,
     ReportTemplateOut,
     ReportTemplateUpdate,
@@ -87,10 +91,12 @@ from darkdisco.common.models import (
     DiscoveryStatus,
     ExtractedFile,
     Finding,
+    GeneratedReport,
     FindingAuditLog,
     FindingStatus,
     ImageOCRCache,
     Institution,
+    ReportSchedule,
     ReportTemplate,
     Notification,
     RawMention,
@@ -3106,4 +3112,208 @@ async def delete_report_template(
         raise HTTPException(status_code=404, detail="Template not found")
     await db.delete(template)
     await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Report Schedules
+# ---------------------------------------------------------------------------
+
+@protected.get("/reports/schedules", response_model=list[ReportScheduleOut])
+async def list_report_schedules(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """List report schedules owned by the current user."""
+    result = await db.execute(
+        select(ReportSchedule)
+        .where(ReportSchedule.owner_id == user.id)
+        .order_by(ReportSchedule.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+@protected.post("/reports/schedules", response_model=ReportScheduleOut, status_code=201)
+async def create_report_schedule(
+    body: ReportScheduleCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Create a new report schedule."""
+    # Verify template exists and belongs to user
+    template = await db.get(ReportTemplate, body.template_id)
+    if not template or template.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    if not body.cron_expression and not body.interval_seconds:
+        raise HTTPException(
+            status_code=422,
+            detail="Either cron_expression or interval_seconds must be provided",
+        )
+
+    # Compute initial next_run_at
+    now = datetime.now(timezone.utc)
+    next_run: datetime | None = None
+    if body.interval_seconds:
+        next_run = now + timedelta(seconds=body.interval_seconds)
+    elif body.cron_expression:
+        try:
+            from croniter import croniter
+            cron = croniter(body.cron_expression, now)
+            next_run = cron.get_next(datetime)
+        except Exception:
+            raise HTTPException(status_code=422, detail="Invalid cron expression")
+
+    schedule = ReportSchedule(
+        template_id=body.template_id,
+        owner_id=user.id,
+        name=body.name,
+        cron_expression=body.cron_expression,
+        interval_seconds=body.interval_seconds,
+        date_range_mode=body.date_range_mode,
+        enabled=body.enabled,
+        delivery_method=body.delivery_method,
+        recipients=body.recipients,
+        next_run_at=next_run if body.enabled else None,
+    )
+    db.add(schedule)
+    await db.commit()
+    await db.refresh(schedule)
+    return schedule
+
+
+@protected.get("/reports/schedules/{schedule_id}", response_model=ReportScheduleOut)
+async def get_report_schedule(
+    schedule_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Get a specific report schedule."""
+    schedule = await db.get(ReportSchedule, schedule_id)
+    if not schedule or schedule.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return schedule
+
+
+@protected.put("/reports/schedules/{schedule_id}", response_model=ReportScheduleOut)
+async def update_report_schedule(
+    schedule_id: str,
+    body: ReportScheduleUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Update a report schedule."""
+    schedule = await db.get(ReportSchedule, schedule_id)
+    if not schedule or schedule.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    if body.name is not None:
+        schedule.name = body.name
+    if body.template_id is not None:
+        template = await db.get(ReportTemplate, body.template_id)
+        if not template or template.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Template not found")
+        schedule.template_id = body.template_id
+    if body.cron_expression is not None:
+        schedule.cron_expression = body.cron_expression
+    if body.interval_seconds is not None:
+        schedule.interval_seconds = body.interval_seconds
+    if body.date_range_mode is not None:
+        schedule.date_range_mode = body.date_range_mode
+    if body.delivery_method is not None:
+        schedule.delivery_method = body.delivery_method
+    if body.recipients is not None:
+        schedule.recipients = body.recipients
+    if body.enabled is not None:
+        schedule.enabled = body.enabled
+        if body.enabled and not schedule.next_run_at:
+            # Re-compute next run when re-enabling
+            now = datetime.now(timezone.utc)
+            if schedule.interval_seconds:
+                schedule.next_run_at = now + timedelta(seconds=schedule.interval_seconds)
+            elif schedule.cron_expression:
+                try:
+                    from croniter import croniter
+                    cron = croniter(schedule.cron_expression, now)
+                    schedule.next_run_at = cron.get_next(datetime)
+                except Exception:
+                    pass
+        elif not body.enabled:
+            schedule.next_run_at = None
+
+    await db.commit()
+    await db.refresh(schedule)
+    return schedule
+
+
+@protected.delete("/reports/schedules/{schedule_id}", status_code=204)
+async def delete_report_schedule(
+    schedule_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Delete a report schedule."""
+    schedule = await db.get(ReportSchedule, schedule_id)
+    if not schedule or schedule.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    await db.delete(schedule)
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Generated Reports
+# ---------------------------------------------------------------------------
+
+@protected.get("/reports/generated", response_model=list[GeneratedReportOut])
+async def list_generated_reports(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    schedule_id: str | None = Query(None),
+    limit: int = Query(50, le=200),
+):
+    """List generated reports for the current user."""
+    stmt = (
+        select(GeneratedReport)
+        .where(GeneratedReport.owner_id == user.id)
+        .order_by(GeneratedReport.created_at.desc())
+        .limit(limit)
+    )
+    if schedule_id:
+        stmt = stmt.where(GeneratedReport.schedule_id == schedule_id)
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+@protected.get("/reports/generated/{report_id}/download")
+async def download_generated_report(
+    report_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Download a generated report PDF from S3."""
+    import boto3
+
+    report = await db.get(GeneratedReport, report_id)
+    if not report or report.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report.status != "completed" or not report.s3_key:
+        raise HTTPException(status_code=404, detail="Report not available")
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=settings.s3_endpoint,
+        aws_access_key_id=settings.s3_access_key,
+        aws_secret_access_key=settings.s3_secret_key,
+    )
+    try:
+        obj = s3.get_object(Bucket=settings.s3_bucket, Key=report.s3_key)
+        pdf_bytes = obj["Body"].read()
+    except Exception:
+        raise HTTPException(status_code=404, detail="Report file not found in storage")
+
+    filename = f"report-{report.created_at.strftime('%Y%m%d-%H%M')}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
