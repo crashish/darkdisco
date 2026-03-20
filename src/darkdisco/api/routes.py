@@ -3034,6 +3034,7 @@ async def generate_report_pdf(
         statuses=body.statuses,
         sections=body.sections.model_dump(),
         chart_options=body.charts.model_dump(),
+        truncate_content=body.truncate_content,
     )
 
     filename = f"darkdisco-report-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.pdf"
@@ -3063,6 +3064,7 @@ async def preview_report_html(
         statuses=body.statuses,
         sections=body.sections.model_dump(),
         chart_options=body.charts.model_dump(),
+        truncate_content=body.truncate_content,
     )
 
     return StreamingResponse(

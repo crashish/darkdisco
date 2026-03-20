@@ -660,6 +660,7 @@ class ReportRequest(BaseModel):
     statuses: list[str] | None = None
     sections: ReportSections = Field(default_factory=ReportSections)
     charts: ReportChartOptions = Field(default_factory=ReportChartOptions)
+    truncate_content: bool = True
 
 
 class ReportTemplateConfig(BaseModel):

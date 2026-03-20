@@ -128,11 +128,11 @@ async def _query_institutions(
 _CONTEXT_CHARS = 120  # chars of context around each highlight match
 
 
-def _highlight_content(raw_content: str, matched_terms: list[dict]) -> Markup:
-    """Build a truncated excerpt of raw_content with <mark> tags around matches.
+def _highlight_content(raw_content: str, matched_terms: list[dict], *, truncate: bool = True) -> Markup:
+    """Build content with <mark> tags around matches.
 
-    Shows a context window around each match rather than the full content,
-    joining non-contiguous segments with ellipsis. Keeps report concise.
+    When truncate=True, shows context windows around each match with ellipsis
+    between non-contiguous segments. When truncate=False, shows full content.
     """
     # Collect all highlight spans
     spans: list[tuple[int, int]] = []
@@ -159,6 +159,19 @@ def _highlight_content(raw_content: str, matched_terms: list[dict]) -> Markup:
             merged[-1] = (prev_start, max(prev_end, end))
         else:
             merged.append((start, end))
+
+    # Full content mode: highlight matches in the complete text
+    if not truncate:
+        parts: list[str] = []
+        pos = 0
+        for start, end in merged:
+            parts.append(str(escape(raw_content[pos:start])))
+            parts.append("<mark>")
+            parts.append(str(escape(raw_content[start:end])))
+            parts.append("</mark>")
+            pos = end
+        parts.append(str(escape(raw_content[pos:])))
+        return Markup("".join(parts))
 
     # Build context windows around each match
     windows: list[tuple[int, int]] = []
@@ -212,7 +225,7 @@ def _highlight_content(raw_content: str, matched_terms: list[dict]) -> Markup:
     return Markup("".join(parts))
 
 
-def _build_finding_dicts(findings: list[Finding]) -> list[dict]:
+def _build_finding_dicts(findings: list[Finding], *, truncate: bool = True) -> list[dict]:
     """Convert Finding ORM objects to dicts for template and chart use."""
     result = []
     for f in findings:
@@ -222,7 +235,7 @@ def _build_finding_dicts(findings: list[Finding]) -> list[dict]:
         # Build highlighted content if raw_content and highlights exist
         highlighted_content = None
         if f.raw_content and matched_terms:
-            highlighted_content = _highlight_content(f.raw_content, matched_terms)
+            highlighted_content = _highlight_content(f.raw_content, matched_terms, truncate=truncate)
 
         result.append({
             "id": f.id,
@@ -344,6 +357,7 @@ async def render_report_html(
     statuses: list[str] | None = None,
     sections: dict | None = None,
     chart_options: dict | None = None,
+    truncate_content: bool = True,
 ) -> str:
     """Build the full report HTML from data and template.
 
@@ -385,7 +399,7 @@ async def render_report_html(
         severities=severities,
         statuses=statuses,
     )
-    finding_dicts = _build_finding_dicts(findings)
+    finding_dicts = _build_finding_dicts(findings, truncate=truncate_content)
 
     sources_list = await _query_sources(session) if sec["source_activity"] else []
     source_data = [

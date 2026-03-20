@@ -190,6 +190,7 @@ export interface ReportRequest {
   statuses?: string[];
   sections: ReportSections;
   charts: ReportChartOptions;
+  truncate_content?: boolean;
 }
 
 export interface ReportTemplateConfig {
@@ -200,6 +201,7 @@ export interface ReportTemplateConfig {
   statuses?: string[];
   sections: ReportSections;
   charts: ReportChartOptions;
+  truncate_content?: boolean;
 }
 
 export interface ReportTemplate {

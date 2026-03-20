@@ -128,6 +128,7 @@ export default function Reports() {
   const [instFilter, setInstFilter] = useState<Set<string>>(new Set());
   const [sections, setSections] = useState<ReportSections>({ ...defaultSections });
   const [charts, setCharts] = useState<ReportChartOptions>({ ...defaultCharts });
+  const [truncateContent, setTruncateContent] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
@@ -180,6 +181,7 @@ export default function Reports() {
       title,
       sections,
       charts,
+      truncate_content: truncateContent,
     };
     if (dateFrom) req.date_from = dateFrom.includes('T') ? dateFrom : `${dateFrom}T00:00:00`;
     if (dateTo) req.date_to = dateTo.includes('T') ? dateTo : `${dateTo}T23:59:59`;
@@ -187,7 +189,7 @@ export default function Reports() {
     if (statusFilter.size > 0) req.statuses = Array.from(statusFilter);
     if (instFilter.size === 1) req.institution_id = Array.from(instFilter)[0];
     return req;
-  }, [title, dateFrom, dateTo, sevFilter, statusFilter, instFilter, sections, charts]);
+  }, [title, dateFrom, dateTo, sevFilter, statusFilter, instFilter, sections, charts, truncateContent]);
 
   const loadTemplate = (tmpl: ReportTemplate) => {
     const c = tmpl.config;
@@ -197,6 +199,7 @@ export default function Reports() {
     setInstFilter(c.institution_id ? new Set([c.institution_id]) : new Set());
     setSections(c.sections || { ...defaultSections });
     setCharts(c.charts || { ...defaultCharts });
+    setTruncateContent(c.truncate_content !== false);
     setSelectedTemplateId(tmpl.id);
   };
 
@@ -210,6 +213,7 @@ export default function Reports() {
       statuses: statusFilter.size > 0 ? Array.from(statusFilter) : undefined,
       sections,
       charts,
+      truncate_content: truncateContent,
     };
     if (editingTemplateId) {
       await updateReportTemplate(editingTemplateId, { name: saveTemplateName, description: saveTemplateDesc || null, config });
@@ -931,6 +935,17 @@ export default function Reports() {
                     {sectionLabels[key]}
                   </label>
                 ))}
+                <div style={{ borderTop: `1px solid ${colors.border}`, marginTop: 8, paddingTop: 8 }}>
+                  <label style={checkboxRowStyle}>
+                    <input
+                      type="checkbox"
+                      checked={truncateContent}
+                      onChange={() => setTruncateContent(v => !v)}
+                      style={{ accentColor: colors.accent }}
+                    />
+                    Truncate finding content (show match context only)
+                  </label>
+                </div>
               </div>
             )}
           </div>
