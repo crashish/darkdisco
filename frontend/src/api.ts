@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -322,6 +322,42 @@ export function getMentionFileUrl(mentionId: string): string {
 
 export function getS3FileUrl(s3Key: string): string {
   return `/api/files/${s3Key}`;
+}
+
+export async function generateReportPdf(body: ReportRequest): Promise<Blob> {
+  const token = localStorage.getItem('dd_token');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/reports/generate`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('dd_token');
+    window.dispatchEvent(new CustomEvent('auth:logout', { detail: 'unauthorized' }));
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
+  return await res.blob();
+}
+
+export async function previewReportHtml(body: ReportRequest): Promise<string> {
+  const token = localStorage.getItem('dd_token');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/reports/preview`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('dd_token');
+    window.dispatchEvent(new CustomEvent('auth:logout', { detail: 'unauthorized' }));
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
+  return await res.text();
 }
 
 export async function fetchArchiveContents(

@@ -9,6 +9,7 @@ import Sources from './pages/Sources';
 import SourceDetail from './pages/SourceDetail';
 import Mentions from './pages/Mentions';
 import Files from './pages/Files';
+import Reports from './pages/Reports';
 import Login from './pages/Login';
 import type { ReactNode } from 'react';
 
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/files" element={<Files />} />
           <Route path="/sources" element={<Sources />} />
           <Route path="/sources/:id" element={<SourceDetail />} />
+          <Route path="/reports" element={<Reports />} />
         </Route>
       </Routes>
     </AuthProvider>

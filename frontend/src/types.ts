@@ -159,3 +159,35 @@ export interface DashboardStats {
   active_sources: number;
   findings_trend: { date: string; count: number }[];
 }
+
+export interface ReportSections {
+  executive_summary: boolean;
+  charts: boolean;
+  findings_detail: boolean;
+  findings_by_severity: boolean;
+  source_activity: boolean;
+  institution_exposure: boolean;
+  classification_breakdown: boolean;
+  timeline: boolean;
+}
+
+export interface ReportChartOptions {
+  severity_pie: boolean;
+  status_pie: boolean;
+  trend_line: boolean;
+  source_bar: boolean;
+  institution_bar: boolean;
+  severity_trend: boolean;
+}
+
+export interface ReportRequest {
+  title: string;
+  date_from?: string;
+  date_to?: string;
+  client_id?: string;
+  institution_id?: string;
+  severities?: string[];
+  statuses?: string[];
+  sections: ReportSections;
+  charts: ReportChartOptions;
+}
