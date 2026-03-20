@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchInstitutions, fetchSources } from '../api';
+import { fetchInstitutions } from '../api';
 import { colors, card, font, statusLabel } from '../theme';
 import MultiSelect from '../components/MultiSelect';
-import type { Institution, Source, Severity, FindingStatus, ReportSections, ReportChartOptions } from '../types';
+import type { Institution, Severity, FindingStatus, ReportSections, ReportChartOptions } from '../types';
 import { Calendar, Download, Loader2, Eye, ChevronDown, ChevronRight } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
@@ -123,11 +123,9 @@ export default function Reports() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [institutions, setInstitutions] = useState<Institution[]>([]);
-  const [sources, setSources] = useState<Source[]>([]);
   const [sevFilter, setSevFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   const [instFilter, setInstFilter] = useState<Set<string>>(new Set());
-  const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
   const [sections, setSections] = useState<ReportSections>({ ...defaultSections });
   const [charts, setCharts] = useState<ReportChartOptions>({ ...defaultCharts });
   const [generating, setGenerating] = useState(false);
@@ -139,7 +137,6 @@ export default function Reports() {
 
   useEffect(() => {
     fetchInstitutions().then(setInstitutions);
-    fetchSources().then(setSources);
   }, []);
 
   const buildRequest = useCallback(() => {
@@ -217,8 +214,8 @@ export default function Reports() {
         const text = await res.text();
         throw new Error(text || `Error ${res.status}`);
       }
-      const data = await res.json();
-      setPreviewHtml(data.html);
+      const html = await res.text();
+      setPreviewHtml(html);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to generate preview');
     } finally {
@@ -352,16 +349,10 @@ export default function Reports() {
                 selected={instFilter}
                 onChange={setInstFilter}
               />
-              <MultiSelect
-                label="Source"
-                options={sources.map(s => ({ value: s.id, label: s.name }))}
-                selected={sourceFilter}
-                onChange={setSourceFilter}
-              />
             </div>
-            {(sevFilter.size > 0 || statusFilter.size > 0 || instFilter.size > 0 || sourceFilter.size > 0) && (
+            {(sevFilter.size > 0 || statusFilter.size > 0 || instFilter.size > 0) && (
               <button
-                onClick={() => { setSevFilter(new Set()); setStatusFilter(new Set()); setInstFilter(new Set()); setSourceFilter(new Set()); }}
+                onClick={() => { setSevFilter(new Set()); setStatusFilter(new Set()); setInstFilter(new Set()); }}
                 style={{ background: 'none', border: 'none', color: colors.accent, fontSize: 12, cursor: 'pointer', padding: '8px 0 0' }}
               >
                 Clear all filters

@@ -119,12 +119,12 @@
 <div class="chart-row">
   {% if charts.severity_pie %}
   <div class="chart-container">
-    <img src="data:image/png;base64,{{ charts.severity_pie }}" alt="Severity Distribution">
+    <img src="data:image/png;base64,{{ charts.severity_pie | safe }}" alt="Severity Distribution">
   </div>
   {% endif %}
   {% if charts.status_pie %}
   <div class="chart-container">
-    <img src="data:image/png;base64,{{ charts.status_pie }}" alt="Status Distribution">
+    <img src="data:image/png;base64,{{ charts.status_pie | safe }}" alt="Status Distribution">
   </div>
   {% endif %}
 </div>
@@ -132,25 +132,25 @@
 
 {% if charts.trend_line %}
 <div class="chart-container">
-  <img src="data:image/png;base64,{{ charts.trend_line }}" alt="Findings Trend">
+  <img src="data:image/png;base64,{{ charts.trend_line | safe }}" alt="Findings Trend">
 </div>
 {% endif %}
 
 {% if charts.source_bar %}
 <div class="chart-container">
-  <img src="data:image/png;base64,{{ charts.source_bar }}" alt="Findings by Source">
+  <img src="data:image/png;base64,{{ charts.source_bar | safe }}" alt="Findings by Source">
 </div>
 {% endif %}
 
 {% if charts.institution_bar %}
 <div class="chart-container">
-  <img src="data:image/png;base64,{{ charts.institution_bar }}" alt="Findings by Institution">
+  <img src="data:image/png;base64,{{ charts.institution_bar | safe }}" alt="Findings by Institution">
 </div>
 {% endif %}
 
 {% if charts.severity_trend %}
 <div class="chart-container">
-  <img src="data:image/png;base64,{{ charts.severity_trend }}" alt="Severity Trend">
+  <img src="data:image/png;base64,{{ charts.severity_trend | safe }}" alt="Severity Trend">
 </div>
 {% endif %}
 {% endif %}
