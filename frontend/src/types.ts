@@ -248,3 +248,53 @@ export interface GeneratedReport {
   error_message: string | null;
   created_at: string;
 }
+
+// BIN Database
+export type CardBrand = 'visa' | 'mastercard' | 'amex' | 'discover' | 'jcb' | 'unionpay' | 'diners' | 'maestro' | 'other';
+export type CardType = 'credit' | 'debit' | 'prepaid' | 'charge' | 'unknown';
+
+export interface BINRecord {
+  id: string;
+  bin_prefix: string;
+  bin_range_start: string | null;
+  bin_range_end: string | null;
+  issuer_name: string | null;
+  card_brand: CardBrand | null;
+  card_type: CardType | null;
+  card_level: string | null;
+  country_code: string | null;
+  country_name: string | null;
+  bank_url: string | null;
+  bank_phone: string | null;
+  source: string | null;
+  updated_at: string | null;
+}
+
+export interface BINLookupResult {
+  bin_prefix: string;
+  found: boolean;
+  issuer_name: string | null;
+  card_brand: string | null;
+  card_type: string | null;
+  card_level: string | null;
+  country_code: string | null;
+  country_name: string | null;
+  bank_url: string | null;
+  bank_phone: string | null;
+}
+
+export interface BINStats {
+  total_records: number;
+  by_brand: Record<string, number>;
+  by_source: Record<string, number>;
+  by_country: { name: string; code: string; count: number }[];
+  top_issuers: { name: string; count: number }[];
+}
+
+export interface BINImportResult {
+  imported: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+  source: string;
+}

@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig, ReportSchedule, GeneratedReport, DateRangeMode, DeliveryMethod } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig, ReportSchedule, GeneratedReport, DateRangeMode, DeliveryMethod, BINLookupResult, BINRecord, BINStats, BINImportResult } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -516,4 +516,58 @@ export async function downloadGeneratedReport(id: string): Promise<void> {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------------
+// BIN Database
+// ---------------------------------------------------------------------------
+
+export async function lookupBIN(prefix: string): Promise<BINLookupResult> {
+  return apiFetch(`/bins/lookup/${prefix}`, {
+    bin_prefix: prefix, found: false, issuer_name: null, card_brand: null,
+    card_type: null, card_level: null, country_code: null, country_name: null,
+    bank_url: null, bank_phone: null,
+  });
+}
+
+export async function searchBINs(params?: {
+  q?: string;
+  brand?: string;
+  country?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<BINRecord[]> {
+  const qs = new URLSearchParams();
+  if (params?.q) qs.set('q', params.q);
+  if (params?.brand) qs.set('brand', params.brand);
+  if (params?.country) qs.set('country', params.country);
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+  if (params?.offset !== undefined) qs.set('offset', String(params.offset));
+  const q = qs.toString();
+  return apiFetch(`/bins/search${q ? '?' + q : ''}`, []);
+}
+
+export async function fetchBINStats(): Promise<BINStats> {
+  return apiFetch('/bins/stats', {
+    total_records: 0, by_brand: {}, by_source: {},
+    by_country: [], top_issuers: [],
+  });
+}
+
+export async function importBINFile(file: File, sourceLabel: string = 'csv'): Promise<BINImportResult> {
+  const token = localStorage.getItem('dd_token');
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${BASE}/bins/import?source_label=${encodeURIComponent(sourceLabel)}`, {
+    method: 'POST',
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    body: formData,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('dd_token');
+    window.dispatchEvent(new CustomEvent('auth:logout', { detail: 'unauthorized' }));
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
+  return await res.json();
 }

@@ -485,6 +485,58 @@ class GeneratedReport(Base):
     )
 
 
+class CardBrand(str, enum.Enum):
+    visa = "visa"
+    mastercard = "mastercard"
+    amex = "amex"
+    discover = "discover"
+    jcb = "jcb"
+    unionpay = "unionpay"
+    diners = "diners"
+    maestro = "maestro"
+    other = "other"
+
+
+class CardType(str, enum.Enum):
+    credit = "credit"
+    debit = "debit"
+    prepaid = "prepaid"
+    charge = "charge"
+    unknown = "unknown"
+
+
+class BINRecord(Base):
+    """BIN (Bank Identification Number) database record for card issuer identification.
+
+    Supports both legacy 6-digit and modern 8-digit IIN prefixes, plus range-based lookups.
+    """
+
+    __tablename__ = "bin_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    bin_prefix: Mapped[str] = mapped_column(String(8), nullable=False, index=True)
+    bin_range_start: Mapped[str | None] = mapped_column(String(8))  # for range-based lookups
+    bin_range_end: Mapped[str | None] = mapped_column(String(8))
+    issuer_name: Mapped[str | None] = mapped_column(String(255))
+    card_brand: Mapped[CardBrand | None] = mapped_column(Enum(CardBrand))
+    card_type: Mapped[CardType | None] = mapped_column(Enum(CardType))
+    card_level: Mapped[str | None] = mapped_column(String(50))  # classic, gold, platinum, business
+    country_code: Mapped[str | None] = mapped_column(String(3))
+    country_name: Mapped[str | None] = mapped_column(String(100))
+    bank_url: Mapped[str | None] = mapped_column(String(500))
+    bank_phone: Mapped[str | None] = mapped_column(String(50))
+    source: Mapped[str | None] = mapped_column(String(50))  # csv, visa_pdf, mastercard_pdf, binlist
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("ix_bin_records_prefix", "bin_prefix"),
+        Index("ix_bin_records_range", "bin_range_start", "bin_range_end"),
+        Index("ix_bin_records_issuer", "issuer_name"),
+        Index("ix_bin_records_brand", "card_brand"),
+    )
+
+
 class AlertRule(Base):
     """Automated alerting rule — triggers notifications on new findings matching criteria."""
 

@@ -8,7 +8,7 @@ import StatusBadge from '../components/StatusBadge';
 import ArchiveContents from '../components/ArchiveContents';
 import type { ArchiveFile } from '../components/ArchiveContents';
 import type { FindingDetail as FindingDetailType, FindingStatus, Severity, AuditLogEntry, HighlightSpan } from '../types';
-import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash, Globe, Lock, Activity, BarChart3, Camera, Network, Edit3, Send, History, ScanLine } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash, Globe, Lock, Activity, BarChart3, Camera, Network, Edit3, Send, History, ScanLine, CreditCard } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'confirmed', 'dismissed', 'false_positive', 'resolved'];
@@ -992,6 +992,61 @@ export default function FindingDetail() {
               </div>
             </div>
           )}
+
+          {/* BIN Info — card issuer identification from BIN database */}
+          {finding.metadata && (finding.metadata as Record<string, unknown>).bin_info && (() => {
+            const binInfo = (finding.metadata as Record<string, { bins_found: Array<Record<string, string | boolean>>, unique_issuers: string[], unique_brands: string[], card_count: number }>).bin_info;
+            return (
+              <div style={sectionStyle}>
+                <div style={sectionTitle}><CreditCard size={14} /> Card Issuer Identification</div>
+                <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, color: colors.text }}>
+                    <strong>{binInfo.card_count}</strong> card number{binInfo.card_count !== 1 ? 's' : ''} detected
+                  </span>
+                  <span style={{ fontSize: 13, color: colors.textDim }}>
+                    {binInfo.unique_issuers.length} issuer{binInfo.unique_issuers.length !== 1 ? 's' : ''}
+                  </span>
+                  {binInfo.unique_brands.length > 0 && (
+                    <span style={{ fontSize: 13, color: colors.textDim }}>
+                      Brands: {binInfo.unique_brands.join(', ')}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {binInfo.bins_found.map((bin, i) => (
+                    <div key={i} style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '6px 12px',
+                      background: colors.bgSurface, borderRadius: 6, border: `1px solid ${colors.border}`,
+                    }}>
+                      <span style={{ fontFamily: font.mono, fontSize: 13, fontWeight: 600, color: colors.text, minWidth: 80 }}>
+                        {bin.bin_prefix}
+                      </span>
+                      {bin.card_brand && (
+                        <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: colors.accent }}>
+                          {String(bin.card_brand)}
+                        </span>
+                      )}
+                      {bin.card_type && (
+                        <span style={{ fontSize: 11, color: colors.textDim }}>
+                          {String(bin.card_type)}
+                        </span>
+                      )}
+                      {bin.issuer_name && (
+                        <span style={{ fontSize: 13, color: colors.text }}>
+                          {String(bin.issuer_name)}
+                        </span>
+                      )}
+                      {bin.country_name && (
+                        <span style={{ fontSize: 11, color: colors.textMuted }}>
+                          {String(bin.country_name)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Status History */}
           {finding.status_history && finding.status_history.length > 0 && (

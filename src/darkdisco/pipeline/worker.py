@@ -729,6 +729,15 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 if enrichment.enrichment_metadata:
                     merged_metadata["enrichment"] = enrichment.enrichment_metadata
 
+                # BIN enrichment: look up card issuer info from BIN prefixes in content
+                try:
+                    from darkdisco.enrichment.bin_lookup import enrich_bins
+                    bin_result = enrich_bins(raw_content or "", session)
+                    if bin_result.bins_found:
+                        merged_metadata["bin_info"] = bin_result.to_dict()
+                except Exception:
+                    logger.debug("BIN enrichment failed, continuing without it", exc_info=True)
+
                 finding = Finding(
                     institution_id=result.institution_id,
                     source_id=source_id,

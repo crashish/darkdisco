@@ -762,3 +762,59 @@ class GeneratedReportOut(BaseModel):
     status: str
     error_message: str | None
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# BIN Database
+# ---------------------------------------------------------------------------
+
+class BINRecordOut(BaseModel):
+    """BIN record response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    bin_prefix: str
+    bin_range_start: str | None = None
+    bin_range_end: str | None = None
+    issuer_name: str | None = None
+    card_brand: str | None = None
+    card_type: str | None = None
+    card_level: str | None = None
+    country_code: str | None = None
+    country_name: str | None = None
+    bank_url: str | None = None
+    bank_phone: str | None = None
+    source: str | None = None
+    updated_at: datetime | None = None
+
+
+class BINLookupResponse(BaseModel):
+    """Response from BIN lookup endpoint."""
+    bin_prefix: str
+    found: bool
+    issuer_name: str | None = None
+    card_brand: str | None = None
+    card_type: str | None = None
+    card_level: str | None = None
+    country_code: str | None = None
+    country_name: str | None = None
+    bank_url: str | None = None
+    bank_phone: str | None = None
+
+
+class BINImportResponse(BaseModel):
+    """Response from BIN import endpoint."""
+    imported: int
+    updated: int
+    skipped: int
+    errors: list[str]
+    source: str
+
+
+class BINStatsResponse(BaseModel):
+    """BIN database statistics."""
+    total_records: int
+    by_brand: dict[str, int]
+    by_source: dict[str, int]
+    by_country: list[dict]
+    top_issuers: list[dict]

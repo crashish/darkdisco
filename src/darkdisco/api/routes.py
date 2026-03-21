@@ -78,6 +78,10 @@ from darkdisco.api.schemas import (
     ReportTemplateCreate,
     ReportTemplateOut,
     ReportTemplateUpdate,
+    BINRecordOut,
+    BINLookupResponse,
+    BINImportResponse,
+    BINStatsResponse,
     WatchTermCreate,
     WatchTermOut,
     WatchTermUpdate,
@@ -86,6 +90,7 @@ from darkdisco.common.database import get_session
 from darkdisco.config import settings
 from darkdisco.common.models import (
     AlertRule,
+    BINRecord,
     Client,
     DiscoveredChannel,
     DiscoveryStatus,
@@ -3360,5 +3365,179 @@ async def download_generated_report(
         iter([pdf_bytes]),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# BIN Database
+# ---------------------------------------------------------------------------
+
+
+@protected.get("/bins/lookup/{prefix}", response_model=BINLookupResponse)
+async def bin_lookup(prefix: str, db: AsyncSession = Depends(get_session)):
+    """Look up a BIN prefix (6-8 digits) and return issuer information."""
+    prefix = prefix.strip()
+    if not prefix.isdigit() or len(prefix) < 6 or len(prefix) > 8:
+        raise HTTPException(status_code=400, detail="BIN prefix must be 6-8 digits")
+
+    # Try exact prefix match
+    record = (await db.execute(
+        select(BINRecord).where(BINRecord.bin_prefix == prefix).limit(1)
+    )).scalar_one_or_none()
+
+    # Fall back to 6-digit if 8-digit not found
+    if not record and len(prefix) == 8:
+        record = (await db.execute(
+            select(BINRecord).where(BINRecord.bin_prefix == prefix[:6]).limit(1)
+        )).scalar_one_or_none()
+
+    # Try range-based lookup
+    if not record:
+        record = (await db.execute(
+            select(BINRecord).where(
+                BINRecord.bin_range_start.isnot(None),
+                BINRecord.bin_range_end.isnot(None),
+                BINRecord.bin_range_start <= prefix,
+                BINRecord.bin_range_end >= prefix,
+            ).limit(1)
+        )).scalar_one_or_none()
+
+    if not record:
+        return BINLookupResponse(bin_prefix=prefix, found=False)
+
+    return BINLookupResponse(
+        bin_prefix=prefix,
+        found=True,
+        issuer_name=record.issuer_name,
+        card_brand=record.card_brand.value if record.card_brand else None,
+        card_type=record.card_type.value if record.card_type else None,
+        card_level=record.card_level,
+        country_code=record.country_code,
+        country_name=record.country_name,
+        bank_url=record.bank_url,
+        bank_phone=record.bank_phone,
+    )
+
+
+@protected.get("/bins/search", response_model=list[BINRecordOut])
+async def bin_search(
+    q: str = Query(default="", description="Search by issuer name, prefix, or country"),
+    brand: str | None = Query(default=None),
+    country: str | None = Query(default=None),
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0),
+    db: AsyncSession = Depends(get_session),
+):
+    """Search the BIN database with filters."""
+    query = select(BINRecord)
+
+    if q:
+        query = query.where(
+            or_(
+                BINRecord.bin_prefix.startswith(q),
+                BINRecord.issuer_name.ilike(f"%{q}%"),
+                BINRecord.country_name.ilike(f"%{q}%"),
+            )
+        )
+
+    if brand:
+        query = query.where(BINRecord.card_brand == brand)
+
+    if country:
+        query = query.where(
+            or_(
+                BINRecord.country_code == country.upper(),
+                BINRecord.country_name.ilike(f"%{country}%"),
+            )
+        )
+
+    query = query.order_by(BINRecord.bin_prefix).offset(offset).limit(limit)
+    results = (await db.execute(query)).scalars().all()
+
+    return [BINRecordOut.model_validate(r) for r in results]
+
+
+@protected.get("/bins/stats", response_model=BINStatsResponse)
+async def bin_stats(db: AsyncSession = Depends(get_session)):
+    """Get BIN database statistics."""
+    total = (await db.execute(select(func.count(BINRecord.id)))).scalar() or 0
+
+    # By brand
+    brand_rows = (await db.execute(
+        select(BINRecord.card_brand, func.count(BINRecord.id))
+        .group_by(BINRecord.card_brand)
+        .order_by(func.count(BINRecord.id).desc())
+    )).all()
+    by_brand = {(r[0].value if r[0] else "unknown"): r[1] for r in brand_rows}
+
+    # By source
+    source_rows = (await db.execute(
+        select(BINRecord.source, func.count(BINRecord.id))
+        .group_by(BINRecord.source)
+        .order_by(func.count(BINRecord.id).desc())
+    )).all()
+    by_source = {(r[0] or "unknown"): r[1] for r in source_rows}
+
+    # Top countries
+    country_rows = (await db.execute(
+        select(BINRecord.country_name, BINRecord.country_code, func.count(BINRecord.id))
+        .where(BINRecord.country_name.isnot(None))
+        .group_by(BINRecord.country_name, BINRecord.country_code)
+        .order_by(func.count(BINRecord.id).desc())
+        .limit(20)
+    )).all()
+    by_country = [
+        {"name": r[0], "code": r[1], "count": r[2]}
+        for r in country_rows
+    ]
+
+    # Top issuers
+    issuer_rows = (await db.execute(
+        select(BINRecord.issuer_name, func.count(BINRecord.id))
+        .where(BINRecord.issuer_name.isnot(None))
+        .group_by(BINRecord.issuer_name)
+        .order_by(func.count(BINRecord.id).desc())
+        .limit(20)
+    )).all()
+    top_issuers = [
+        {"name": r[0], "count": r[1]}
+        for r in issuer_rows
+    ]
+
+    return BINStatsResponse(
+        total_records=total,
+        by_brand=by_brand,
+        by_source=by_source,
+        by_country=by_country,
+        top_issuers=top_issuers,
+    )
+
+
+@protected.post("/bins/import", response_model=BINImportResponse)
+async def bin_import(
+    file: UploadFile = File(...),
+    source_label: str = Query(default="csv", description="Source label for tracking"),
+):
+    """Import BIN records from CSV or PDF file."""
+    content = await file.read()
+    filename = file.filename or ""
+
+    if filename.lower().endswith(".pdf"):
+        from darkdisco.pipeline.bin_import import import_pdf
+        result = import_pdf(content, source_label=source_label)
+    elif filename.lower().endswith(".csv") or filename.lower().endswith(".tsv"):
+        from darkdisco.pipeline.bin_import import import_csv
+        result = import_csv(content, source_label=source_label)
+    else:
+        # Try CSV by default
+        from darkdisco.pipeline.bin_import import import_csv
+        result = import_csv(content, source_label=source_label)
+
+    return BINImportResponse(
+        imported=result.imported,
+        updated=result.updated,
+        skipped=result.skipped,
+        errors=result.errors[:50],  # cap error list
+        source=result.source,
     )
 
