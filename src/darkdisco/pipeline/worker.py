@@ -692,11 +692,13 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 ) if raw_content else result.matched_terms
 
                 # Build candidate finding data for enrichment
+                _channel = mention.metadata.get("channel_ref", "") if mention.metadata else ""
+                _finding_title = mention.title or (_channel if _channel else f"Mention from {source.name}")
                 candidate = {
                     "institution_id": result.institution_id,
                     "source_id": source_id,
                     "severity": result.severity_hint,
-                    "title": mention.title or f"Mention from {source.name}",
+                    "title": _finding_title,
                     "summary": raw_content[:1000] if raw_content else None,
                     "raw_content": raw_content,
                     "content_hash": content_hash,
@@ -742,7 +744,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                     institution_id=result.institution_id,
                     source_id=source_id,
                     severity=severity,
-                    title=mention.title or f"Mention from {source.name}",
+                    title=_finding_title,
                     summary=raw_content[:1000] if raw_content else None,
                     raw_content=raw_content,
                     content_hash=content_hash,
