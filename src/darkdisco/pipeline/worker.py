@@ -160,12 +160,17 @@ def _load_connector_for_download(source):
     download_path = Path(download_session + ".session")
     primary_session_file = Path(str(primary_path) + ".session")
 
-    # Copy session file ONLY if download copy doesn't exist yet.
-    # Never re-copy — the download session maintains its own auth state,
-    # and copying while the primary is open causes SQLite lock errors.
-    if primary_session_file.exists() and not download_path.exists():
-        shutil.copy2(str(primary_session_file), str(download_path))
-        logger.info("Initialized download session from %s", download_path)
+    # Refresh download session from primary if primary is newer.
+    # The download session needs updated entity cache to resolve channels
+    # that were joined after it was first copied.
+    if primary_session_file.exists():
+        if not download_path.exists():
+            shutil.copy2(str(primary_session_file), str(download_path))
+            logger.info("Initialized download session from %s", download_path)
+        elif primary_session_file.stat().st_mtime > download_path.stat().st_mtime + 3600:
+            # Primary is >1 hour newer — refresh the download session
+            shutil.copy2(str(primary_session_file), str(download_path))
+            logger.info("Refreshed download session from primary (entity cache update)")
 
     config["session_name"] = download_session
 

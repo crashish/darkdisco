@@ -115,7 +115,18 @@ class TelegramConnector(BaseConnector):
             await self.setup()
         try:
             if channel_id:
-                entity = await self._client.get_entity(PeerChannel(channel_id))
+                # Try get_entity first; if the session hasn't seen this channel,
+                # fall back to get_dialogs to populate the entity cache, then retry.
+                try:
+                    entity = await self._client.get_entity(PeerChannel(channel_id))
+                except ValueError:
+                    logger.debug("Entity cache miss for channel %d, refreshing dialogs", channel_id)
+                    await self._client.get_dialogs()
+                    try:
+                        entity = await self._client.get_entity(PeerChannel(channel_id))
+                    except ValueError:
+                        logger.warning("Channel %d not accessible — may have left or been banned", channel_id)
+                        return None
                 msgs = await self._client.get_messages(entity, ids=message_id)
             else:
                 msgs = await self._client.get_messages(None, ids=message_id)
