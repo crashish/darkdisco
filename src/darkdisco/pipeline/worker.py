@@ -1139,8 +1139,8 @@ def download_pending_files(batch_size: int = 100):
                                     filename = meta.get("file_name", "unknown")
                                     s3_key = f"files/{sha256[:8]}/{filename}"
 
-                                    from darkdisco.pipeline.files import get_s3_client
-                                    s3 = get_s3_client()
+                                    from darkdisco.pipeline.files import _get_s3_client
+                                    s3 = _get_s3_client()
                                     from io import BytesIO
                                     s3.upload_fileobj(BytesIO(file_data), settings.s3_bucket, s3_key)
 
