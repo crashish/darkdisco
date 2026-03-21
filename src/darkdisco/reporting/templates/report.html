@@ -326,6 +326,28 @@
 </table>
 {% endif %}
 
+{# ─── Appendix: Full Message Content ─── #}
+{% if sections.appendix_full_content %}
+<h2>Appendix: Full Message Content</h2>
+<p style="font-size: 10px; color: #6b7280; margin-bottom: 12px;">
+  Complete message text for findings referenced in this report. Matched terms are highlighted.
+</p>
+{% for f in findings %}
+{% if f.full_content %}
+<div class="finding-detail" style="margin-bottom: 12px;">
+  <h4 style="font-size: 11px; margin-bottom: 4px;">{{ f.title }}</h4>
+  <div class="finding-meta" style="margin-bottom: 4px;">
+    <span class="severity severity-{{ f.severity }}">{{ f.severity }}</span>
+    {% if f.classification %}<span class="matched-pill">{{ f.classification }}</span>{% endif %}
+    <span>{{ f.institution_name or "—" }}</span>
+    <span>{{ f.discovered_at_fmt }}</span>
+  </div>
+  <div class="finding-content" style="max-height: none;">{{ f.full_content }}</div>
+</div>
+{% endif %}
+{% endfor %}
+{% endif %}
+
 <div class="footer">
   DarkDisco Threat Intelligence &mdash; {{ generated_at }} &mdash; CONFIDENTIAL
 </div>

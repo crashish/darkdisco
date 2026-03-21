@@ -637,6 +637,7 @@ class ReportSections(BaseModel):
     institution_exposure: bool = True
     classification_breakdown: bool = True
     timeline: bool = True
+    appendix_full_content: bool = False
 
 
 class ReportChartOptions(BaseModel):

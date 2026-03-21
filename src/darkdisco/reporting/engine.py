@@ -234,8 +234,15 @@ def _build_finding_dicts(findings: list[Finding], *, truncate: bool = True) -> l
         term_values = list(dict.fromkeys(t.get("value", "") for t in matched_terms if t.get("value")))
         # Build highlighted content if raw_content and highlights exist
         highlighted_content = None
+        full_content = None
         if f.raw_content and matched_terms:
             highlighted_content = _highlight_content(f.raw_content, matched_terms, truncate=truncate)
+            if truncate:
+                full_content = _highlight_content(f.raw_content, matched_terms, truncate=False)
+            else:
+                full_content = highlighted_content
+        elif f.raw_content:
+            full_content = Markup(escape(f.raw_content))
 
         result.append({
             "id": f.id,
@@ -250,6 +257,7 @@ def _build_finding_dicts(findings: list[Finding], *, truncate: bool = True) -> l
             "analyst_notes": f.analyst_notes,
             "matched_terms": term_values,
             "highlighted_content": highlighted_content,
+            "full_content": full_content,
             "discovered_at": f.discovered_at,
             "discovered_at_fmt": _fmt_dt(f.discovered_at),
         })
@@ -385,6 +393,7 @@ async def render_report_html(
         "institution_exposure": True,
         "classification_breakdown": True,
         "timeline": True,
+        "appendix_full_content": False,
     }
     if sections:
         sec.update(sections)

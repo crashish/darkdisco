@@ -169,6 +169,7 @@ export interface ReportSections {
   institution_exposure: boolean;
   classification_breakdown: boolean;
   timeline: boolean;
+  appendix_full_content: boolean;
 }
 
 export interface ReportChartOptions {

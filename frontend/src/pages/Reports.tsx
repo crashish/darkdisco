@@ -18,6 +18,7 @@ const defaultSections: ReportSections = {
   institution_exposure: true,
   classification_breakdown: true,
   timeline: true,
+  appendix_full_content: false,
 };
 
 const defaultCharts: ReportChartOptions = {
@@ -38,6 +39,7 @@ const sectionLabels: Record<keyof ReportSections, string> = {
   institution_exposure: 'Institution Exposure',
   classification_breakdown: 'Classification Breakdown',
   timeline: 'Timeline',
+  appendix_full_content: 'Appendix: Full Message Content',
 };
 
 const chartLabels: Record<keyof ReportChartOptions, string> = {
