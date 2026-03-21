@@ -1561,7 +1561,16 @@ def backfill_ocr(batch_size: int = 20, days: int = 30):
     any mentions where OCR text was added.
 
     Rate-limited via batch_size and chained follow-ups to avoid overloading.
+    Uses a Redis lock to prevent concurrent OCR tasks from saturating all workers.
     """
+    import redis as _redis
+    from darkdisco.config import settings as _settings
+    r = _redis.from_url(_settings.celery_broker_url)
+    lock = r.lock("darkdisco:backfill_ocr_lock", timeout=1800, blocking=False)
+    if not lock.acquire(blocking=False):
+        logger.info("Another OCR backfill task is already running, skipping")
+        return {"skipped": True}
+
     from datetime import timedelta
 
     from sqlalchemy import and_, or_
@@ -1680,6 +1689,10 @@ def backfill_ocr(batch_size: int = 20, days: int = 30):
         raise
     finally:
         session.close()
+        try:
+            lock.release()
+        except Exception:
+            pass
 
 
 def _rematch_ocr_mentions(mention_source_pairs: list[tuple[str, str]]):
