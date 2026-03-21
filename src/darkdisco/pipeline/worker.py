@@ -61,7 +61,11 @@ app.conf.update(
         },
         "download-pending-files": {
             "task": "darkdisco.pipeline.worker.download_pending_files",
-            "schedule": 600.0,  # 10 minutes
+            "schedule": 120.0,  # 2 minutes
+        },
+        "backfill-ocr": {
+            "task": "darkdisco.pipeline.worker.backfill_ocr",
+            "schedule": 300.0,  # 5 minutes
         },
         "sync-trapline-watchlist": {
             "task": "darkdisco.pipeline.worker.sync_trapline_watchlist",
@@ -1057,7 +1061,7 @@ async def _join_channel_async(connector, channel_ref: str) -> bool:
 
 @app.task(name="darkdisco.pipeline.worker.download_pending_files",
           soft_time_limit=3600, time_limit=3900)
-def download_pending_files(batch_size: int = 20):
+def download_pending_files(batch_size: int = 100):
     """Download large files from mentions marked as download_status=pending.
 
     Uses a Redis lock to prevent concurrent download tasks from contending
