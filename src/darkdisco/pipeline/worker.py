@@ -1179,7 +1179,7 @@ def download_pending_files(batch_size: int = 50):
                                     # Upload to S3
                                     import hashlib
                                     sha256 = hashlib.sha256(file_data).hexdigest()
-                                    filename = meta.get("file_name", "unknown")
+                                    filename = meta.get("file_name") or "unknown"
                                     s3_key = f"files/{sha256[:8]}/{filename}"
 
                                     from darkdisco.pipeline.files import _get_s3_client
