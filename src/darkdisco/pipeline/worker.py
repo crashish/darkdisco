@@ -1115,6 +1115,7 @@ def download_pending_files(batch_size: int = 50):
 
         downloaded = 0
         failed = 0
+        deduped = 0
 
         for source_id, source_mentions in by_source.items():
             source = session.get(Source, source_id)
@@ -1127,13 +1128,48 @@ def download_pending_files(batch_size: int = 50):
                 async def _do_downloads():
                     try:
                         await connector.setup()
-                        results = {"downloaded": 0, "failed": 0}
+                        results = {"downloaded": 0, "failed": 0, "deduped": 0}
+
+                        # Build dedup cache: (file_name, file_size) -> stored mention metadata
+                        _dedup_cache: dict[tuple, dict] = {}
+                        dedup_stmt = (
+                            select(RawMentionModel)
+                            .where(RawMentionModel.metadata_["download_status"].astext == "stored")
+                            .where(RawMentionModel.metadata_["s3_key"].astext != "")
+                            .limit(5000)
+                        )
+                        for stored in session.execute(dedup_stmt).scalars():
+                            sm = stored.metadata_ or {}
+                            key = (sm.get("file_name"), str(sm.get("file_size", "")))
+                            if key[0] and key not in _dedup_cache:
+                                _dedup_cache[key] = {
+                                    "s3_key": sm.get("s3_key"),
+                                    "file_sha256": sm.get("file_sha256"),
+                                    "file_size": sm.get("file_size"),
+                                }
+                        logger.info("Download dedup cache: %d stored file signatures", len(_dedup_cache))
+
                         for mention in source_mentions:
                             try:
                                 meta = mention.metadata_ or {}
                                 msg_id = meta.get("message_id")
                                 if not msg_id:
                                     continue
+
+                                # Check dedup cache before downloading
+                                dedup_key = (meta.get("file_name"), str(meta.get("file_size", "")))
+                                cached = _dedup_cache.get(dedup_key)
+                                if cached and cached.get("s3_key"):
+                                    meta["s3_key"] = cached["s3_key"]
+                                    meta["file_sha256"] = cached.get("file_sha256")
+                                    meta["file_size"] = cached.get("file_size")
+                                    meta["download_status"] = "stored"
+                                    meta["dedup_source"] = "file_signature"
+                                    mention.metadata_ = meta
+                                    session.commit()
+                                    results["deduped"] += 1
+                                    continue
+
                                 chat_id = meta.get("chat_id")
                                 file_data = await connector.download_media(
                                     int(msg_id),
@@ -1176,6 +1212,12 @@ def download_pending_files(batch_size: int = 50):
                                     mention.metadata_ = meta
                                     session.commit()
                                     results["downloaded"] += 1
+                                    # Add to dedup cache for rest of batch
+                                    _dedup_cache[dedup_key] = {
+                                        "s3_key": s3_key,
+                                        "file_sha256": sha256,
+                                        "file_size": len(file_data),
+                                    }
                                     logger.info("Downloaded %s for mention %s", filename, mention.id)
                                 else:
                                     meta["download_status"] = "error"
@@ -1198,11 +1240,12 @@ def download_pending_files(batch_size: int = 50):
                 results = _get_or_create_loop().run_until_complete(_do_downloads())
                 downloaded += results["downloaded"]
                 failed += results["failed"]
+                deduped += results.get("deduped", 0)
             except Exception:
                 logger.exception("Failed to download files for source %s", source_id)
                 failed += len(source_mentions)
 
-        return {"downloaded": downloaded, "failed": failed}
+        return {"downloaded": downloaded, "failed": failed, "deduped": deduped}
     finally:
         try:
             tg_lock.release()
