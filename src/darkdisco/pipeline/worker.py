@@ -1066,7 +1066,7 @@ async def _join_channel_async(connector, channel_ref: str) -> bool:
 
 @app.task(name="darkdisco.pipeline.worker.download_pending_files",
           soft_time_limit=3600, time_limit=3900)
-def download_pending_files(batch_size: int = 100):
+def download_pending_files(batch_size: int = 50):
     """Download large files from mentions marked as download_status=pending.
 
     Uses a Redis lock to prevent concurrent download tasks from contending
@@ -1090,9 +1090,16 @@ def download_pending_files(batch_size: int = 100):
 
     session = _get_sync_session()
     try:
+        # Skip videos, webp stickers, and audio — focus on images, text, archives
+        _SKIP_MIMES = ("video/", "image/webp", "audio/")
         stmt = (
             select(RawMentionModel)
-            .where(RawMentionModel.metadata_["download_status"].astext == "pending")
+            .where(
+                RawMentionModel.metadata_["download_status"].astext == "pending",
+                ~RawMentionModel.metadata_["file_mime"].astext.startswith("video/"),
+                RawMentionModel.metadata_["file_mime"].astext != "image/webp",
+                ~RawMentionModel.metadata_["file_mime"].astext.startswith("audio/"),
+            )
             .limit(batch_size)
         )
         mentions = session.execute(stmt).scalars().all()

@@ -1908,6 +1908,29 @@ async def list_mention_files(
     }
 
 
+@protected.post("/mentions/{mention_id}/request-download")
+async def request_mention_download(
+    mention_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """Request download of a deferred file (video, audio, etc.).
+
+    Changes download_status from 'deferred' to 'pending' so the next
+    download_pending_files cycle picks it up.
+    """
+    mention = await db.get(RawMention, mention_id)
+    if not mention:
+        raise HTTPException(404, "Mention not found")
+    meta = dict(mention.metadata_ or {})
+    status = meta.get("download_status")
+    if status == "stored":
+        return {"status": "already_downloaded", "s3_key": meta.get("s3_key")}
+    meta["download_status"] = "pending"
+    mention.metadata_ = meta
+    await db.commit()
+    return {"status": "queued", "mention_id": mention_id}
+
+
 @router.get("/files/{s3_key:path}")
 async def serve_s3_file(
     s3_key: str,
