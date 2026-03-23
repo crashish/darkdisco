@@ -1572,13 +1572,15 @@ async def list_extracted_files(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     extension: str | None = None,
+    sort: str = Query("newest", regex="^(newest|oldest)$"),
     db: AsyncSession = Depends(get_session),
 ):
     """List all extracted files with pagination."""
+    order = ExtractedFile.created_at.asc() if sort == "oldest" else ExtractedFile.created_at.desc()
     stmt = (
         select(ExtractedFile, RawMention.metadata_.label("mention_meta"))
         .join(RawMention, RawMention.id == ExtractedFile.mention_id)
-        .order_by(ExtractedFile.created_at.desc())
+        .order_by(order)
     )
     count_stmt = select(func.count()).select_from(ExtractedFile)
 

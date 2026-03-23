@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { colors, card, font } from '../theme';
-import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code, ScanLine } from 'lucide-react';
+import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code, ScanLine, ChevronLeft, ChevronsLeft, ChevronsRight } from 'lucide-react';
 
 const BASE = '/api';
 
@@ -334,6 +334,12 @@ function authedFetch(url: string): Promise<Response> {
   return fetch(url, { headers });
 }
 
+const paginationBtnStyle: React.CSSProperties = {
+  background: 'none', border: 'none', cursor: 'pointer',
+  color: colors.textDim, padding: '4px', borderRadius: 3,
+  display: 'inline-flex', alignItems: 'center',
+};
+
 export default function Files() {
   const [query, setQuery] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
@@ -351,29 +357,41 @@ export default function Files() {
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [archivesLoading, setArchivesLoading] = useState(true);
 
-  // Load extracted files list on mount
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(50);
+  const [totalFiles, setTotalFiles] = useState(0);
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+
+  const totalPages = Math.max(1, Math.ceil(totalFiles / pageSize));
+
+  const loadArchives = useCallback(async (page: number, sort: string) => {
+    setArchivesLoading(true);
+    try {
+      const sortParam = sort === 'oldest' ? '&sort=oldest' : '';
+      const res = await authedFetch(`${BASE}/extracted-files?page=${page}&page_size=${pageSize}${sortParam}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const items = (data.items || []).map((f: Record<string, unknown>) => ({
+        mention_id: f.mention_id as string,
+        file_name: (f.filename as string) || 'unknown',
+        file_size: (f.size as number) || 0,
+        file_mime: (f.extension as string) || '',
+        source_name: (f.archive_name as string) || '',
+        collected_at: (f.created_at as string) || '',
+        file_count: 0,
+      }));
+      setArchives(items);
+      setTotalFiles(data.total || 0);
+    } catch { /* ignore */ }
+    setArchivesLoading(false);
+  }, [pageSize]);
+
+  // Load extracted files list on mount and when page/sort changes
   useEffect(() => {
-    async function loadArchives() {
-      setArchivesLoading(true);
-      try {
-        const res = await authedFetch(`${BASE}/extracted-files?page=1&page_size=200`);
-        if (!res.ok) return;
-        const data = await res.json();
-        const items = (data.items || []).map((f: Record<string, unknown>) => ({
-          mention_id: f.mention_id as string,
-          file_name: (f.filename as string) || 'unknown',
-          file_size: (f.size as number) || 0,
-          file_mime: (f.extension as string) || '',
-          source_name: (f.archive_name as string) || '',
-          collected_at: (f.created_at as string) || '',
-          file_count: 0,
-        }));
-        setArchives(items);
-      } catch { /* ignore */ }
-      setArchivesLoading(false);
-    }
-    loadArchives();
-  }, []);
+    setSelectedArchive(null);
+    loadArchives(currentPage, sortOrder);
+  }, [currentPage, sortOrder, loadArchives]);
 
   // Load files for selected archive
   useEffect(() => {
@@ -517,9 +535,24 @@ export default function Files() {
           {/* Archive list */}
           <div style={{ width: 320, flexShrink: 0 }}>
             <div style={{ ...card, padding: 0, maxHeight: 'calc(100vh - 220px)', overflow: 'auto' }}>
-              <div style={{ padding: '10px 14px', borderBottom: `1px solid ${colors.border}`, fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                <Archive size={12} style={{ marginRight: 6, verticalAlign: -1 }} />
-                Archives ({archives.length})
+              <div style={{ padding: '10px 14px', borderBottom: `1px solid ${colors.border}`, fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>
+                  <Archive size={12} style={{ marginRight: 6, verticalAlign: -1 }} />
+                  Files ({totalFiles.toLocaleString()})
+                </span>
+                <select
+                  value={sortOrder}
+                  onChange={e => { setSortOrder(e.target.value as 'newest' | 'oldest'); setCurrentPage(1); }}
+                  style={{
+                    fontSize: 10, padding: '2px 4px', background: colors.bgSurface,
+                    border: `1px solid ${colors.border}`, borderRadius: 3,
+                    color: colors.textDim, cursor: 'pointer', textTransform: 'none',
+                    fontWeight: 400, letterSpacing: 'normal',
+                  }}
+                >
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                </select>
               </div>
               {archivesLoading ? (
                 <div style={{ padding: 20, textAlign: 'center', color: colors.textMuted }}>Loading...</div>
@@ -549,6 +582,55 @@ export default function Files() {
                   </div>
                 );
               })}
+              {/* Pagination controls */}
+              {totalPages > 1 && (
+                <div style={{
+                  padding: '8px 14px', borderTop: `1px solid ${colors.border}`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  fontSize: 11, color: colors.textMuted, position: 'sticky', bottom: 0,
+                  background: colors.bgSurface,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <button
+                      onClick={() => setCurrentPage(1)}
+                      disabled={currentPage === 1}
+                      style={{ ...paginationBtnStyle, opacity: currentPage === 1 ? 0.3 : 1 }}
+                      title="First page"
+                    >
+                      <ChevronsLeft size={12} />
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      style={{ ...paginationBtnStyle, opacity: currentPage === 1 ? 0.3 : 1 }}
+                      title="Previous page"
+                    >
+                      <ChevronLeft size={12} />
+                    </button>
+                  </div>
+                  <span>
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      style={{ ...paginationBtnStyle, opacity: currentPage === totalPages ? 0.3 : 1 }}
+                      title="Next page"
+                    >
+                      <ChevronRight size={12} />
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(totalPages)}
+                      disabled={currentPage === totalPages}
+                      style={{ ...paginationBtnStyle, opacity: currentPage === totalPages ? 0.3 : 1 }}
+                      title="Last page"
+                    >
+                      <ChevronsRight size={12} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
