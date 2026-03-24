@@ -1092,6 +1092,13 @@ def download_pending_files(batch_size: int = 50):
     try:
         # Skip videos, webp stickers, and audio — focus on images, text, archives
         _SKIP_MIMES = ("video/", "image/webp", "audio/")
+        # Prioritize documents/archives/text over images — images are high-volume
+        # and lower-value; documents often contain credentials and stealer logs.
+        from sqlalchemy import case
+        mime_priority = case(
+            (RawMentionModel.metadata_["file_mime"].astext.startswith("image/"), 1),
+            else_=0,
+        )
         stmt = (
             select(RawMentionModel)
             .where(
@@ -1100,6 +1107,7 @@ def download_pending_files(batch_size: int = 50):
                 RawMentionModel.metadata_["file_mime"].astext != "image/webp",
                 ~RawMentionModel.metadata_["file_mime"].astext.startswith("audio/"),
             )
+            .order_by(mime_priority, RawMentionModel.collected_at.desc())
             .limit(batch_size)
         )
         mentions = session.execute(stmt).scalars().all()
