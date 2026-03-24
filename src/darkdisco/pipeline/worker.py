@@ -1179,7 +1179,15 @@ def download_pending_files(batch_size: int = 50):
                                     # Upload to S3
                                     import hashlib
                                     sha256 = hashlib.sha256(file_data).hexdigest()
-                                    filename = meta.get("file_name") or "unknown"
+                                    filename = meta.get("file_name") or ""
+                                    if not filename:
+                                        # Telegram photos have no filename — infer from MIME
+                                        mime = meta.get("file_mime", "")
+                                        ext = {
+                                            "image/jpeg": ".jpg", "image/png": ".png",
+                                            "image/gif": ".gif", "image/webp": ".webp",
+                                        }.get(mime, "")
+                                        filename = f"{sha256[:16]}{ext}" if ext else "unknown"
                                     s3_key = f"files/{sha256[:8]}/{filename}"
 
                                     from darkdisco.pipeline.files import _get_s3_client
