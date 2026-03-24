@@ -122,6 +122,27 @@ services:
       redis:
         condition: service_healthy
 
+  db-backup:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.backup
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: darkdisco
+      PGPASSWORD: ${POSTGRES_PASSWORD:-darkdisco}
+      PGDATABASE: darkdisco
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: darkdisco-backups
+      S3_ACCESS_KEY: darkdisco
+      S3_SECRET_KEY: ${MINIO_PASSWORD:-darkdisco-secret}
+      BACKUP_RETENTION_DAYS: "7"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
   frontend:
     build:
       context: ./frontend
