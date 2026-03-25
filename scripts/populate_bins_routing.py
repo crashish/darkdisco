@@ -65,10 +65,10 @@ def _builtin_data() -> list[dict]:
     # Import the seed data lists
     parent = Path(__file__).resolve().parent
     sys.path.insert(0, str(parent))
-    from seed_institutions import CREDIT_UNIONS, COMMUNITY_BANKS
+    from seed_institutions import CREDIT_UNIONS, COMMUNITY_BANKS, NEOBANKS
 
     entries = []
-    for inst in CREDIT_UNIONS + COMMUNITY_BANKS:
+    for inst in CREDIT_UNIONS + COMMUNITY_BANKS + NEOBANKS:
         entries.append({
             "name": inst["name"],
             "bin_ranges": inst.get("bin_ranges", []),

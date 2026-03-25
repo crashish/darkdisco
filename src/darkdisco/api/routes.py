@@ -872,6 +872,23 @@ async def delete_institution(
     await db.commit()
 
 
+@protected.post("/institutions/{institution_id}/retroactive-hunt")
+async def trigger_retroactive_hunt(
+    institution_id: str,
+    days: int | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """Trigger a retroactive hunt across existing mentions for this institution."""
+    inst = await db.get(Institution, institution_id)
+    if not inst:
+        raise HTTPException(404, "Institution not found")
+
+    from darkdisco.pipeline.worker import retroactive_hunt
+
+    retroactive_hunt.delay(inst.name, days=days)
+    return {"status": "dispatched", "institution": inst.name, "days": days}
+
+
 # ---- Watch Terms -----------------------------------------------------------
 
 @protected.get("/watch-terms", response_model=list[WatchTermOut])

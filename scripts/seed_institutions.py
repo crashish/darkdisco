@@ -1061,6 +1061,51 @@ COMMUNITY_BANKS: list[dict] = [
     },
 ]
 
+NEOBANKS: list[dict] = [
+    {
+        "name": "Revolut Ltd",
+        "short_name": "Revolut",
+        "state": "GB",  # UK-headquartered; US operations via partner banks
+        "domain": "revolut.com",
+        "additional_domains": ["revolut.co.uk", "business.revolut.com"],
+        # Revolut US customers receive accounts via Metropolitan Commercial Bank
+        # and Sutton Bank partnerships. Routing numbers correspond to partner banks.
+        "routing_numbers": [
+            "084009519",   # Metropolitan Commercial Bank (Revolut US partner)
+        ],
+        # Known Revolut card BIN prefixes (Visa/Mastercard, public IIN databases)
+        "bin_ranges": [
+            "535522",  # Mastercard (UK/EU)
+            "537551",  # Mastercard (EU)
+            "536420",  # Mastercard (EU)
+            "445319",  # Visa (Lithuania — Revolut EU entity)
+            "414649",  # Visa (UK)
+            "428803",  # Visa (US)
+            "530133",  # Mastercard (US)
+        ],
+        "acronyms": [("Revolut", "Low collision risk — distinctive brand name")],
+        "metadata": {
+            "institution_type": "neobank",
+            "hq_country": "GB",
+            "us_partner_banks": [
+                "Metropolitan Commercial Bank",
+                "Sutton Bank",
+            ],
+            "security_contacts": {
+                "security_email": "security@revolut.com",
+                "bug_bounty": "https://hackerone.com/revolut",
+                "fraud_reporting": "In-app chat or +44 20 3322 8352",
+                "compliance_email": "dpo@revolut.com",
+            },
+            "regulatory": {
+                "uk_license": "FCA Electronic Money Institution (900562)",
+                "eu_license": "ECB Banking License via Revolut Bank UAB (Lithuania)",
+                "us_license": "State money transmitter licenses; banking via partners",
+            },
+        },
+    },
+]
+
 
 def _generate_watch_terms(
     inst_id: str,
@@ -1548,6 +1593,25 @@ async def seed(db_url: str | None = None) -> None:
             institution_ids[entry["name"]] = inst_id
             institution_ids[entry["short_name"]] = inst_id
 
+        print(f"\n--- Seeding {len(NEOBANKS)} neobanks ---")
+        for entry in NEOBANKS:
+            inst_id = await _ensure_institution(
+                session,
+                client_id=client_id,
+                name=entry["name"],
+                short_name=entry["short_name"],
+                charter_type="neobank",
+                state=entry["state"],
+                domain=entry["domain"],
+                additional_domains=entry.get("additional_domains", []),
+                routing_numbers=entry.get("routing_numbers", []),
+                bin_ranges=entry.get("bin_ranges", []),
+                acronyms=entry.get("acronyms", []),
+                metadata=entry.get("metadata"),
+            )
+            institution_ids[entry["name"]] = inst_id
+            institution_ids[entry["short_name"]] = inst_id
+
         # ---- 3. Sources ----
         print(f"\n--- Seeding {len(DEFAULT_SOURCES)} sources ---")
         source_ids: dict[str, str] = {}
@@ -1600,6 +1664,7 @@ async def _ensure_institution(
     routing_numbers: list[str],
     bin_ranges: list[str],
     acronyms: list[tuple[str, str]],
+    metadata: dict | None = None,
 ) -> str:
     result = await session.execute(
         select(Institution).where(
@@ -1675,6 +1740,7 @@ async def _ensure_institution(
         additional_domains=additional_domains if additional_domains else None,
         routing_numbers=routing_numbers if routing_numbers else None,
         bin_ranges=bin_ranges if bin_ranges else None,
+        metadata_=metadata,
         active=True,
     )
     session.add(inst)

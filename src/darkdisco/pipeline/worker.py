@@ -1807,6 +1807,129 @@ def _rematch_ocr_mentions(mention_source_pairs: list[tuple[str, str]]):
 
 
 # ---------------------------------------------------------------------------
+# Retroactive hunt — re-match existing mentions for a specific institution
+# ---------------------------------------------------------------------------
+
+
+@app.task(
+    name="darkdisco.pipeline.worker.retroactive_hunt",
+    soft_time_limit=3600,
+    time_limit=7200,
+)
+def retroactive_hunt(institution_name: str, batch_size: int = 200, days: int | None = None):
+    """Re-run watch term matching across all existing mentions for a specific institution.
+
+    Use this when a new institution is added and you want to discover any existing
+    mentions that match its watch terms (BINs, routing numbers, name, domains).
+
+    Args:
+        institution_name: Name of the institution to hunt for (exact match).
+        batch_size: Number of mentions to process per batch.
+        days: Limit to mentions from the last N days. None = all time.
+    """
+    from darkdisco.common.models import Institution as InstitutionModel
+    from darkdisco.common.models import RawMention as RawMentionModel
+    from darkdisco.common.models import WatchTerm as WatchTermModel
+    from darkdisco.discovery.connectors.base import RawMention
+    from darkdisco.discovery.matcher import match_mention
+
+    session = _get_sync_session()
+    try:
+        # Load watch terms for the target institution
+        inst = session.execute(
+            select(InstitutionModel).where(InstitutionModel.name == institution_name)
+        ).scalars().first()
+
+        if inst is None:
+            logger.error("Institution %r not found for retroactive hunt", institution_name)
+            return {"error": "institution_not_found"}
+
+        watch_terms = session.execute(
+            select(WatchTermModel).where(
+                WatchTermModel.institution_id == inst.id,
+                WatchTermModel.enabled.is_(True),
+            )
+        ).scalars().all()
+
+        if not watch_terms:
+            logger.warning("No watch terms for %s — hunt skipped", institution_name)
+            return {"error": "no_watch_terms"}
+
+        logger.info(
+            "Retroactive hunt for %s: %d watch terms",
+            institution_name, len(watch_terms),
+        )
+
+        # Query mentions in batches
+        query = select(RawMentionModel).order_by(RawMentionModel.collected_at.desc())
+        if days is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            query = query.where(RawMentionModel.collected_at >= cutoff)
+
+        offset = 0
+        total_matched = 0
+        total_scanned = 0
+
+        while True:
+            mentions = session.execute(
+                query.offset(offset).limit(batch_size)
+            ).scalars().all()
+
+            if not mentions:
+                break
+
+            # Group by source for dispatching
+            by_source: dict[str, list[dict]] = {}
+            for m in mentions:
+                total_scanned += 1
+                mention = RawMention(
+                    source_name=(m.source.name if m.source else "unknown"),
+                    source_url=m.source_url,
+                    title="",
+                    content=m.content or "",
+                    author=None,
+                    discovered_at=m.collected_at or datetime.now(timezone.utc),
+                    metadata=m.metadata_ or {},
+                )
+
+                results = match_mention(mention, watch_terms)
+                if results:
+                    total_matched += 1
+                    source_id = m.source_id
+                    by_source.setdefault(source_id, []).append({
+                        "source_name": mention.source_name,
+                        "source_url": mention.source_url,
+                        "title": mention.title,
+                        "content": mention.content,
+                        "author": mention.author,
+                        "discovered_at": mention.discovered_at.isoformat() if mention.discovered_at else None,
+                        "metadata": mention.metadata or {},
+                    })
+
+            # Dispatch matched mentions for full finding creation
+            for source_id, serialized in by_source.items():
+                run_matching.delay(source_id, serialized)
+
+            offset += batch_size
+
+            if len(mentions) < batch_size:
+                break
+
+        logger.info(
+            "Retroactive hunt for %s complete: scanned=%d, matched=%d",
+            institution_name, total_scanned, total_matched,
+        )
+
+        return {
+            "institution": institution_name,
+            "scanned": total_scanned,
+            "matched": total_matched,
+        }
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # Scheduled report generation
 # ---------------------------------------------------------------------------
 
