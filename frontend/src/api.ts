@@ -554,6 +554,15 @@ export async function fetchBINStats(): Promise<BINStats> {
   });
 }
 
+export async function triggerRetroactiveHunt(institutionId: string, days?: number): Promise<{ status: string; institution: string; days: number | null }> {
+  const body: Record<string, unknown> = {};
+  if (days !== undefined) body.days = days;
+  return apiFetch(`/institutions/${institutionId}/retroactive-hunt`, { status: 'dispatched', institution: '', days: null }, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
 export async function importBINFile(file: File, sourceLabel: string = 'csv'): Promise<BINImportResult> {
   const token = localStorage.getItem('dd_token');
   const formData = new FormData();

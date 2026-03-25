@@ -4,12 +4,13 @@ import {
   createInstitution, updateInstitution, deleteInstitution,
   createWatchTerm, deleteWatchTerm,
   getInstitutionExportUrl, importInstitutions,
+  triggerRetroactiveHunt,
 } from '../api';
 import { colors, card, font } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import type { Client, Institution, Finding, WatchTerm } from '../types';
-import { Building2, ChevronRight, ChevronDown, Tag, Globe, CreditCard, Hash, MapPin, Plus, Pencil, Trash2, X, Check, Download, Upload } from 'lucide-react';
+import { Building2, ChevronRight, ChevronDown, Tag, Globe, CreditCard, Hash, MapPin, Plus, Pencil, Trash2, X, Check, Download, Upload, RefreshCw } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const termIcons: Record<string, typeof Tag> = {
@@ -84,6 +85,12 @@ export default function Institutions() {
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number; errors: string[] } | null>(null);
   const [importing, setImporting] = useState(false);
 
+  // Retroactive hunt
+  const [showHuntConfirm, setShowHuntConfirm] = useState(false);
+  const [huntDays, setHuntDays] = useState('');
+  const [huntLoading, setHuntLoading] = useState(false);
+  const [huntToast, setHuntToast] = useState<string | null>(null);
+
   const reload = useCallback(() => {
     fetchClients().then(setClients);
     fetchInstitutions().then(setInstitutions);
@@ -99,6 +106,8 @@ export default function Institutions() {
     setExpandedInst(id);
     setLoadingDetail(true);
     setShowAddTerm(false);
+    setShowHuntConfirm(false);
+    setHuntDays('');
     const [findings, terms] = await Promise.all([
       fetchFindings({ institution_id: id }),
       fetchWatchTerms(id),
@@ -192,6 +201,24 @@ export default function Institutions() {
     if (expandedInst) {
       const terms = await fetchWatchTerms(expandedInst);
       setInstTerms(terms);
+    }
+  };
+
+  const handleRetroactiveHunt = async () => {
+    if (!expandedInst) return;
+    setHuntLoading(true);
+    try {
+      const days = huntDays.trim() ? parseInt(huntDays, 10) : undefined;
+      const result = await triggerRetroactiveHunt(expandedInst, days);
+      setShowHuntConfirm(false);
+      setHuntDays('');
+      setHuntToast(`Retroactive hunt dispatched for ${result.institution}${result.days ? ` (${result.days} days)` : ''}`);
+      setTimeout(() => setHuntToast(null), 5000);
+    } catch {
+      setHuntToast('Failed to trigger retroactive hunt');
+      setTimeout(() => setHuntToast(null), 5000);
+    } finally {
+      setHuntLoading(false);
     }
   };
 
@@ -433,6 +460,52 @@ export default function Institutions() {
                             )}
                           </div>
 
+                          {/* Retroactive Hunt */}
+                          <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <h4 style={{ fontSize: 12, fontWeight: 600, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Actions</h4>
+                            {!showHuntConfirm ? (
+                              <button
+                                style={{ ...btnStyle, display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+                                onClick={() => setShowHuntConfirm(true)}
+                              >
+                                <RefreshCw size={13} /> Retroactive Hunt
+                              </button>
+                            ) : (
+                              <div style={{ background: colors.bgSurface, border: `1px solid ${colors.border}`, borderRadius: 6, padding: 12, minWidth: 200 }}>
+                                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Trigger Retroactive Hunt?</div>
+                                <div style={{ fontSize: 11, color: colors.textMuted, marginBottom: 8 }}>
+                                  This will scan all existing mentions against this institution's watch terms.
+                                </div>
+                                <div style={{ marginBottom: 8 }}>
+                                  <label style={{ fontSize: 11, color: colors.textMuted, display: 'block', marginBottom: 4 }}>Days to scan (optional)</label>
+                                  <input
+                                    style={{ ...inputStyle, width: '100%' }}
+                                    type="number"
+                                    min="1"
+                                    placeholder="All time"
+                                    value={huntDays}
+                                    onChange={e => setHuntDays(e.target.value)}
+                                  />
+                                </div>
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                  <button
+                                    style={{ ...btnStyle, fontSize: 11, padding: '4px 10px' }}
+                                    onClick={handleRetroactiveHunt}
+                                    disabled={huntLoading}
+                                  >
+                                    {huntLoading ? 'Dispatching...' : 'Confirm'}
+                                  </button>
+                                  <button
+                                    style={{ ...btnGhostStyle, fontSize: 11, padding: '4px 10px' }}
+                                    onClick={() => { setShowHuntConfirm(false); setHuntDays(''); }}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
                           {/* Findings summary */}
                           <div style={{ flex: '2 1 400px', minWidth: 0 }}>
                             <h4 style={{ fontSize: 12, fontWeight: 600, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
@@ -476,6 +549,25 @@ export default function Institutions() {
           </div>
         </div>
       ))}
+
+      {/* Toast notification */}
+      {huntToast && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, background: colors.bgSurface,
+          border: `1px solid ${colors.border}`, borderRadius: 8, padding: '12px 20px',
+          fontSize: 13, color: colors.text, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          zIndex: 1000, display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <RefreshCw size={14} color={colors.accent} />
+          {huntToast}
+          <button
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, marginLeft: 8 }}
+            onClick={() => setHuntToast(null)}
+          >
+            <X size={12} color={colors.textMuted} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
