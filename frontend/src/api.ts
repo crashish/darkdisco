@@ -563,6 +563,45 @@ export async function triggerRetroactiveHunt(institutionId: string, days?: numbe
   });
 }
 
+// ---------------------------------------------------------------------------
+// Matching Filters
+// ---------------------------------------------------------------------------
+
+export interface MatchingFilters {
+  fraud_indicators: string[];
+  negative_patterns: string[];
+}
+
+export interface MatchingFiltersTestResult {
+  matched_negative_patterns: string[];
+  matched_fraud_indicators: string[];
+  would_suppress: boolean;
+  would_require_fraud_indicator: boolean;
+}
+
+export async function fetchMatchingFilters(): Promise<MatchingFilters> {
+  return apiFetch('/settings/matching-filters', { fraud_indicators: [], negative_patterns: [] });
+}
+
+export async function updateMatchingFilters(data: MatchingFilters): Promise<MatchingFilters> {
+  return apiFetch('/settings/matching-filters', { fraud_indicators: [], negative_patterns: [] }, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function testMatchingFilters(text: string): Promise<MatchingFiltersTestResult> {
+  return apiFetch('/settings/matching-filters/test', {
+    matched_negative_patterns: [],
+    matched_fraud_indicators: [],
+    would_suppress: false,
+    would_require_fraud_indicator: false,
+  }, {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  });
+}
+
 export async function importBINFile(file: File, sourceLabel: string = 'csv'): Promise<BINImportResult> {
   const token = localStorage.getItem('dd_token');
   const formData = new FormData();

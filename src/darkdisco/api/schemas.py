@@ -820,3 +820,32 @@ class BINStatsResponse(BaseModel):
     by_source: dict[str, int]
     by_country: list[dict]
     top_issuers: list[dict]
+
+
+# ---------------------------------------------------------------------------
+# Matching Filters
+# ---------------------------------------------------------------------------
+
+class MatchingFiltersOut(BaseModel):
+    """Current matching filters configuration."""
+    fraud_indicators: list[str]
+    negative_patterns: list[str]
+
+
+class MatchingFiltersUpdate(BaseModel):
+    """Update matching filters configuration."""
+    fraud_indicators: list[str]
+    negative_patterns: list[str]
+
+
+class MatchingFiltersTestRequest(BaseModel):
+    """Request to test text against matching filters."""
+    text: str
+
+
+class MatchingFiltersTestResult(BaseModel):
+    """Result of testing text against matching filters."""
+    matched_negative_patterns: list[str]
+    matched_fraud_indicators: list[str]
+    would_suppress: bool
+    would_require_fraud_indicator: bool

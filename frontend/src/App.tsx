@@ -11,6 +11,7 @@ import Mentions from './pages/Mentions';
 import Files from './pages/Files';
 import Reports from './pages/Reports';
 import BINLookup from './pages/BINLookup';
+import MatchingFilters from './pages/MatchingFilters';
 import Login from './pages/Login';
 import type { ReactNode } from 'react';
 
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/sources/:id" element={<SourceDetail />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/bins" element={<BINLookup />} />
+          <Route path="/settings/filters" element={<MatchingFilters />} />
         </Route>
       </Routes>
     </AuthProvider>

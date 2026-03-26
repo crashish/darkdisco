@@ -82,6 +82,10 @@ from darkdisco.api.schemas import (
     BINLookupResponse,
     BINImportResponse,
     BINStatsResponse,
+    MatchingFiltersOut,
+    MatchingFiltersUpdate,
+    MatchingFiltersTestRequest,
+    MatchingFiltersTestResult,
     WatchTermCreate,
     WatchTermOut,
     WatchTermUpdate,
@@ -3585,5 +3589,109 @@ async def bin_import(
         skipped=result.skipped,
         errors=result.errors[:50],  # cap error list
         source=result.source,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Matching Filters settings
+# ---------------------------------------------------------------------------
+
+@protected.get("/settings/matching-filters", response_model=MatchingFiltersOut)
+async def get_matching_filters():
+    """Get current matching filters configuration."""
+    import yaml
+    from darkdisco.discovery.matcher import _resolve_filter_path
+
+    path = _resolve_filter_path()
+    if not path.exists():
+        return MatchingFiltersOut(fraud_indicators=[], negative_patterns=[])
+
+    raw = yaml.safe_load(path.read_text()) or {}
+    return MatchingFiltersOut(
+        fraud_indicators=[s for s in (raw.get("fraud_indicators") or []) if isinstance(s, str)],
+        negative_patterns=[s for s in (raw.get("negative_patterns") or []) if isinstance(s, str)],
+    )
+
+
+@protected.put("/settings/matching-filters", response_model=MatchingFiltersOut)
+async def update_matching_filters(body: MatchingFiltersUpdate):
+    """Update matching filters configuration and reload the matcher."""
+    import re as re_mod
+    import yaml
+    from darkdisco.discovery.matcher import _resolve_filter_path, reload_filters
+
+    # Validate all negative patterns are valid regex
+    for i, pat in enumerate(body.negative_patterns):
+        try:
+            re_mod.compile(pat, re_mod.IGNORECASE)
+        except re_mod.error as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid regex in negative_patterns[{i}]: {pat!r} — {exc}",
+            )
+
+    path = _resolve_filter_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    data = {
+        "fraud_indicators": body.fraud_indicators,
+        "negative_patterns": body.negative_patterns,
+    }
+    path.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False))
+
+    # Hot-reload the matcher singleton
+    reload_filters()
+    logger.info("Matching filters updated: %d fraud indicators, %d negative patterns",
+                len(body.fraud_indicators), len(body.negative_patterns))
+
+    return MatchingFiltersOut(
+        fraud_indicators=body.fraud_indicators,
+        negative_patterns=body.negative_patterns,
+    )
+
+
+@protected.post("/settings/matching-filters/test", response_model=MatchingFiltersTestResult)
+async def test_matching_filters(body: MatchingFiltersTestRequest):
+    """Test sample text against current matching filters."""
+    import re as re_mod
+    import yaml
+    from darkdisco.discovery.matcher import _resolve_filter_path
+
+    path = _resolve_filter_path()
+    if not path.exists():
+        return MatchingFiltersTestResult(
+            matched_negative_patterns=[],
+            matched_fraud_indicators=[],
+            would_suppress=False,
+            would_require_fraud_indicator=False,
+        )
+
+    raw = yaml.safe_load(path.read_text()) or {}
+    fraud_indicators = [s.lower() for s in (raw.get("fraud_indicators") or []) if isinstance(s, str)]
+    negative_patterns_raw = [s for s in (raw.get("negative_patterns") or []) if isinstance(s, str)]
+
+    text_lower = body.text.lower()
+
+    matched_neg: list[str] = []
+    for pat in negative_patterns_raw:
+        try:
+            if re_mod.search(pat, text_lower, re_mod.IGNORECASE):
+                matched_neg.append(pat)
+        except re_mod.error:
+            pass
+
+    matched_fraud: list[str] = []
+    for indicator in fraud_indicators:
+        if indicator in text_lower:
+            matched_fraud.append(indicator)
+
+    would_suppress = len(matched_neg) > 0
+    would_require_fraud_indicator = len(matched_fraud) == 0 and len(fraud_indicators) > 0
+
+    return MatchingFiltersTestResult(
+        matched_negative_patterns=matched_neg,
+        matched_fraud_indicators=matched_fraud,
+        would_suppress=would_suppress,
+        would_require_fraud_indicator=would_require_fraud_indicator,
     )
 
