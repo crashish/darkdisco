@@ -876,3 +876,49 @@ class ThreatSummary(BaseModel):
     by_severity: dict[str, int]
     by_status: dict[str, int]
     executive_brief: str
+
+
+# ---------------------------------------------------------------------------
+# Analytics / Disposition Dashboard
+# ---------------------------------------------------------------------------
+
+
+class InstitutionFPRate(BaseModel):
+    institution_id: str
+    institution_name: str
+    total_findings: int
+    false_positives: int
+    dismissed: int
+    confirmed: int
+    fp_rate: float  # 0.0–1.0
+
+
+class PatternEffectiveness(BaseModel):
+    total_mentions: int
+    total_promoted: int
+    total_suppressed: int
+    suppression_rate: float
+    fp_score_distribution: list[dict]  # [{bucket: "0.0-0.2", count: N}, ...]
+
+
+class AnalystWorkload(BaseModel):
+    pending_review: int  # new + reviewing
+    avg_disposition_hours: float | None
+    disposition_breakdown: list[dict]  # [{status: "confirmed", count: N}, ...]
+    by_analyst: list[dict]  # [{analyst: "name", reviewed: N, pending: N}, ...]
+
+
+class DispositionTrend(BaseModel):
+    date: str
+    confirmed: int
+    dismissed: int
+    false_positive: int
+    escalated: int
+    new: int
+
+
+class DispositionAnalytics(BaseModel):
+    institution_fp_rates: list[InstitutionFPRate]
+    pattern_effectiveness: PatternEffectiveness
+    analyst_workload: AnalystWorkload
+    disposition_trends: list[DispositionTrend]

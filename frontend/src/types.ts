@@ -326,3 +326,46 @@ export interface ThreatSummary {
   by_status: Record<string, number>;
   executive_brief: string;
 }
+
+// Analytics / Disposition Dashboard
+
+export interface InstitutionFPRate {
+  institution_id: string;
+  institution_name: string;
+  total_findings: number;
+  false_positives: number;
+  dismissed: number;
+  confirmed: number;
+  fp_rate: number;
+}
+
+export interface PatternEffectiveness {
+  total_mentions: number;
+  total_promoted: number;
+  total_suppressed: number;
+  suppression_rate: number;
+  fp_score_distribution: { bucket: string; count: number }[];
+}
+
+export interface AnalystWorkload {
+  pending_review: number;
+  avg_disposition_hours: number | null;
+  disposition_breakdown: { status: string; count: number }[];
+  by_analyst: { analyst: string; reviewed: number; pending: number }[];
+}
+
+export interface DispositionTrend {
+  date: string;
+  confirmed: number;
+  dismissed: number;
+  false_positive: number;
+  escalated: number;
+  new: number;
+}
+
+export interface DispositionAnalytics {
+  institution_fp_rates: InstitutionFPRate[];
+  pattern_effectiveness: PatternEffectiveness;
+  analyst_workload: AnalystWorkload;
+  disposition_trends: DispositionTrend[];
+}

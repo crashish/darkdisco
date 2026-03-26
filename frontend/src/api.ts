@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig, ReportSchedule, GeneratedReport, DateRangeMode, DeliveryMethod, BINLookupResult, BINRecord, BINStats, BINImportResult, ThreatSummary } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig, ReportSchedule, GeneratedReport, DateRangeMode, DeliveryMethod, BINLookupResult, BINRecord, BINStats, BINImportResult, ThreatSummary, DispositionAnalytics } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -608,6 +608,28 @@ export async function fetchThreatSummary(institutionId: string, days: number = 9
     threat_categories: [], total_findings: 0, confirmed_threats: 0,
     active_threat_actors: 0, top_source_channels: [], by_severity: {},
     by_status: {}, executive_brief: '',
+  });
+}
+
+export async function fetchDispositionAnalytics(params?: {
+  days?: number;
+  institution_id?: string;
+}): Promise<DispositionAnalytics> {
+  const qs = new URLSearchParams();
+  if (params?.days !== undefined) qs.set('days', String(params.days));
+  if (params?.institution_id) qs.set('institution_id', params.institution_id);
+  const query = qs.toString() ? `?${qs}` : '';
+  return apiFetch(`/analytics/disposition${query}`, {
+    institution_fp_rates: [],
+    pattern_effectiveness: {
+      total_mentions: 0, total_promoted: 0, total_suppressed: 0,
+      suppression_rate: 0, fp_score_distribution: [],
+    },
+    analyst_workload: {
+      pending_review: 0, avg_disposition_hours: null,
+      disposition_breakdown: [], by_analyst: [],
+    },
+    disposition_trends: [],
   });
 }
 

@@ -30,6 +30,11 @@ from darkdisco.api.schemas import (
     ClientOut,
     ClientUpdate,
     DashboardStats,
+    DispositionAnalytics,
+    InstitutionFPRate,
+    PatternEffectiveness,
+    AnalystWorkload,
+    DispositionTrend,
     DiscordChannelAdd,
     DiscordChannelRemoveOut,
     DiscordGuildChannelOut,
@@ -2802,6 +2807,227 @@ async def dashboard_stats(
         by_severity=by_severity,
         by_status=by_status,
         recent_findings=recent_rows,
+    )
+
+
+# ---- Disposition Analytics -------------------------------------------------
+
+@protected.get("/analytics/disposition", response_model=DispositionAnalytics)
+async def disposition_analytics(
+    days: int = Query(default=30, ge=1, le=365),
+    institution_id: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """Analytics dashboard: FP rates, pattern effectiveness, analyst workload, trends."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # --- 1. FP rate by institution ---
+    inst_q = (
+        select(
+            Finding.institution_id,
+            Institution.name,
+            Finding.status,
+            func.count(Finding.id),
+        )
+        .join(Institution, Finding.institution_id == Institution.id)
+        .where(Finding.discovered_at >= cutoff)
+        .group_by(Finding.institution_id, Institution.name, Finding.status)
+    )
+    if institution_id:
+        inst_q = inst_q.where(Finding.institution_id == institution_id)
+    inst_rows = (await db.execute(inst_q)).all()
+
+    inst_agg: dict[str, dict] = {}
+    for iid, iname, status, cnt in inst_rows:
+        if iid not in inst_agg:
+            inst_agg[iid] = {
+                "institution_id": iid,
+                "institution_name": iname,
+                "total_findings": 0,
+                "false_positives": 0,
+                "dismissed": 0,
+                "confirmed": 0,
+            }
+        inst_agg[iid]["total_findings"] += cnt
+        if status == FindingStatus.false_positive:
+            inst_agg[iid]["false_positives"] += cnt
+        elif status == FindingStatus.dismissed:
+            inst_agg[iid]["dismissed"] += cnt
+        elif status == FindingStatus.confirmed:
+            inst_agg[iid]["confirmed"] += cnt
+
+    institution_fp_rates = []
+    for d in sorted(inst_agg.values(), key=lambda x: x["total_findings"], reverse=True):
+        noise = d["false_positives"] + d["dismissed"]
+        fp_rate = noise / d["total_findings"] if d["total_findings"] > 0 else 0.0
+        institution_fp_rates.append(InstitutionFPRate(fp_rate=round(fp_rate, 4), **d))
+
+    # --- 2. Pattern effectiveness ---
+    total_mentions_q = select(func.count(RawMention.id)).where(
+        RawMention.collected_at >= cutoff
+    )
+    total_mentions = (await db.execute(total_mentions_q)).scalar() or 0
+
+    promoted_q = select(func.count(RawMention.id)).where(
+        RawMention.collected_at >= cutoff,
+        RawMention.promoted_to_finding_id.isnot(None),
+    )
+    total_promoted = (await db.execute(promoted_q)).scalar() or 0
+    total_suppressed = total_mentions - total_promoted
+    suppression_rate = total_suppressed / total_mentions if total_mentions > 0 else 0.0
+
+    # FP score distribution from enrichment metadata on findings
+    fp_buckets = {
+        "0.0-0.2": 0, "0.2-0.4": 0, "0.4-0.6": 0,
+        "0.6-0.8": 0, "0.8-1.0": 0,
+    }
+    fp_score_q = (
+        select(Finding.metadata_["false_positive"]["fp_score"].as_float())
+        .where(
+            Finding.discovered_at >= cutoff,
+            Finding.metadata_["false_positive"]["fp_score"].isnot(None),
+        )
+    )
+    if institution_id:
+        fp_score_q = fp_score_q.where(Finding.institution_id == institution_id)
+    try:
+        fp_scores = (await db.execute(fp_score_q)).scalars().all()
+        for score in fp_scores:
+            if score is None:
+                continue
+            s = float(score)
+            if s < 0.2:
+                fp_buckets["0.0-0.2"] += 1
+            elif s < 0.4:
+                fp_buckets["0.2-0.4"] += 1
+            elif s < 0.6:
+                fp_buckets["0.4-0.6"] += 1
+            elif s < 0.8:
+                fp_buckets["0.6-0.8"] += 1
+            else:
+                fp_buckets["0.8-1.0"] += 1
+    except Exception:
+        logger.debug("FP score query failed (metadata may not have expected structure)")
+
+    fp_score_distribution = [{"bucket": k, "count": v} for k, v in fp_buckets.items()]
+
+    pattern_effectiveness = PatternEffectiveness(
+        total_mentions=total_mentions,
+        total_promoted=total_promoted,
+        total_suppressed=total_suppressed,
+        suppression_rate=round(suppression_rate, 4),
+        fp_score_distribution=fp_score_distribution,
+    )
+
+    # --- 3. Analyst workload ---
+    pending_statuses = {FindingStatus.new, FindingStatus.reviewing}
+    pending_q = select(func.count(Finding.id)).where(
+        Finding.status.in_(pending_statuses)
+    )
+    if institution_id:
+        pending_q = pending_q.where(Finding.institution_id == institution_id)
+    pending_review = (await db.execute(pending_q)).scalar() or 0
+
+    # Average time to disposition (findings with reviewed_at)
+    avg_hours_q = (
+        select(
+            func.avg(
+                func.extract("epoch", Finding.reviewed_at - Finding.created_at) / 3600
+            )
+        )
+        .where(
+            Finding.reviewed_at.isnot(None),
+            Finding.discovered_at >= cutoff,
+        )
+    )
+    if institution_id:
+        avg_hours_q = avg_hours_q.where(Finding.institution_id == institution_id)
+    avg_hours_raw = (await db.execute(avg_hours_q)).scalar()
+    avg_disposition_hours = round(float(avg_hours_raw), 1) if avg_hours_raw else None
+
+    # Disposition breakdown
+    disp_q = (
+        select(Finding.status, func.count(Finding.id))
+        .where(Finding.discovered_at >= cutoff)
+        .group_by(Finding.status)
+    )
+    if institution_id:
+        disp_q = disp_q.where(Finding.institution_id == institution_id)
+    disp_rows = (await db.execute(disp_q)).all()
+    disposition_breakdown = [
+        {"status": s.value, "count": c} for s, c in disp_rows
+    ]
+
+    # By analyst (reviewed_by)
+    analyst_q = (
+        select(Finding.reviewed_by, func.count(Finding.id))
+        .where(
+            Finding.reviewed_by.isnot(None),
+            Finding.discovered_at >= cutoff,
+        )
+        .group_by(Finding.reviewed_by)
+    )
+    if institution_id:
+        analyst_q = analyst_q.where(Finding.institution_id == institution_id)
+    analyst_rows = (await db.execute(analyst_q)).all()
+
+    pending_by_analyst_q = (
+        select(Finding.assigned_to, func.count(Finding.id))
+        .where(
+            Finding.assigned_to.isnot(None),
+            Finding.status.in_(pending_statuses),
+        )
+        .group_by(Finding.assigned_to)
+    )
+    if institution_id:
+        pending_by_analyst_q = pending_by_analyst_q.where(Finding.institution_id == institution_id)
+    pending_analyst_rows = (await db.execute(pending_by_analyst_q)).all()
+    pending_map = {a: c for a, c in pending_analyst_rows}
+
+    by_analyst = [
+        {"analyst": a or "unassigned", "reviewed": c, "pending": pending_map.get(a, 0)}
+        for a, c in analyst_rows
+    ]
+
+    analyst_workload = AnalystWorkload(
+        pending_review=pending_review,
+        avg_disposition_hours=avg_disposition_hours,
+        disposition_breakdown=disposition_breakdown,
+        by_analyst=by_analyst,
+    )
+
+    # --- 4. Disposition trends (daily for last N days) ---
+    disposition_trends = []
+    tracked_statuses = ["confirmed", "dismissed", "false_positive", "escalated", "new"]
+    for i in range(min(days, 90) - 1, -1, -1):
+        day = today_start - timedelta(days=i)
+        day_end = day + timedelta(days=1)
+
+        day_counts: dict[str, int] = {s: 0 for s in tracked_statuses}
+        trend_q = (
+            select(Finding.status, func.count(Finding.id))
+            .where(Finding.discovered_at >= day, Finding.discovered_at < day_end)
+            .group_by(Finding.status)
+        )
+        if institution_id:
+            trend_q = trend_q.where(Finding.institution_id == institution_id)
+        trend_rows = (await db.execute(trend_q)).all()
+        for s, c in trend_rows:
+            if s.value in day_counts:
+                day_counts[s.value] = c
+
+        disposition_trends.append(DispositionTrend(
+            date=day.strftime("%Y-%m-%d"),
+            **day_counts,
+        ))
+
+    return DispositionAnalytics(
+        institution_fp_rates=institution_fp_rates,
+        pattern_effectiveness=pattern_effectiveness,
+        analyst_workload=analyst_workload,
+        disposition_trends=disposition_trends,
     )
 
 

@@ -13,6 +13,7 @@ import Files from './pages/Files';
 import Reports from './pages/Reports';
 import BINLookup from './pages/BINLookup';
 import MatchingFilters from './pages/MatchingFilters';
+import Analytics from './pages/Analytics';
 import Login from './pages/Login';
 import type { ReactNode } from 'react';
 
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/sources" element={<Sources />} />
           <Route path="/sources/:id" element={<SourceDetail />} />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/analytics" element={<Analytics />} />
           <Route path="/bins" element={<BINLookup />} />
           <Route path="/settings/filters" element={<MatchingFilters />} />
         </Route>
