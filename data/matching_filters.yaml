@@ -206,7 +206,28 @@ negative_patterns:
   - "premium global document solutions"
   - "(?:llc formation|ltd registration).{0,60}(?:ein|itin|ssn)"
   - "(?:ein|itin) documents?.{0,60}(?:selfie with id|driver license)"
-  - "(?:gateways?|portals?).{0,30}(?:2d.{0,5}3d|3d.{0,5}2d).{0,10}secure"
+  - "(?:gateways?|portals?).{0,30}(?:2d.{0,5}3d|3d.{0,5}2d)"
+
+  # Generic payment gateway / 2D-3D seller spam
+  - "(?:verified|fully).{0,20}(?:2d|3d).{0,10}(?:payment|gateway)"
+  - "(?:2d|3d).{0,10}(?:payment|gateway).{0,30}(?:available|for sale)"
+  - "payment gateway.{0,30}(?:shopify|stripe|square|paypal)"
+  - "(?:i.m here to (?:offer|provide)|hello (?:everyone|customers)).{0,80}(?:payment gateway|shopify)"
+
+  # Generic fraud service ad templates (emoji-heavy, multi-service listings)
+  - "(?:stop losing|go global).{0,40}(?:payment|banking) solutions"
+  - "(?:come make|make instant).{0,20}(?:legit|instant) money"
+  - "(?:i.m|am) (?:active|here|doing).{0,30}(?:transfer|loading).{0,20}(?:all countries|worldwide)"
+  - "(?:visit my shop|get (?:fully|your)).{0,30}(?:verified|payment gateway)"
+
+  # KYC / fake document service ads
+  - "(?:kyc|verification).{0,20}(?:service|seller|provider).{0,30}worldwide"
+  - "(?:fake|counterfeit|editable).{0,20}(?:id|passport|dl|driver.?s? licen[sc]e)"
+  - "(?:self registered|readymade).{0,20}(?:account|kyc)"
+
+  # Generic bank open-up / account service spam (ad template, not specific bank targeting)
+  - "(?:bank|banks).{0,10}(?:open up|opening).{0,20}(?:available|with cards)"
+  - "(?:open up|opening).{0,10}(?:llc|business).{0,30}(?:available|service)"
 
   # VoIP / SIP service ads (only the full ad template, not keyword mentions)
   # These ads list countries + services together in a structured format
