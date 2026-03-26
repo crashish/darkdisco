@@ -170,6 +170,10 @@ export interface ReportSections {
   classification_breakdown: boolean;
   timeline: boolean;
   appendix_full_content: boolean;
+  fp_analytics: boolean;
+  pattern_effectiveness: boolean;
+  institution_threat_summary: boolean;
+  analyst_performance: boolean;
 }
 
 export interface ReportChartOptions {
@@ -179,6 +183,10 @@ export interface ReportChartOptions {
   source_bar: boolean;
   institution_bar: boolean;
   severity_trend: boolean;
+  fp_rate_bar: boolean;
+  disposition_pie: boolean;
+  analyst_throughput_bar: boolean;
+  threat_category_bar: boolean;
 }
 
 export interface ReportRequest {

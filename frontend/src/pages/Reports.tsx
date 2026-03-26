@@ -19,6 +19,10 @@ const defaultSections: ReportSections = {
   classification_breakdown: true,
   timeline: true,
   appendix_full_content: false,
+  fp_analytics: false,
+  pattern_effectiveness: false,
+  institution_threat_summary: false,
+  analyst_performance: false,
 };
 
 const defaultCharts: ReportChartOptions = {
@@ -28,6 +32,10 @@ const defaultCharts: ReportChartOptions = {
   source_bar: true,
   institution_bar: true,
   severity_trend: true,
+  fp_rate_bar: false,
+  disposition_pie: false,
+  analyst_throughput_bar: false,
+  threat_category_bar: false,
 };
 
 const sectionLabels: Record<keyof ReportSections, string> = {
@@ -40,6 +48,10 @@ const sectionLabels: Record<keyof ReportSections, string> = {
   classification_breakdown: 'Classification Breakdown',
   timeline: 'Timeline',
   appendix_full_content: 'Appendix: Full Message Content',
+  fp_analytics: 'FP Analytics',
+  pattern_effectiveness: 'Pattern Effectiveness',
+  institution_threat_summary: 'Institution Threat Summary',
+  analyst_performance: 'Analyst Performance',
 };
 
 const chartLabels: Record<keyof ReportChartOptions, string> = {
@@ -49,6 +61,10 @@ const chartLabels: Record<keyof ReportChartOptions, string> = {
   source_bar: 'Source Bar',
   institution_bar: 'Institution Bar',
   severity_trend: 'Severity Trend',
+  fp_rate_bar: 'FP Rate by Institution',
+  disposition_pie: 'Disposition Breakdown',
+  analyst_throughput_bar: 'Analyst Throughput',
+  threat_category_bar: 'Threat Categories',
 };
 
 const selectStyle: CSSProperties = {

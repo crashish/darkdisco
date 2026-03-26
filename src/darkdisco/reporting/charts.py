@@ -209,3 +209,92 @@ def severity_trend(findings: list[dict], date_field: str = "discovered_at") -> s
     fig.autofmt_xdate(rotation=30)
     ax.grid(axis="y", alpha=0.3)
     return _fig_to_base64(fig)
+
+
+def fp_rate_bar(institution_fp_rates: list[dict]) -> str:
+    """Horizontal bar chart of FP rate by institution. Returns base64 PNG."""
+    if not institution_fp_rates:
+        return ""
+
+    items = institution_fp_rates[:15]
+    labels = [d["institution_name"] for d in items]
+    rates = [d["fp_rate"] * 100 for d in items]
+
+    fig, ax = plt.subplots(figsize=(8, max(3, len(labels) * 0.4)))
+    bar_colors = ["#ef4444" if r > 50 else "#f59e0b" if r > 25 else "#22c55e" for r in rates]
+    bars = ax.barh(labels, rates, color=bar_colors)
+    ax.bar_label(bars, fmt="%.1f%%", padding=3, fontsize=9)
+    ax.set_title("False Positive Rate by Institution", fontsize=12, fontweight="bold")
+    ax.set_xlabel("FP Rate (%)")
+    ax.set_xlim(0, max(rates + [10]) * 1.15)
+    ax.invert_yaxis()
+    ax.grid(axis="x", alpha=0.3)
+    return _fig_to_base64(fig)
+
+
+def disposition_pie(disposition_breakdown: list[dict]) -> str:
+    """Pie chart of finding dispositions. Returns base64 PNG."""
+    if not disposition_breakdown:
+        return ""
+
+    labels = [d["status"].replace("_", " ").title() for d in disposition_breakdown]
+    sizes = [d["count"] for d in disposition_breakdown]
+    pie_colors = [_STATUS_COLORS.get(d["status"], "#6b7280") for d in disposition_breakdown]
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+    wedges, _, autotexts = ax.pie(
+        sizes, labels=None, colors=pie_colors, autopct="%1.0f%%",
+        startangle=90, pctdistance=0.8,
+    )
+    for t in autotexts:
+        t.set_fontsize(9)
+    ax.legend(
+        wedges, [f"{l} ({c})" for l, c in zip(labels, sizes)],
+        loc="center left", bbox_to_anchor=(1, 0.5), fontsize=9,
+    )
+    ax.set_title("Disposition Breakdown", fontsize=12, fontweight="bold")
+    return _fig_to_base64(fig)
+
+
+def analyst_throughput_bar(by_analyst: list[dict]) -> str:
+    """Horizontal bar chart of analyst review throughput. Returns base64 PNG."""
+    if not by_analyst:
+        return ""
+
+    items = sorted(by_analyst, key=lambda x: x["reviewed"], reverse=True)[:15]
+    labels = [d["analyst"] for d in items]
+    reviewed = [d["reviewed"] for d in items]
+    pending = [d["pending"] for d in items]
+
+    fig, ax = plt.subplots(figsize=(8, max(3, len(labels) * 0.45)))
+    y_pos = range(len(labels))
+    ax.barh(y_pos, reviewed, color="#22c55e", label="Reviewed", height=0.4, align="edge")
+    ax.barh([y + 0.4 for y in y_pos], pending, color="#f59e0b", label="Pending", height=0.4, align="edge")
+    ax.set_yticks([y + 0.4 for y in y_pos])
+    ax.set_yticklabels(labels)
+    ax.set_title("Analyst Throughput", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Count")
+    ax.invert_yaxis()
+    ax.legend(fontsize=9)
+    ax.grid(axis="x", alpha=0.3)
+    return _fig_to_base64(fig)
+
+
+def threat_category_bar(threat_categories: list[dict]) -> str:
+    """Horizontal bar chart of threat categories. Returns base64 PNG."""
+    if not threat_categories:
+        return ""
+
+    items = threat_categories[:15]
+    labels = [d["category"] for d in items]
+    counts = [d["count"] for d in items]
+    bar_colors = [_SOURCE_COLORS[i % len(_SOURCE_COLORS)] for i in range(len(labels))]
+
+    fig, ax = plt.subplots(figsize=(8, max(3, len(labels) * 0.4)))
+    bars = ax.barh(labels, counts, color=bar_colors)
+    ax.bar_label(bars, padding=3, fontsize=9)
+    ax.set_title("Threat Categories", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Count")
+    ax.invert_yaxis()
+    ax.grid(axis="x", alpha=0.3)
+    return _fig_to_base64(fig)

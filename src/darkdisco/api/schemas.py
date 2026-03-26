@@ -638,6 +638,10 @@ class ReportSections(BaseModel):
     classification_breakdown: bool = True
     timeline: bool = True
     appendix_full_content: bool = False
+    fp_analytics: bool = False
+    pattern_effectiveness: bool = False
+    institution_threat_summary: bool = False
+    analyst_performance: bool = False
 
 
 class ReportChartOptions(BaseModel):
@@ -648,6 +652,10 @@ class ReportChartOptions(BaseModel):
     source_bar: bool = True
     institution_bar: bool = True
     severity_trend: bool = True
+    fp_rate_bar: bool = False
+    disposition_pie: bool = False
+    analyst_throughput_bar: bool = False
+    threat_category_bar: bool = False
 
 
 class ReportRequest(BaseModel):

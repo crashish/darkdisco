@@ -326,6 +326,219 @@
 </table>
 {% endif %}
 
+{# ─── FP Analytics ─── #}
+{% if sections.fp_analytics and fp_analytics %}
+<h2>FP Analytics</h2>
+<div class="section">
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="value">{{ fp_analytics.total_findings }}</div>
+      <div class="label">Total Findings</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: #f59e0b;">{{ fp_analytics.total_noise }}</div>
+      <div class="label">Noise (FP + Dismissed)</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: {% if fp_analytics.noise_rate_pct > 50 %}#dc2626{% elif fp_analytics.noise_rate_pct > 25 %}#f59e0b{% else %}#22c55e{% endif %};">{{ fp_analytics.noise_rate_pct }}%</div>
+      <div class="label">Noise Rate</div>
+    </div>
+  </div>
+
+  {% if charts.fp_rate_bar %}
+  <div class="chart-container">
+    <img src="data:image/png;base64,{{ charts.fp_rate_bar | safe }}" alt="FP Rate by Institution">
+  </div>
+  {% endif %}
+
+  {% if charts.disposition_pie %}
+  <div class="chart-container">
+    <img src="data:image/png;base64,{{ charts.disposition_pie | safe }}" alt="Disposition Breakdown">
+  </div>
+  {% endif %}
+
+  <h3>FP Rate by Institution</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Institution</th>
+        <th>Total</th>
+        <th>False Positives</th>
+        <th>Dismissed</th>
+        <th>Confirmed</th>
+        <th>FP Rate</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for inst in fp_analytics.institution_fp_rates %}
+      <tr>
+        <td>{{ inst.institution_name }}</td>
+        <td>{{ inst.total_findings }}</td>
+        <td>{{ inst.false_positives }}</td>
+        <td>{{ inst.dismissed }}</td>
+        <td>{{ inst.confirmed }}</td>
+        <td style="color: {% if inst.fp_rate > 0.5 %}#dc2626{% elif inst.fp_rate > 0.25 %}#f59e0b{% else %}#22c55e{% endif %}; font-weight: 600;">{{ (inst.fp_rate * 100) | round(1) }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{# ─── Pattern Effectiveness ─── #}
+{% if sections.pattern_effectiveness and pattern_effectiveness %}
+<h2>Pattern Effectiveness</h2>
+<div class="section">
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="value">{{ pattern_effectiveness.total_mentions }}</div>
+      <div class="label">Total Mentions</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: #22c55e;">{{ pattern_effectiveness.total_promoted }}</div>
+      <div class="label">Promoted to Findings</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: #6b7280;">{{ pattern_effectiveness.total_suppressed }}</div>
+      <div class="label">Suppressed</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">{{ pattern_effectiveness.suppression_rate_pct }}%</div>
+      <div class="label">Suppression Rate</div>
+    </div>
+  </div>
+
+  <h3>FP Score Distribution</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Score Bucket</th>
+        <th>Count</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for bucket in pattern_effectiveness.fp_score_distribution %}
+      <tr>
+        <td>{{ bucket.bucket }}</td>
+        <td>{{ bucket.count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{# ─── Institution Threat Summary ─── #}
+{% if sections.institution_threat_summary and inst_threat_summaries %}
+<h2>Institution Threat Summary</h2>
+
+{% if charts.threat_category_bar %}
+<div class="chart-container">
+  <img src="data:image/png;base64,{{ charts.threat_category_bar | safe }}" alt="Threat Categories">
+</div>
+{% endif %}
+
+{% for summary in inst_threat_summaries %}
+<div class="section" style="margin-bottom: 20px;">
+  <h3>{{ summary.institution_name }}</h3>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="value">{{ summary.total_findings }}</div>
+      <div class="label">Total Findings</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: #8b5cf6;">{{ summary.confirmed_threats }}</div>
+      <div class="label">Confirmed Threats</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">{{ summary.active_threat_actors }}</div>
+      <div class="label">Threat Actors</div>
+    </div>
+    {% for sev in ['critical', 'high', 'medium'] %}
+    {% if summary.by_severity.get(sev, 0) > 0 %}
+    <div class="stat-card">
+      <div class="value" style="color: {% if sev == 'critical' %}#dc2626{% elif sev == 'high' %}#ea580c{% else %}#eab308{% endif %};">{{ summary.by_severity[sev] }}</div>
+      <div class="label">{{ sev | title }}</div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+
+  {% if summary.threat_categories %}
+  <table>
+    <thead>
+      <tr>
+        <th>Threat Category</th>
+        <th>Count</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for cat in summary.threat_categories %}
+      <tr>
+        <td>{{ cat.category }}</td>
+        <td>{{ cat.count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{# ─── Analyst Performance ─── #}
+{% if sections.analyst_performance and analyst_performance %}
+<h2>Analyst Performance</h2>
+<div class="section">
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="value">{{ analyst_performance.total_reviewed }}</div>
+      <div class="label">Total Reviewed</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: #f59e0b;">{{ analyst_performance.total_pending }}</div>
+      <div class="label">Pending Review</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">{{ analyst_performance.avg_disposition_hours or '—' }}{% if analyst_performance.avg_disposition_hours %}h{% endif %}</div>
+      <div class="label">Avg Time to Disposition</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: {% if analyst_performance.escalation_rate_pct > 20 %}#dc2626{% else %}#6b7280{% endif %};">{{ analyst_performance.escalation_rate_pct }}%</div>
+      <div class="label">Escalation Rate</div>
+    </div>
+  </div>
+
+  {% if charts.analyst_throughput_bar %}
+  <div class="chart-container">
+    <img src="data:image/png;base64,{{ charts.analyst_throughput_bar | safe }}" alt="Analyst Throughput">
+  </div>
+  {% endif %}
+
+  <h3>By Analyst</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Analyst</th>
+        <th>Reviewed</th>
+        <th>Pending</th>
+        <th>Avg Hours</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in analyst_performance.by_analyst %}
+      <tr>
+        <td>{{ a.analyst }}</td>
+        <td>{{ a.reviewed }}</td>
+        <td style="color: {% if a.pending > 10 %}#f59e0b{% else %}#374151{% endif %};">{{ a.pending }}</td>
+        <td>{{ a.avg_hours or '—' }}{% if a.avg_hours %}h{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 {# ─── Appendix: Full Message Content ─── #}
 {% if sections.appendix_full_content %}
 <h2>Appendix: Full Message Content</h2>
