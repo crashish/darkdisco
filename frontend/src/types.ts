@@ -327,6 +327,59 @@ export interface ThreatSummary {
   executive_brief: string;
 }
 
+// Alert Rules & Notifications
+
+export interface AlertRule {
+  id: string;
+  name: string;
+  owner_id: string;
+  institution_id: string | null;
+  min_severity: Severity;
+  source_types: string[] | null;
+  keyword_filter: string | null;
+  enabled: boolean;
+  notify_email: boolean;
+  notify_slack: boolean;
+  notify_webhook_url: string | null;
+  created_at: string;
+}
+
+export interface AlertRuleCreate {
+  name: string;
+  owner_id: string;
+  institution_id?: string | null;
+  min_severity?: Severity;
+  source_types?: string[] | null;
+  keyword_filter?: string | null;
+  enabled?: boolean;
+  notify_email?: boolean;
+  notify_slack?: boolean;
+  notify_webhook_url?: string | null;
+}
+
+export interface AlertRuleUpdate {
+  name?: string;
+  institution_id?: string | null;
+  min_severity?: Severity;
+  source_types?: string[] | null;
+  keyword_filter?: string | null;
+  enabled?: boolean;
+  notify_email?: boolean;
+  notify_slack?: boolean;
+  notify_webhook_url?: string | null;
+}
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  alert_rule_id: string | null;
+  finding_id: string | null;
+  title: string;
+  message: string | null;
+  read: boolean;
+  created_at: string;
+}
+
 // Analytics / Disposition Dashboard
 
 export interface InstitutionFPRate {

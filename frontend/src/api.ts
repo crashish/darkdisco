@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig, ReportSchedule, GeneratedReport, DateRangeMode, DeliveryMethod, BINLookupResult, BINRecord, BINStats, BINImportResult, ThreatSummary, DispositionAnalytics } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig, ReportSchedule, GeneratedReport, DateRangeMode, DeliveryMethod, BINLookupResult, BINRecord, BINStats, BINImportResult, ThreatSummary, DispositionAnalytics, AlertRule, AlertRuleCreate, AlertRuleUpdate, Notification } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -632,6 +632,77 @@ export async function fetchDispositionAnalytics(params?: {
     disposition_trends: [],
   });
 }
+
+// ---------------------------------------------------------------------------
+// Alert Rules
+// ---------------------------------------------------------------------------
+
+export async function fetchAlertRules(params?: {
+  owner_id?: string;
+  enabled?: boolean;
+}): Promise<AlertRule[]> {
+  const qs = new URLSearchParams();
+  if (params?.owner_id) qs.set('owner_id', params.owner_id);
+  if (params?.enabled !== undefined) qs.set('enabled', String(params.enabled));
+  const q = qs.toString();
+  return apiFetch(`/alert-rules${q ? '?' + q : ''}`, []);
+}
+
+export async function createAlertRule(body: AlertRuleCreate): Promise<AlertRule> {
+  return apiFetch('/alert-rules', {} as AlertRule, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateAlertRule(id: string, body: AlertRuleUpdate): Promise<AlertRule> {
+  return apiFetch(`/alert-rules/${id}`, {} as AlertRule, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteAlertRule(id: string): Promise<void> {
+  await apiFetch(`/alert-rules/${id}`, null, { method: 'DELETE' });
+}
+
+// ---------------------------------------------------------------------------
+// Notifications (Alert History)
+// ---------------------------------------------------------------------------
+
+export interface PaginatedNotifications {
+  items: Notification[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export async function fetchNotifications(params?: {
+  user_id?: string;
+  unread_only?: boolean;
+  page?: number;
+  page_size?: number;
+}): Promise<Notification[]> {
+  const qs = new URLSearchParams();
+  if (params?.user_id) qs.set('user_id', params.user_id);
+  if (params?.unread_only !== undefined) qs.set('unread_only', String(params.unread_only));
+  if (params?.page !== undefined) qs.set('page', String(params.page));
+  if (params?.page_size !== undefined) qs.set('page_size', String(params.page_size));
+  const q = qs.toString();
+  return apiFetch(`/notifications${q ? '?' + q : ''}`, []);
+}
+
+export async function markNotificationRead(id: string): Promise<Notification> {
+  return apiFetch(`/notifications/${id}/read`, {} as Notification, { method: 'PUT' });
+}
+
+export async function markAllNotificationsRead(): Promise<{ marked: number }> {
+  return apiFetch('/notifications/mark-all-read', { marked: 0 }, { method: 'POST' });
+}
+
+// ---------------------------------------------------------------------------
+// BIN Import
+// ---------------------------------------------------------------------------
 
 export async function importBINFile(file: File, sourceLabel: string = 'csv'): Promise<BINImportResult> {
   const token = localStorage.getItem('dd_token');
