@@ -301,3 +301,28 @@ export interface BINImportResult {
   errors: string[];
   source: string;
 }
+
+// Institution Threat Summary
+export interface ThreatCategoryBreakdown {
+  category: string;
+  count: number;
+}
+
+export interface SourceChannelBreakdown {
+  source_type: string;
+  count: number;
+}
+
+export interface ThreatSummary {
+  institution_id: string;
+  institution_name: string;
+  findings_timeline: { date: string; count: number }[];
+  threat_categories: ThreatCategoryBreakdown[];
+  total_findings: number;
+  confirmed_threats: number;
+  active_threat_actors: number;
+  top_source_channels: SourceChannelBreakdown[];
+  by_severity: Record<string, number>;
+  by_status: Record<string, number>;
+  executive_brief: string;
+}

@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Findings from './pages/Findings';
 import FindingDetail from './pages/FindingDetail';
 import Institutions from './pages/Institutions';
+import InstitutionDetail from './pages/InstitutionDetail';
 import Sources from './pages/Sources';
 import SourceDetail from './pages/SourceDetail';
 import Mentions from './pages/Mentions';
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/findings" element={<Findings />} />
           <Route path="/findings/:id" element={<FindingDetail />} />
           <Route path="/institutions" element={<Institutions />} />
+          <Route path="/institutions/:id" element={<InstitutionDetail />} />
           <Route path="/mentions" element={<Mentions />} />
           <Route path="/files" element={<Files />} />
           <Route path="/sources" element={<Sources />} />

@@ -89,6 +89,9 @@ from darkdisco.api.schemas import (
     WatchTermCreate,
     WatchTermOut,
     WatchTermUpdate,
+    ThreatSummary,
+    ThreatCategoryBreakdown,
+    SourceChannelBreakdown,
 )
 from darkdisco.common.database import get_session
 from darkdisco.config import settings
@@ -891,6 +894,266 @@ async def trigger_retroactive_hunt(
 
     retroactive_hunt.delay(inst.name, days=days)
     return {"status": "dispatched", "institution": inst.name, "days": days}
+
+
+# ---- Institution Threat Summary --------------------------------------------
+
+@protected.get(
+    "/institutions/{institution_id}/threat-summary",
+    response_model=ThreatSummary,
+)
+async def institution_threat_summary(
+    institution_id: str,
+    days: int = Query(90, ge=7, le=365),
+    db: AsyncSession = Depends(get_session),
+):
+    """Per-institution threat summary: timeline, categories, metrics, brief."""
+    inst = await db.get(Institution, institution_id)
+    if not inst:
+        raise HTTPException(404, "Institution not found")
+
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+
+    base_filter = [
+        Finding.institution_id == institution_id,
+        Finding.discovered_at >= start,
+    ]
+
+    # -- Timeline: findings per day --
+    timeline = []
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    for i in range(days - 1, -1, -1):
+        day = today_start - timedelta(days=i)
+        day_end = day + timedelta(days=1)
+        cnt = (await db.execute(
+            select(func.count(Finding.id)).where(
+                Finding.institution_id == institution_id,
+                Finding.discovered_at >= day,
+                Finding.discovered_at < day_end,
+            )
+        )).scalar() or 0
+        timeline.append({"date": day.strftime("%Y-%m-%d"), "count": cnt})
+
+    # -- Total findings --
+    total = (await db.execute(
+        select(func.count(Finding.id)).where(*base_filter)
+    )).scalar() or 0
+
+    # -- Confirmed threats (status = confirmed or escalated) --
+    confirmed = (await db.execute(
+        select(func.count(Finding.id)).where(
+            *base_filter,
+            Finding.status.in_([FindingStatus.confirmed, FindingStatus.escalated]),
+        )
+    )).scalar() or 0
+
+    # -- By severity --
+    sev_rows = (await db.execute(
+        select(Finding.severity, func.count(Finding.id))
+        .where(*base_filter)
+        .group_by(Finding.severity)
+    )).all()
+    by_severity = {s: 0 for s in ("critical", "high", "medium", "low", "info")}
+    for sev, cnt in sev_rows:
+        by_severity[sev.value if hasattr(sev, "value") else str(sev)] = cnt
+
+    # -- By status --
+    stat_rows = (await db.execute(
+        select(Finding.status, func.count(Finding.id))
+        .where(*base_filter)
+        .group_by(Finding.status)
+    )).all()
+    by_status: dict[str, int] = {}
+    for st, cnt in stat_rows:
+        by_status[st.value if hasattr(st, "value") else str(st)] = cnt
+
+    # -- Source channel breakdown --
+    src_rows = (await db.execute(
+        select(Source.source_type, func.count(Finding.id))
+        .join(Source, Finding.source_id == Source.id)
+        .where(*base_filter)
+        .group_by(Source.source_type)
+        .order_by(func.count(Finding.id).desc())
+    )).all()
+    top_sources = [
+        SourceChannelBreakdown(
+            source_type=st.value if hasattr(st, "value") else str(st),
+            count=cnt,
+        )
+        for st, cnt in src_rows
+    ]
+
+    # -- Threat categories (derived from tags, matched_terms, severity) --
+    findings_q = await db.execute(
+        select(Finding.tags, Finding.matched_terms, Finding.title, Finding.severity)
+        .where(*base_filter)
+    )
+    category_counts: dict[str, int] = {}
+    threat_actor_names: set[str] = set()
+    for tags, matched_terms, title, severity in findings_q.all():
+        cats = _classify_finding(tags, matched_terms, title, severity)
+        for cat in cats:
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+        # Extract threat actor hints from tags
+        if tags:
+            for tag in tags:
+                if isinstance(tag, str) and tag.startswith("actor:"):
+                    threat_actor_names.add(tag[6:])
+
+    threat_categories = sorted(
+        [ThreatCategoryBreakdown(category=k, count=v) for k, v in category_counts.items()],
+        key=lambda x: x.count,
+        reverse=True,
+    )
+
+    # -- Executive brief --
+    brief = _generate_executive_brief(
+        inst.name, days, total, confirmed, by_severity, threat_categories, top_sources,
+    )
+
+    return ThreatSummary(
+        institution_id=institution_id,
+        institution_name=inst.name,
+        findings_timeline=timeline,
+        threat_categories=threat_categories,
+        total_findings=total,
+        confirmed_threats=confirmed,
+        active_threat_actors=len(threat_actor_names),
+        top_source_channels=top_sources,
+        by_severity=by_severity,
+        by_status=by_status,
+        executive_brief=brief,
+    )
+
+
+def _classify_finding(
+    tags: list | None,
+    matched_terms: list | None,
+    title: str,
+    severity,
+) -> list[str]:
+    """Derive threat categories from finding metadata."""
+    categories: set[str] = set()
+    text = (title or "").lower()
+
+    # Tag-based classification
+    tag_map = {
+        "card_fraud": "Card Fraud",
+        "phishing": "Phishing",
+        "ato": "Account Takeover",
+        "account_takeover": "Account Takeover",
+        "credential": "Credential Leaks",
+        "credentials": "Credential Leaks",
+        "breach": "Data Breach",
+        "data_breach": "Data Breach",
+        "stealer": "Credential Leaks",
+        "ransomware": "Data Breach",
+        "bin": "Card Fraud",
+        "pii": "Data Breach",
+    }
+    if tags:
+        for tag in tags:
+            if isinstance(tag, str):
+                for key, cat in tag_map.items():
+                    if key in tag.lower():
+                        categories.add(cat)
+
+    # Title-based classification
+    title_map = {
+        "card": "Card Fraud",
+        "bin": "Card Fraud",
+        "cvv": "Card Fraud",
+        "phish": "Phishing",
+        "login": "Account Takeover",
+        "credential": "Credential Leaks",
+        "password": "Credential Leaks",
+        "breach": "Data Breach",
+        "leak": "Data Breach",
+        "dump": "Data Breach",
+        "combolist": "Credential Leaks",
+        "fullz": "Card Fraud",
+        "account": "Account Takeover",
+    }
+    for key, cat in title_map.items():
+        if key in text:
+            categories.add(cat)
+
+    # Matched term type hints
+    if matched_terms:
+        for mt in matched_terms:
+            if isinstance(mt, dict):
+                tt = mt.get("term_type", "")
+                if tt in ("bin_range", "bin"):
+                    categories.add("Card Fraud")
+                elif tt in ("domain",):
+                    categories.add("Phishing")
+
+    if not categories:
+        categories.add("Other")
+
+    return list(categories)
+
+
+def _generate_executive_brief(
+    name: str,
+    days: int,
+    total: int,
+    confirmed: int,
+    by_severity: dict[str, int],
+    categories: list,
+    sources: list,
+) -> str:
+    """Generate an executive-level summary paragraph."""
+    if total == 0:
+        return (
+            f"No threat intelligence findings were recorded for {name} "
+            f"in the past {days} days. Monitoring continues across all configured sources."
+        )
+
+    critical = by_severity.get("critical", 0)
+    high = by_severity.get("high", 0)
+
+    parts = [
+        f"Over the past {days} days, {total} threat intelligence "
+        f"finding{'s' if total != 1 else ''} {'were' if total != 1 else 'was'} "
+        f"identified for {name}.",
+    ]
+
+    if confirmed:
+        parts.append(
+            f" Of these, {confirmed} {'have' if confirmed != 1 else 'has'} been "
+            f"confirmed as actionable threats."
+        )
+
+    if critical or high:
+        sev_parts = []
+        if critical:
+            sev_parts.append(f"{critical} critical")
+        if high:
+            sev_parts.append(f"{high} high")
+        parts.append(
+            f" Severity breakdown includes {' and '.join(sev_parts)} "
+            f"severity finding{'s' if (critical + high) != 1 else ''}."
+        )
+
+    if categories:
+        top_cats = [c.category for c in categories[:3]]
+        parts.append(
+            f" Primary threat categories observed: {', '.join(top_cats)}."
+        )
+
+    if sources:
+        top_src = [s.source_type.replace('_', ' ') for s in sources[:3]]
+        parts.append(
+            f" Intelligence was gathered primarily from {', '.join(top_src)} sources."
+        )
+
+    parts.append(
+        " Continued monitoring and prompt review of new findings is recommended."
+    )
+
+    return "".join(parts)
 
 
 # ---- Watch Terms -----------------------------------------------------------

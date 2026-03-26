@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   fetchClients, fetchInstitutions, fetchFindings, fetchWatchTerms,
   createInstitution, updateInstitution, deleteInstitution,
@@ -10,7 +11,7 @@ import { colors, card, font } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import type { Client, Institution, Finding, WatchTerm } from '../types';
-import { Building2, ChevronRight, ChevronDown, Tag, Globe, CreditCard, Hash, MapPin, Plus, Pencil, Trash2, X, Check, Download, Upload, RefreshCw } from 'lucide-react';
+import { Building2, ChevronRight, ChevronDown, Tag, Globe, CreditCard, Hash, MapPin, Plus, Pencil, Trash2, X, Check, Download, Upload, RefreshCw, ShieldAlert } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const termIcons: Record<string, typeof Tag> = {
@@ -60,6 +61,7 @@ const inputStyle: CSSProperties = {
 };
 
 export default function Institutions() {
+  const navigate = useNavigate();
   const [clients, setClients] = useState<Client[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [expandedInst, setExpandedInst] = useState<string | null>(null);
@@ -377,6 +379,13 @@ export default function Institutions() {
                     </div>
                     {!isEditing && (
                       <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
+                        <button
+                          style={{ ...btnGhostStyle, padding: '4px 8px', border: 'none' }}
+                          onClick={() => navigate(`/institutions/${inst.id}`)}
+                          title="Threat Summary"
+                        >
+                          <ShieldAlert size={13} color={colors.accent} />
+                        </button>
                         <button
                           style={{ ...btnGhostStyle, padding: '4px 8px', border: 'none' }}
                           onClick={() => startEdit(inst)}

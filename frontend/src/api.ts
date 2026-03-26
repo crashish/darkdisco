@@ -1,4 +1,4 @@
-import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig, ReportSchedule, GeneratedReport, DateRangeMode, DeliveryMethod, BINLookupResult, BINRecord, BINStats, BINImportResult } from './types';
+import type { Client, Institution, WatchTerm, Finding, FindingDetail, Source, DashboardStats, FindingStatus, Severity, TelegramChannel, DiscordGuildChannel, PollTriggerResult, FindingTrend, RawMention, PaginatedFindings, AuditLogEntry, ReportRequest, ReportTemplate, ReportTemplateConfig, ReportSchedule, GeneratedReport, DateRangeMode, DeliveryMethod, BINLookupResult, BINRecord, BINStats, BINImportResult, ThreatSummary } from './types';
 import {
   mockClients, mockInstitutions, mockWatchTerms, mockFindings, mockFindingDetails,
   mockSources, mockDashboardStats, mockRawMentions,
@@ -599,6 +599,15 @@ export async function testMatchingFilters(text: string): Promise<MatchingFilters
   }, {
     method: 'POST',
     body: JSON.stringify({ text }),
+  });
+}
+
+export async function fetchThreatSummary(institutionId: string, days: number = 90): Promise<ThreatSummary> {
+  return apiFetch(`/institutions/${institutionId}/threat-summary?days=${days}`, {
+    institution_id: institutionId, institution_name: '', findings_timeline: [],
+    threat_categories: [], total_findings: 0, confirmed_threats: 0,
+    active_threat_actors: 0, top_source_channels: [], by_severity: {},
+    by_status: {}, executive_brief: '',
   });
 }
 

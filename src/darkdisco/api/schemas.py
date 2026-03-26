@@ -849,3 +849,30 @@ class MatchingFiltersTestResult(BaseModel):
     matched_fraud_indicators: list[str]
     would_suppress: bool
     would_require_fraud_indicator: bool
+
+
+# ---------------------------------------------------------------------------
+# Institution Threat Summary
+# ---------------------------------------------------------------------------
+
+class ThreatCategoryBreakdown(BaseModel):
+    category: str
+    count: int
+
+class SourceChannelBreakdown(BaseModel):
+    source_type: str
+    count: int
+
+class ThreatSummary(BaseModel):
+    """Per-institution threat summary with timeline, categories, and brief."""
+    institution_id: str
+    institution_name: str
+    findings_timeline: list[dict]
+    threat_categories: list[ThreatCategoryBreakdown]
+    total_findings: int
+    confirmed_threats: int
+    active_threat_actors: int
+    top_source_channels: list[SourceChannelBreakdown]
+    by_severity: dict[str, int]
+    by_status: dict[str, int]
+    executive_brief: str
