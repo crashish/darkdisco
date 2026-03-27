@@ -381,7 +381,8 @@ def stream_extract_from_s3(
             logger.warning("Unsupported archive format for streaming: %s", archive_filename)
             return []
 
-        # 3. Read extracted files into ExtractedFileInfo objects
+        # 3. Read extracted files into ExtractedFileInfo objects,
+        #    recursing into nested archives (up to _MAX_ARCHIVE_DEPTH).
         files: list[ExtractedFileInfo] = []
         for root, _dirs, filenames in os.walk(extract_dir):
             for fname in filenames:
@@ -415,11 +416,33 @@ def stream_extract_from_s3(
                     )
                 )
 
+                # Recurse into nested archives (reuse in-memory extraction
+                # since nested members are already bounded by _MAX_MEMBER_SIZE)
+                if is_archive(relpath):
+                    try:
+                        nested = extract_archive(
+                            content, fname, passwords, _depth=1
+                        )
+                        if nested:
+                            for nf in nested:
+                                nf.filename = f"{relpath}/{nf.filename}"
+                            files.extend(nested)
+                            logger.debug(
+                                "Recursively extracted %d files from nested archive %s",
+                                len(nested), relpath,
+                            )
+                    except Exception:
+                        logger.warning(
+                            "Recursive extraction failed for nested archive %s",
+                            relpath,
+                        )
+
         logger.info(
-            "Stream-extracted %d files from %s (%d text)",
+            "Stream-extracted %d files from %s (%d text, %d from nested archives)",
             len(files),
             archive_filename,
             sum(1 for f in files if f.is_text),
+            sum(1 for f in files if f.depth > 0),
         )
         return files
 
