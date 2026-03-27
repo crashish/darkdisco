@@ -944,3 +944,20 @@ class DispositionAnalytics(BaseModel):
     pattern_effectiveness: PatternEffectiveness
     analyst_workload: AnalystWorkload
     disposition_trends: list[DispositionTrend]
+
+
+# ---------------------------------------------------------------------------
+# System Settings
+# ---------------------------------------------------------------------------
+
+class SystemSettingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    key: str
+    value: str
+    description: str | None = None
+    updated_at: datetime | None = None
+
+
+class SystemSettingUpdate(BaseModel):
+    value: str

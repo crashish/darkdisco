@@ -94,6 +94,8 @@ from darkdisco.api.schemas import (
     MatchingFiltersUpdate,
     MatchingFiltersTestRequest,
     MatchingFiltersTestResult,
+    SystemSettingOut,
+    SystemSettingUpdate,
     WatchTermCreate,
     WatchTermOut,
     WatchTermUpdate,
@@ -123,6 +125,7 @@ from darkdisco.common.models import (
     Severity,
     Source,
     SourceType,
+    SystemSetting,
     User,
     WatchTerm,
 )
@@ -4217,4 +4220,46 @@ async def test_matching_filters(body: MatchingFiltersTestRequest):
         would_suppress=would_suppress,
         would_require_fraud_indicator=would_require_fraud_indicator,
     )
+
+
+# ---------------------------------------------------------------------------
+# System Settings
+# ---------------------------------------------------------------------------
+
+@protected.get("/settings/system", response_model=list[SystemSettingOut])
+async def list_system_settings(db: AsyncSession = Depends(get_session)):
+    """List all system settings."""
+    result = await db.execute(select(SystemSetting).order_by(SystemSetting.key))
+    return result.scalars().all()
+
+
+@protected.get("/settings/system/{key}", response_model=SystemSettingOut)
+async def get_system_setting_endpoint(key: str, db: AsyncSession = Depends(get_session)):
+    """Get a single system setting by key."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == key)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        raise HTTPException(404, f"Setting '{key}' not found")
+    return setting
+
+
+@protected.put("/settings/system/{key}", response_model=SystemSettingOut)
+async def update_system_setting(
+    key: str,
+    body: SystemSettingUpdate,
+    db: AsyncSession = Depends(get_session),
+):
+    """Update a system setting value."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == key)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        raise HTTPException(404, f"Setting '{key}' not found")
+    setting.value = body.value
+    await db.commit()
+    await db.refresh(setting)
+    return setting
 

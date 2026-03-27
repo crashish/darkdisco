@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 HISTORY_LIMIT_DEFAULT = 100
 INTER_CHANNEL_DELAY = 1.0  # seconds between channel reads
-MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024  # 100MB file download limit
+DEFAULT_MAX_DOWNLOAD_SIZE = 5 * 1024 * 1024 * 1024  # 5GB default
 FILE_DOWNLOAD_MAX_AGE_DAYS = 60  # Only download files from messages within this window
 
 
@@ -141,6 +141,13 @@ class TelegramConnector(BaseConnector):
         if self._client is None:
             await self.setup()
 
+        # Load configurable download size limit from DB (falls back to default)
+        from darkdisco.common.database import get_system_setting
+        max_dl_str = await get_system_setting(
+            "max_download_size_bytes", str(DEFAULT_MAX_DOWNLOAD_SIZE)
+        )
+        max_download_size = int(max_dl_str)
+
         # Build channel list: start from all joined channels/groups,
         # supplemented by any explicitly configured channels
         channels_to_poll = await self._get_joined_channels()
@@ -158,7 +165,7 @@ class TelegramConnector(BaseConnector):
 
         for channel_ref in channels_to_poll:
             try:
-                mentions = await self._poll_channel(channel_ref, since)
+                mentions = await self._poll_channel(channel_ref, since, max_download_size)
                 all_mentions.extend(mentions)
                 logger.info(
                     "Telegram channel %s: %d mentions",
@@ -250,6 +257,7 @@ class TelegramConnector(BaseConnector):
 
     async def _poll_channel(
         self, channel_ref: str, since: datetime | None,
+        max_download_size: int = DEFAULT_MAX_DOWNLOAD_SIZE,
     ) -> list[RawMention]:
         # Telethon needs PeerChannel for channel numeric IDs
         if channel_ref.lstrip("-").isdigit():
@@ -294,7 +302,7 @@ class TelegramConnector(BaseConnector):
                         message.file.name or "unnamed",
                         channel_ref, message.id,
                     )
-                elif message.file.size > MAX_DOWNLOAD_SIZE:
+                elif message.file.size > max_download_size:
                     logger.info(
                         "File too large to download: %s (%s) in %s msg#%d",
                         message.file.name or "unnamed",

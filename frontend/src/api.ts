@@ -719,6 +719,32 @@ export async function markAllNotificationsRead(): Promise<{ marked: number }> {
 // BIN Import
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// System Settings
+// ---------------------------------------------------------------------------
+
+export interface SystemSetting {
+  key: string;
+  value: string;
+  description: string | null;
+  updated_at: string | null;
+}
+
+export async function fetchSystemSettings(): Promise<SystemSetting[]> {
+  return apiFetch('/settings/system', []);
+}
+
+export async function updateSystemSetting(key: string, value: string): Promise<SystemSetting> {
+  return apiFetch(`/settings/system/${key}`, {} as SystemSetting, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// BIN Import
+// ---------------------------------------------------------------------------
+
 export async function importBINFile(file: File, sourceLabel: string = 'csv'): Promise<BINImportResult> {
   const token = localStorage.getItem('dd_token');
   const formData = new FormData();

@@ -17,6 +17,7 @@ import Analytics from './pages/Analytics';
 import AlertRules from './pages/AlertRules';
 import AlertHistory from './pages/AlertHistory';
 import Account from './pages/Account';
+import SystemSettings from './pages/SystemSettings';
 import Login from './pages/Login';
 import type { ReactNode } from 'react';
 
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/settings/alerts" element={<AlertRules />} />
           <Route path="/settings/alert-history" element={<AlertHistory />} />
           <Route path="/settings/account" element={<Account />} />
+          <Route path="/settings/system" element={<SystemSettings />} />
         </Route>
       </Routes>
     </AuthProvider>

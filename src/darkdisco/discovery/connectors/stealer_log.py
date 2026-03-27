@@ -11,7 +11,7 @@ Source config schema (stored in Source.config JSONB):
     "archive_formats": ["zip", "tar.gz"],
     "parsers": ["redline", "raccoon", "generic"],
     "seen_hashes": ["<archive_sha256_prefix>", ...],
-    "max_archive_size": 104857600,
+    "max_archive_size": 5368709120,
     "max_credentials_per_archive": 50000,
     "request_delay_seconds": 1
 }
@@ -37,8 +37,8 @@ from darkdisco.discovery.connectors.base import BaseConnector, RawMention
 
 logger = logging.getLogger(__name__)
 
-# Max archive size default: 100 MB
-_DEFAULT_MAX_ARCHIVE_SIZE = 100 * 1024 * 1024
+# Max archive size default: 5 GB (aligned with system setting max_download_size_bytes)
+_DEFAULT_MAX_ARCHIVE_SIZE = 5 * 1024 * 1024 * 1024
 
 # Max credentials to extract per archive to prevent memory exhaustion
 _DEFAULT_MAX_CREDENTIALS = 50_000
@@ -425,7 +425,7 @@ class StealerLogConnector(BaseConnector):
         "archive_formats": ["zip", "tar.gz"],
         "parsers": ["redline", "raccoon", "generic"],
         "seen_hashes": ["<sha256_prefix>", ...],
-        "max_archive_size": 104857600,
+        "max_archive_size": 5368709120,
         "max_credentials_per_archive": 50000,
         "request_delay_seconds": 1
     }
@@ -468,9 +468,14 @@ class StealerLogConnector(BaseConnector):
 
         s3_prefix = self.config.get("s3_prefix", "stealer-logs/incoming/")
         bucket = self.config.get("s3_bucket", settings.s3_bucket)
-        max_archive_size = self.config.get(
-            "max_archive_size", _DEFAULT_MAX_ARCHIVE_SIZE
+
+        # Load configurable size limit from DB, fall back to source config, then default
+        from darkdisco.common.database import get_system_setting
+        db_limit_str = await get_system_setting(
+            "max_download_size_bytes", str(_DEFAULT_MAX_ARCHIVE_SIZE)
         )
+        db_limit = int(db_limit_str)
+        max_archive_size = self.config.get("max_archive_size", db_limit)
         seen_hashes: set[str] = set(self.config.get("seen_hashes", []))
         mentions: list[RawMention] = []
 

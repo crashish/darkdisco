@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Search, Building2, Radio, Disc3, LogOut, MessageSquare, FolderOpen, FileText, CreditCard, SlidersHorizontal, BarChart3, Bell, User, KeyRound } from 'lucide-react';
+import { LayoutDashboard, Search, Building2, Radio, Disc3, LogOut, MessageSquare, FolderOpen, FileText, CreditCard, SlidersHorizontal, BarChart3, Bell, User, KeyRound, Settings } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { colors, font } from '../theme';
 import type { CSSProperties } from 'react';
@@ -16,6 +16,7 @@ const navItems = [
   { to: '/bins', icon: CreditCard, label: 'BIN Database' },
   { to: '/settings/alerts', icon: Bell, label: 'Alert Rules' },
   { to: '/settings/filters', icon: SlidersHorizontal, label: 'Filters' },
+  { to: '/settings/system', icon: Settings, label: 'System' },
 ];
 
 const sidebarStyle: CSSProperties = {

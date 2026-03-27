@@ -556,6 +556,21 @@ class AlertRule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SystemSetting(Base):
+    """Key-value system configuration stored in the database.
+
+    Allows runtime-configurable settings (e.g. download size limits)
+    without requiring environment variable changes or restarts.
+    """
+
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Notification(Base):
     """In-app notification for an analyst."""
 
