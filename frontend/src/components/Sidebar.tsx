@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Search, Building2, Radio, Disc3, LogOut, MessageSquare, FolderOpen, FileText, CreditCard, SlidersHorizontal, BarChart3, Bell } from 'lucide-react';
+import { LayoutDashboard, Search, Building2, Radio, Disc3, LogOut, MessageSquare, FolderOpen, FileText, CreditCard, SlidersHorizontal, BarChart3, Bell, User, KeyRound } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { colors, font } from '../theme';
 import type { CSSProperties } from 'react';
@@ -74,7 +74,7 @@ const linkActive: CSSProperties = {
 };
 
 export default function Sidebar() {
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
 
   return (
     <aside style={sidebarStyle}>
@@ -107,7 +107,34 @@ export default function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <div style={{ padding: '12px 8px', borderTop: `1px solid ${colors.border}` }}>
+      <div style={{ borderTop: `1px solid ${colors.border}`, padding: '12px 8px' }}>
+        {user && (
+          <div style={{ padding: '8px 12px', marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <User size={16} color={colors.accent} />
+              <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>{user.username}</span>
+            </div>
+            <span style={{ fontSize: 11, color: colors.textMuted, marginLeft: 24 }}>{user.role}</span>
+          </div>
+        )}
+        <NavLink
+          to="/settings/account"
+          style={({ isActive }) => ({
+            ...linkBase,
+            ...(isActive ? { color: colors.text, background: colors.bgSurface } : {}),
+          })}
+          onMouseEnter={e => {
+            (e.currentTarget as HTMLElement).style.background = colors.bgHover;
+            (e.currentTarget as HTMLElement).style.color = colors.text;
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLElement).style.background = 'transparent';
+            (e.currentTarget as HTMLElement).style.color = colors.textDim;
+          }}
+        >
+          <KeyRound size={18} />
+          Change Password
+        </NavLink>
         <button
           onClick={logout}
           style={{

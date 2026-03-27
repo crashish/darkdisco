@@ -16,6 +16,7 @@ import MatchingFilters from './pages/MatchingFilters';
 import Analytics from './pages/Analytics';
 import AlertRules from './pages/AlertRules';
 import AlertHistory from './pages/AlertHistory';
+import Account from './pages/Account';
 import Login from './pages/Login';
 import type { ReactNode } from 'react';
 
@@ -46,6 +47,7 @@ export default function App() {
           <Route path="/settings/filters" element={<MatchingFilters />} />
           <Route path="/settings/alerts" element={<AlertRules />} />
           <Route path="/settings/alert-history" element={<AlertHistory />} />
+          <Route path="/settings/account" element={<Account />} />
         </Route>
       </Routes>
     </AuthProvider>

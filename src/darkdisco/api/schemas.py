@@ -463,6 +463,20 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class UserOut(BaseModel):
+    id: str
+    username: str
+    role: str
+    disabled: bool
+    created_at: str | None = None
+    last_login: str | None = None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 # ---------------------------------------------------------------------------
 # Integration (trapline connector)
 # ---------------------------------------------------------------------------

@@ -23,6 +23,21 @@ async function apiFetch<T>(url: string, fallback: T, init?: RequestInit): Promis
   return await res.json() as T;
 }
 
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+export async function fetchCurrentUser(): Promise<{ id: string; username: string; role: string }> {
+  return apiFetch('/auth/me', { id: '', username: '', role: '' });
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<{ status: string; message: string }> {
+  return apiFetch('/auth/change-password', { status: '', message: '' }, {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}
+
 export async function fetchDashboardStats(): Promise<DashboardStats> {
   return apiFetch('/dashboard/stats', mockDashboardStats);
 }

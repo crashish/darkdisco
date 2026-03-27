@@ -17,6 +17,7 @@ from darkdisco.api.auth import (
     create_access_token,
     get_current_user,
     get_current_user_or_token_param,
+    hash_password,
     verify_password,
 )
 from darkdisco.api.schemas import (
@@ -67,8 +68,10 @@ from darkdisco.api.schemas import (
     SourceOut,
     SourceUpdate,
     StatusCount,
+    ChangePasswordRequest,
     TokenRequest,
     TokenResponse,
+    UserOut,
     BinRoutingEntry,
     BinRoutingResult,
     BinRoutingSummary,
@@ -304,6 +307,37 @@ async def login(
     user.last_login = datetime.now(timezone.utc)
     await db.commit()
     return TokenResponse(access_token=token)
+
+
+@protected.get("/auth/me", response_model=UserOut)
+async def get_me(
+    user: User = Depends(get_current_user),
+):
+    """Return the current authenticated user's profile."""
+    return UserOut(
+        id=user.id,
+        username=user.username,
+        role=user.role.value,
+        disabled=user.disabled,
+        created_at=user.created_at.isoformat() if user.created_at else None,
+        last_login=user.last_login.isoformat() if user.last_login else None,
+    )
+
+
+@protected.post("/auth/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Change the current user's password."""
+    if not verify_password(body.current_password, user.hashed_password):
+        raise HTTPException(400, "Current password is incorrect")
+    if len(body.new_password) < 8:
+        raise HTTPException(400, "New password must be at least 8 characters")
+    user.hashed_password = hash_password(body.new_password)
+    await db.commit()
+    return {"status": "ok", "message": "Password changed successfully"}
 
 
 # ---- Integration (trapline connector) --------------------------------------
