@@ -1259,11 +1259,6 @@ def download_pending_files(batch_size: int = 50):
         logger.info("Another download task is already running, skipping")
         return {"skipped": True}
 
-    # Downloads use a separate session file (_download variant) via
-    # _load_connector_for_download, so no need for the main session lock.
-    # Only the download_files_lock above prevents concurrent downloads.
-    tg_lock = None  # kept for finally-block compatibility
-
     session = _get_sync_session()
     try:
         # Skip videos, webp stickers, and audio — focus on images, text, archives
@@ -1470,10 +1465,6 @@ def download_pending_files(batch_size: int = 50):
 
         return {"downloaded": downloaded, "failed": failed, "deduped": deduped}
     finally:
-        try:
-            tg_lock.release()
-        except Exception:
-            pass
         try:
             lock.release()
         except Exception:

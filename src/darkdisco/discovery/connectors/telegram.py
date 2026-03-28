@@ -302,6 +302,9 @@ class TelegramConnector(BaseConnector):
                         message.file.name or "unnamed",
                         channel_ref, message.id,
                     )
+                    if not hasattr(message, "_dd_extra_meta"):
+                        message._dd_extra_meta = {}
+                    message._dd_extra_meta["download_status"] = "deferred"
                 elif message.file.size > max_download_size:
                     logger.info(
                         "File too large to download: %s (%s) in %s msg#%d",
@@ -309,6 +312,9 @@ class TelegramConnector(BaseConnector):
                         f"{message.file.size / (1024*1024):.1f}MB",
                         channel_ref, message.id,
                     )
+                    if not hasattr(message, "_dd_extra_meta"):
+                        message._dd_extra_meta = {}
+                    message._dd_extra_meta["download_status"] = "deferred"
                 elif message.file.size > 5 * 1024 * 1024:
                     # Large files: record metadata for async download later
                     logger.info(
