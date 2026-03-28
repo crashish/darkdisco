@@ -29,6 +29,9 @@ frontend/node_modules/
 pgdata/
 miniodata/
 
+# Persisted secrets
+data/.jwt_secret
+
 # OS
 .DS_Store
 Thumbs.db

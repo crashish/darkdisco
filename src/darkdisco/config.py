@@ -2,7 +2,52 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
+
+_JWT_SECRET_FILE = Path(os.environ.get("DARKDISCO_DATA_DIR", "data")) / ".jwt_secret"
+
+
+def _stable_jwt_secret() -> str:
+    """Return a stable JWT secret that persists across restarts.
+
+    Priority:
+    1. DARKDISCO_JWT_SECRET env var (if set and not the placeholder)
+    2. Previously generated secret from data/.jwt_secret file
+    3. Generate a new secret, persist it, and return it
+
+    This prevents token invalidation on container/process restart.
+    """
+    # Check env var first — if explicitly set, use it
+    env_secret = os.environ.get("DARKDISCO_JWT_SECRET", "")
+    if env_secret and env_secret != "change-me-in-production":
+        return env_secret
+
+    # Check for persisted secret file
+    if _JWT_SECRET_FILE.exists():
+        stored = _JWT_SECRET_FILE.read_text().strip()
+        if stored:
+            return stored
+
+    # Generate a new stable secret and persist it
+    new_secret = hashlib.sha256(os.urandom(64)).hexdigest()
+    try:
+        _JWT_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _JWT_SECRET_FILE.write_text(new_secret)
+        _JWT_SECRET_FILE.chmod(0o600)
+        logger.info("Generated and persisted new JWT secret to %s", _JWT_SECRET_FILE)
+    except OSError:
+        logger.warning(
+            "Could not persist JWT secret to %s — tokens will not survive restart",
+            _JWT_SECRET_FILE,
+        )
+    return new_secret
 
 
 class Settings(BaseSettings):
@@ -15,7 +60,7 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/2"
 
     # JWT auth
-    jwt_secret: str = "change-me-in-production"
+    jwt_secret: str = ""
     jwt_expire_minutes: int = 480
     jwt_algorithm: str = "HS256"
 
@@ -76,6 +121,10 @@ class Settings(BaseSettings):
     celery_task_time_limit: int = 600
 
     model_config = {"env_prefix": "DARKDISCO_", "env_file": ".env", "extra": "ignore"}
+
+    def model_post_init(self, __context: object) -> None:
+        if not self.jwt_secret or self.jwt_secret == "change-me-in-production":
+            object.__setattr__(self, "jwt_secret", _stable_jwt_secret())
 
 
 settings = Settings()
