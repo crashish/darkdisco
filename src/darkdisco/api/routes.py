@@ -2056,8 +2056,12 @@ async def search_extracted_files(
             ExtractedFile,
             RawMention.metadata_.label("mention_meta"),
             RawMention.content.label("mention_content"),
+            RawMention.collected_at.label("mention_collected_at"),
+            RawMention.source_url.label("mention_source_url"),
+            Source.name.label("source_name"),
         )
         .join(RawMention, RawMention.id == ExtractedFile.mention_id)
+        .join(Source, Source.id == RawMention.source_id, isouter=True)
         .where(or_(content_match, name_match))
         .order_by(ExtractedFile.created_at.desc())
         .offset(offset)
@@ -2086,6 +2090,9 @@ async def search_extracted_files(
         ef = row[0]
         mention_meta = row[1] or {}
         mention_content = row[2] or ""
+        mention_collected_at = row[3]
+        mention_source_url = row[4]
+        source_name = row[5]
         # Extract context snippet from mention content (first 120 chars)
         content_snippet = mention_content[:120].replace("\n", " ").strip() if mention_content else ""
         entry = {
@@ -2101,6 +2108,10 @@ async def search_extracted_files(
             "source": "extracted_files",
             "channel_ref": mention_meta.get("channel_ref", ""),
             "content_snippet": content_snippet,
+            "collected_at": mention_collected_at.isoformat() if mention_collected_at else None,
+            "source_url": mention_source_url or mention_meta.get("source_url", ""),
+            "source_name": source_name or "",
+            "sender_name": mention_meta.get("sender_name", "") or mention_meta.get("forwarded_from", ""),
         }
         ocr = search_ocr_map.get(ef.sha256) if ef.sha256 else None
         if ocr:

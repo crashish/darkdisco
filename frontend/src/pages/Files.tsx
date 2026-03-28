@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { colors, card, font } from '../theme';
-import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code, ScanLine, ChevronLeft, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code, ScanLine, ChevronLeft, ChevronsLeft, ChevronsRight, MessageSquare } from 'lucide-react';
 
 const BASE = '/api';
 
@@ -290,6 +291,10 @@ interface SearchResult {
   ocr_engine?: string;
   channel_ref?: string;
   content_snippet?: string;
+  collected_at?: string;
+  source_url?: string;
+  source_name?: string;
+  sender_name?: string;
 }
 
 function formatSize(bytes: number): string {
@@ -351,6 +356,7 @@ const paginationBtnStyle: React.CSSProperties = {
 };
 
 export default function Files() {
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -693,20 +699,31 @@ export default function Files() {
                           {arch.file_mime && <span style={{ fontSize: 10, color: colors.textMuted, background: colors.bgSurface, padding: '1px 5px', borderRadius: 3 }}>{arch.file_mime}</span>}
                         </div>
                         {/* Source info row */}
-                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: colors.textDim, marginBottom: 4 }}>
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: colors.textDim, marginBottom: 4, alignItems: 'center' }}>
                           {arch.channel_ref && (
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                               <span style={{ fontWeight: 600, color: colors.accent }}>Channel:</span> {arch.channel_ref}
                             </span>
                           )}
+                          <button
+                            onClick={() => navigate(`/mentions?mention=${arch.mention_id}`)}
+                            style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 4,
+                              background: 'none', border: 'none', padding: 0,
+                              color: colors.accent, cursor: 'pointer', fontSize: 12,
+                            }}
+                            title="View the full source message in Mentions"
+                          >
+                            <MessageSquare size={12} /> View source message
+                          </button>
                           {arch.source_url && (
                             <a
                               href={arch.source_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              style={{ color: colors.accent, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                              style={{ color: colors.textDim, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 3 }}
                             >
-                              Original message ↗
+                              Original ↗
                             </a>
                           )}
                           {arch.collected_at && (
@@ -900,7 +917,9 @@ export default function Files() {
             {total} result{total !== 1 ? 's' : ''} across {Object.keys(grouped).length} archive{Object.keys(grouped).length !== 1 ? 's' : ''}
           </div>
 
-          {Object.entries(grouped).map(([mentionId, group]) => (
+          {Object.entries(grouped).map(([mentionId, group]) => {
+            const firstFile = group.files[0];
+            return (
             <div key={mentionId} style={{ ...card, marginBottom: 12, padding: 0 }}>
               {/* Archive header */}
               <div style={{
@@ -913,15 +932,43 @@ export default function Files() {
                   {group.archive}
                 </span>
                 <span>— {group.files.length} match{group.files.length !== 1 ? 'es' : ''}</span>
-                {group.files[0]?.channel_ref && <span style={{ fontSize: 11, color: colors.textMuted }}>from {group.files[0].channel_ref}</span>}
-                <a href={authMentionFileUrl(mentionId)} download={group.archive}
-                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', fontSize: 11, fontWeight: 600, background: colors.accent, color: '#fff', borderRadius: 4, textDecoration: 'none' }}>
-                  <Download size={11} /> Download Archive
-                </a>
+                {firstFile?.channel_ref && <span style={{ fontSize: 11, color: colors.textMuted }}>from {firstFile.channel_ref}</span>}
+                {firstFile?.source_name && !firstFile?.channel_ref && <span style={{ fontSize: 11, color: colors.textMuted }}>{firstFile.source_name}</span>}
+                {firstFile?.collected_at && <span style={{ fontSize: 11, color: colors.textMuted }}>{new Date(firstFile.collected_at).toLocaleDateString()}</span>}
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button
+                    onClick={() => navigate(`/mentions?mention=${mentionId}`)}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px',
+                      fontSize: 11, fontWeight: 600, background: 'none',
+                      border: `1px solid ${colors.border}`, borderRadius: 4,
+                      color: colors.accent, cursor: 'pointer',
+                    }}
+                    title="View the source message that contained this file"
+                  >
+                    <MessageSquare size={11} /> View Message
+                  </button>
+                  {firstFile?.source_url && (
+                    <a href={firstFile.source_url} target="_blank" rel="noopener noreferrer"
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px',
+                        fontSize: 11, background: 'none', border: `1px solid ${colors.border}`,
+                        borderRadius: 4, color: colors.textDim, textDecoration: 'none',
+                      }}
+                      title="Open original message in source platform"
+                    >
+                      Source ↗
+                    </a>
+                  )}
+                  <a href={authMentionFileUrl(mentionId)} download={group.archive}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', fontSize: 11, fontWeight: 600, background: colors.accent, color: '#fff', borderRadius: 4, textDecoration: 'none' }}>
+                    <Download size={11} /> Download Archive
+                  </a>
+                </div>
               </div>
-              {group.files[0]?.content_snippet && (
+              {firstFile?.content_snippet && (
                 <div style={{ padding: '4px 16px', fontSize: 11, color: colors.textMuted, borderBottom: `1px solid ${colors.border}`, fontStyle: 'italic' }}>
-                  {group.files[0].content_snippet}
+                  {firstFile.content_snippet}
                 </div>
               )}
 
@@ -1031,7 +1078,8 @@ export default function Files() {
                 })}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
