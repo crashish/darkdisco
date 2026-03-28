@@ -151,6 +151,7 @@ class SourceUpdate(BaseModel):
     connector_class: str | None = None
     enabled: bool | None = None
     poll_interval_seconds: int | None = None
+    last_polled_at: datetime | None = None
     config: dict | None = None
 
 
