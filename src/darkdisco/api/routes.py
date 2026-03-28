@@ -1904,67 +1904,85 @@ async def list_archives(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     sort: str = Query("newest", regex="^(newest|oldest)$"),
+    channel: str | None = Query(None, description="Filter by channel_ref"),
     db: AsyncSession = Depends(get_session),
 ):
-    """List unique archives (one entry per mention that has extracted files).
+    """List all mentions with file attachments (s3_key in metadata).
 
-    Groups ExtractedFile rows by mention_id and returns archive-level summaries
-    including file counts, archive name, and collection timestamp.
+    Shows ALL archived files, not just those with extracted_files rows.
+    Includes extraction status, source context, and parent download URLs.
+    Groups are enriched with channel/message context for display.
     """
-    order = func.max(ExtractedFile.created_at).asc() if sort == "oldest" else func.max(ExtractedFile.created_at).desc()
+    # Base filter: mentions that have an s3_key in metadata (i.e. file stored in S3)
+    base_filter = [
+        RawMention.metadata_.isnot(None),
+        RawMention.metadata_["s3_key"].astext != "",
+        RawMention.metadata_.has_key("s3_key"),  # noqa: W601
+    ]
+    if channel:
+        base_filter.append(RawMention.metadata_["channel_ref"].astext == channel)
 
-    # Count unique archives (mentions with extracted files)
-    count_stmt = (
-        select(func.count(func.distinct(ExtractedFile.mention_id)))
-        .select_from(ExtractedFile)
-    )
+    # Count total mentions with files
+    count_stmt = select(func.count(RawMention.id)).where(*base_filter)
     total = (await db.execute(count_stmt)).scalar() or 0
 
-    # Get paginated archive summaries
+    # Get paginated mentions
+    order_col = RawMention.collected_at.asc() if sort == "oldest" else RawMention.collected_at.desc()
     stmt = (
-        select(
-            ExtractedFile.mention_id,
-            func.count(ExtractedFile.id).label("file_count"),
-            func.sum(ExtractedFile.size).label("total_size"),
-            func.max(ExtractedFile.created_at).label("latest_created"),
-        )
-        .group_by(ExtractedFile.mention_id)
-        .order_by(order)
+        select(RawMention)
+        .where(*base_filter)
+        .order_by(order_col)
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
     result = await db.execute(stmt)
-    archive_rows = result.all()
+    mentions = result.scalars().all()
 
-    # Fetch mention metadata for archive names
-    mention_ids = [r[0] for r in archive_rows]
-    archives = []
+    # Batch-fetch extracted file counts for these mentions
+    mention_ids = [m.id for m in mentions]
+    file_counts: dict[str, tuple[int, int]] = {}  # mention_id -> (count, total_size)
     if mention_ids:
-        mention_stmt = select(RawMention).where(RawMention.id.in_(mention_ids))
-        mention_result = await db.execute(mention_stmt)
-        mention_map = {m.id: m for m in mention_result.scalars().all()}
+        fc_stmt = (
+            select(
+                ExtractedFile.mention_id,
+                func.count(ExtractedFile.id),
+                func.coalesce(func.sum(ExtractedFile.size), 0),
+            )
+            .where(ExtractedFile.mention_id.in_(mention_ids))
+            .group_by(ExtractedFile.mention_id)
+        )
+        fc_result = await db.execute(fc_stmt)
+        for row in fc_result.all():
+            file_counts[row[0]] = (row[1], row[2])
 
-        for row in archive_rows:
-            mention_id = row[0]
-            mention = mention_map.get(mention_id)
-            meta = (mention.metadata_ or {}) if mention else {}
-            content_snippet = ""
-            if mention and mention.content:
-                # First 120 chars of message content for context
-                content_snippet = mention.content[:120].replace("\n", " ").strip()
-            archives.append({
-                "mention_id": mention_id,
-                "file_name": meta.get("file_name", "unknown"),
-                "file_count": row[1],
-                "total_size": row[2] or 0,
-                "source_name": mention.source_url or "" if mention else "",
-                "collected_at": row[3].isoformat() if row[3] else None,
-                "has_credentials": meta.get("has_credentials", False),
-                "file_analysis": meta.get("file_analysis"),
-                "channel_ref": meta.get("channel_ref", ""),
-                "content_snippet": content_snippet,
-                "download_url": f"/api/mentions/{mention_id}/file" if meta.get("s3_key") else "",
-            })
+    archives = []
+    for mention in mentions:
+        meta = mention.metadata_ or {}
+        content_snippet = ""
+        if mention.content:
+            content_snippet = mention.content[:200].replace("\n", " ").strip()
+
+        extracted_count, extracted_size = file_counts.get(mention.id, (0, 0))
+        file_size = meta.get("file_size", 0) or 0
+
+        archives.append({
+            "mention_id": mention.id,
+            "file_name": meta.get("file_name", "unknown"),
+            "file_count": extracted_count,
+            "total_size": file_size,
+            "file_mime": meta.get("file_mime", ""),
+            "source_name": mention.source_url or "",
+            "source_url": mention.source_url or "",
+            "collected_at": mention.collected_at.isoformat() if mention.collected_at else None,
+            "has_credentials": meta.get("has_credentials", False),
+            "file_analysis": meta.get("file_analysis"),
+            "channel_ref": meta.get("channel_ref", ""),
+            "content_snippet": content_snippet,
+            "download_url": f"/api/mentions/{mention.id}/file" if meta.get("s3_key") else "",
+            "download_status": meta.get("download_status", ""),
+            "s3_key": meta.get("s3_key", ""),
+            "extracted": extracted_count > 0,
+        })
 
     return {"items": archives, "total": total, "page": page, "page_size": page_size}
 

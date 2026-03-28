@@ -325,12 +325,16 @@ interface ArchiveSummary {
   file_size: number;
   file_mime: string;
   source_name: string;
+  source_url: string;
   collected_at: string;
   file_count: number;
   channel_ref: string;
   content_snippet: string;
   download_url: string;
+  download_status: string;
+  s3_key: string;
   has_credentials: boolean;
+  extracted: boolean;
 }
 
 function authedFetch(url: string): Promise<Response> {
@@ -381,15 +385,19 @@ export default function Files() {
       const items = (data.items || []).map((a: Record<string, unknown>) => ({
         mention_id: a.mention_id as string,
         file_name: (a.file_name as string) || 'unknown',
-        file_size: (a.total_size as number) || 0,
-        file_mime: '',
+        file_size: (a.total_size as number) || (a.file_size as number) || 0,
+        file_mime: (a.file_mime as string) || '',
         source_name: (a.source_name as string) || '',
+        source_url: (a.source_url as string) || '',
         collected_at: (a.collected_at as string) || '',
         file_count: (a.file_count as number) || 0,
         channel_ref: (a.channel_ref as string) || '',
         content_snippet: (a.content_snippet as string) || '',
         download_url: (a.download_url as string) || '',
+        download_status: (a.download_status as string) || '',
+        s3_key: (a.s3_key as string) || '',
         has_credentials: (a.has_credentials as boolean) || false,
+        extracted: (a.extracted as boolean) || false,
       }));
       setArchives(items);
       setTotalFiles(data.total || 0);
@@ -585,9 +593,10 @@ export default function Files() {
                       <FileCategoryIcon category={cat} size={12} />
                       {a.file_name}
                     </div>
-                    <div style={{ fontSize: 11, color: colors.textMuted, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 11, color: colors.textMuted, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                       <span>{formatSize(a.file_size)}</span>
                       {a.file_count > 0 && <span>{a.file_count} file{a.file_count !== 1 ? 's' : ''}</span>}
+                      {!a.extracted && a.s3_key && <span style={{ color: '#94a3b8', fontSize: 10 }}>not extracted</span>}
                       {a.channel_ref && <span title="Channel">{a.channel_ref}</span>}
                       {!a.channel_ref && a.source_name && <span>{a.source_name}</span>}
                       {a.has_credentials && <span style={{ color: '#f59e0b', fontWeight: 600 }}>creds</span>}
@@ -665,32 +674,112 @@ export default function Files() {
               <div style={{ ...card, padding: 40, textAlign: 'center', color: colors.textMuted }}>
                 <Loader size={20} style={{ animation: 'spin 1s linear infinite' }} />
               </div>
-            ) : archiveFiles.length === 0 && selectedArchive ? (
-              /* Standalone file — not an archive, show file directly */
-              (() => {
-                const arch = archives.find(a => a.mention_id === selectedArchive);
-                if (!arch) return null;
-                return <StandaloneFileViewer archive={arch} />;
-              })()
-            ) : (
+            ) : (() => {
+              const arch = archives.find(a => a.mention_id === selectedArchive);
+              const isStandalone = archiveFiles.length === 0 && selectedArchive;
+              return (
               <div>
-                {(() => {
-                  const arch = archives.find(a => a.mention_id === selectedArchive);
-                  return (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                      <span style={{ fontSize: 13, color: colors.textDim }}>
-                        {archiveFiles.length} file{archiveFiles.length !== 1 ? 's' : ''}
-                      </span>
-                      {arch?.channel_ref && <span style={{ fontSize: 11, color: colors.textMuted }}>from {arch.channel_ref}</span>}
-                      {arch && (
-                        <a href={authMentionFileUrl(arch.mention_id)} download={arch.file_name}
-                          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', fontSize: 11, fontWeight: 600, background: colors.accent, color: '#fff', borderRadius: 4, textDecoration: 'none' }}>
-                          <Download size={11} /> Download Archive
+                {/* Source context panel */}
+                {arch && (
+                  <div style={{ ...card, padding: 14, marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <FileCategoryIcon category={getFileCategory(arch.file_name, false, arch.file_mime || undefined)} size={16} />
+                          <span style={{ fontSize: 14, fontWeight: 600, color: colors.text, fontFamily: font.mono }}>
+                            {arch.file_name}
+                          </span>
+                          <span style={{ fontSize: 11, color: colors.textMuted }}>{formatSize(arch.file_size)}</span>
+                          {arch.file_mime && <span style={{ fontSize: 10, color: colors.textMuted, background: colors.bgSurface, padding: '1px 5px', borderRadius: 3 }}>{arch.file_mime}</span>}
+                        </div>
+                        {/* Source info row */}
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: colors.textDim, marginBottom: 4 }}>
+                          {arch.channel_ref && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              <span style={{ fontWeight: 600, color: colors.accent }}>Channel:</span> {arch.channel_ref}
+                            </span>
+                          )}
+                          {arch.source_url && (
+                            <a
+                              href={arch.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: colors.accent, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                            >
+                              Original message ↗
+                            </a>
+                          )}
+                          {arch.collected_at && (
+                            <span>Collected: {new Date(arch.collected_at).toLocaleString()}</span>
+                          )}
+                        </div>
+                        {/* Message content snippet */}
+                        {arch.content_snippet && (
+                          <div style={{
+                            fontSize: 11, color: colors.textMuted, fontStyle: 'italic',
+                            background: colors.bgSurface, padding: '6px 10px', borderRadius: 4,
+                            border: `1px solid ${colors.border}`, marginTop: 4,
+                            whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 80, overflow: 'auto',
+                          }}>
+                            {arch.content_snippet}
+                          </div>
+                        )}
+                      </div>
+                      {/* Download parent file button */}
+                      {arch.s3_key && (
+                        <a
+                          href={authMentionFileUrl(arch.mention_id)}
+                          download={arch.file_name}
+                          style={{
+                            flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '6px 14px', fontSize: 12, fontWeight: 600,
+                            background: colors.accent, color: '#fff', borderRadius: 6,
+                            textDecoration: 'none', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          <Download size={13} /> Download
                         </a>
                       )}
                     </div>
-                  );
-                })()}
+                    {/* Extraction status / trigger */}
+                    {!arch.extracted && arch.s3_key && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, padding: '6px 10px', background: 'rgba(148, 163, 184, 0.08)', borderRadius: 4, fontSize: 11 }}>
+                        <span style={{ color: colors.textMuted }}>Archive not yet extracted.</span>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const token = localStorage.getItem('dd_token');
+                              const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                              if (token) headers['Authorization'] = `Bearer ${token}`;
+                              const res = await fetch(`${BASE}/pipeline/extract-mention-archive/${arch.mention_id}`, { method: 'POST', headers });
+                              if (res.ok) {
+                                alert('Extraction triggered! Refresh in a few minutes to see extracted files.');
+                              }
+                            } catch { /* ignore */ }
+                          }}
+                          style={{
+                            background: 'none', border: `1px solid ${colors.border}`, borderRadius: 4,
+                            color: colors.accent, fontSize: 11, padding: '2px 8px', cursor: 'pointer',
+                          }}
+                        >
+                          Extract now
+                        </button>
+                      </div>
+                    )}
+                    {arch.extracted && (
+                      <div style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>
+                        {arch.file_count} extracted file{arch.file_count !== 1 ? 's' : ''}
+                        {arch.has_credentials && <span style={{ color: '#f59e0b', fontWeight: 600, marginLeft: 8 }}>Contains credentials</span>}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Standalone file viewer for non-archives */}
+                {isStandalone && arch ? (
+                  <StandaloneFileViewer archive={arch} />
+                ) : archiveFiles.length > 0 && (
+                <div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {archiveFiles.map(file => {
                     const fid = file.s3_key || file.filename;
@@ -794,7 +883,10 @@ export default function Files() {
                   })}
                 </div>
               </div>
-            )}
+                )}
+              </div>
+              );
+            })()}
           </div>
         </div>
       ) : results.length === 0 ? (
@@ -823,8 +915,8 @@ export default function Files() {
                 <span>— {group.files.length} match{group.files.length !== 1 ? 'es' : ''}</span>
                 {group.files[0]?.channel_ref && <span style={{ fontSize: 11, color: colors.textMuted }}>from {group.files[0].channel_ref}</span>}
                 <a href={authMentionFileUrl(mentionId)} download={group.archive}
-                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: colors.accent, textDecoration: 'none' }}>
-                  <Download size={11} /> Archive
+                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', fontSize: 11, fontWeight: 600, background: colors.accent, color: '#fff', borderRadius: 4, textDecoration: 'none' }}>
+                  <Download size={11} /> Download Archive
                 </a>
               </div>
               {group.files[0]?.content_snippet && (
