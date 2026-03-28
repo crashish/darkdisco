@@ -369,17 +369,17 @@ export default function Files() {
     setArchivesLoading(true);
     try {
       const sortParam = sort === 'oldest' ? '&sort=oldest' : '';
-      const res = await authedFetch(`${BASE}/extracted-files?page=${page}&page_size=${pageSize}${sortParam}`);
+      const res = await authedFetch(`${BASE}/archives?page=${page}&page_size=${pageSize}${sortParam}`);
       if (!res.ok) return;
       const data = await res.json();
-      const items = (data.items || []).map((f: Record<string, unknown>) => ({
-        mention_id: f.mention_id as string,
-        file_name: (f.filename as string) || 'unknown',
-        file_size: (f.size as number) || 0,
-        file_mime: (f.extension as string) || '',
-        source_name: (f.archive_name as string) || '',
-        collected_at: (f.created_at as string) || '',
-        file_count: 0,
+      const items = (data.items || []).map((a: Record<string, unknown>) => ({
+        mention_id: a.mention_id as string,
+        file_name: (a.file_name as string) || 'unknown',
+        file_size: (a.total_size as number) || 0,
+        file_mime: '',
+        source_name: (a.source_name as string) || '',
+        collected_at: (a.collected_at as string) || '',
+        file_count: (a.file_count as number) || 0,
       }));
       setArchives(items);
       setTotalFiles(data.total || 0);
@@ -538,7 +538,7 @@ export default function Files() {
               <div style={{ padding: '10px 14px', borderBottom: `1px solid ${colors.border}`, fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span>
                   <Archive size={12} style={{ marginRight: 6, verticalAlign: -1 }} />
-                  Files ({totalFiles.toLocaleString()})
+                  Archives ({totalFiles.toLocaleString()})
                 </span>
                 <select
                   value={sortOrder}
@@ -576,6 +576,7 @@ export default function Files() {
                     </div>
                     <div style={{ fontSize: 11, color: colors.textMuted, display: 'flex', gap: 8 }}>
                       <span>{formatSize(a.file_size)}</span>
+                      {a.file_count > 0 && <span>{a.file_count} file{a.file_count !== 1 ? 's' : ''}</span>}
                       <span>{a.source_name}</span>
                       <span>{new Date(a.collected_at).toLocaleDateString()}</span>
                     </div>

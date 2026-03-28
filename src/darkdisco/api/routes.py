@@ -1893,6 +1893,69 @@ async def mention_archive_contents(
     return {"mention_id": mention_id, "files": files, "total": len(files)}
 
 
+@protected.get("/archives")
+async def list_archives(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    sort: str = Query("newest", regex="^(newest|oldest)$"),
+    db: AsyncSession = Depends(get_session),
+):
+    """List unique archives (one entry per mention that has extracted files).
+
+    Groups ExtractedFile rows by mention_id and returns archive-level summaries
+    including file counts, archive name, and collection timestamp.
+    """
+    order = func.max(ExtractedFile.created_at).asc() if sort == "oldest" else func.max(ExtractedFile.created_at).desc()
+
+    # Count unique archives (mentions with extracted files)
+    count_stmt = (
+        select(func.count(func.distinct(ExtractedFile.mention_id)))
+        .select_from(ExtractedFile)
+    )
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    # Get paginated archive summaries
+    stmt = (
+        select(
+            ExtractedFile.mention_id,
+            func.count(ExtractedFile.id).label("file_count"),
+            func.sum(ExtractedFile.size).label("total_size"),
+            func.max(ExtractedFile.created_at).label("latest_created"),
+        )
+        .group_by(ExtractedFile.mention_id)
+        .order_by(order)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    result = await db.execute(stmt)
+    archive_rows = result.all()
+
+    # Fetch mention metadata for archive names
+    mention_ids = [r[0] for r in archive_rows]
+    archives = []
+    if mention_ids:
+        mention_stmt = select(RawMention).where(RawMention.id.in_(mention_ids))
+        mention_result = await db.execute(mention_stmt)
+        mention_map = {m.id: m for m in mention_result.scalars().all()}
+
+        for row in archive_rows:
+            mention_id = row[0]
+            mention = mention_map.get(mention_id)
+            meta = (mention.metadata_ or {}) if mention else {}
+            archives.append({
+                "mention_id": mention_id,
+                "file_name": meta.get("file_name", "unknown"),
+                "file_count": row[1],
+                "total_size": row[2] or 0,
+                "source_name": mention.source_url or "" if mention else "",
+                "collected_at": row[3].isoformat() if row[3] else None,
+                "has_credentials": meta.get("has_credentials", False),
+                "file_analysis": meta.get("file_analysis"),
+            })
+
+    return {"items": archives, "total": total, "page": page, "page_size": page_size}
+
+
 @protected.get("/extracted-files")
 async def list_extracted_files(
     page: int = Query(1, ge=1),
@@ -3375,9 +3438,14 @@ async def trigger_backfill_stored_archives(
 @protected.post("/pipeline/extract-mention-archive/{mention_id}")
 async def trigger_extract_mention_archive(
     mention_id: str,
+    force: bool = Query(False, description="Force re-extraction even if files exist"),
     db: AsyncSession = Depends(get_session),
 ):
-    """Trigger streaming extraction for a single mention's stored archive."""
+    """Trigger streaming extraction for a single mention's stored archive.
+
+    With force=True, deletes existing ExtractedFile rows and re-extracts
+    (useful for fixing partial extractions from the old text-only path).
+    """
     mention = await db.get(RawMention, mention_id)
     if not mention:
         raise HTTPException(404, "Mention not found")
@@ -3388,13 +3456,60 @@ async def trigger_extract_mention_archive(
 
     from darkdisco.pipeline.worker import extract_stored_archive
 
-    task = extract_stored_archive.delay(mention_id)
+    task = extract_stored_archive.delay(mention_id, force=force)
 
     return {
         "status": "dispatched",
         "task_id": task.id,
         "mention_id": mention_id,
         "archive_filename": meta.get("file_name", "unknown"),
+        "force": force,
+    }
+
+
+@protected.post("/pipeline/reindex-archives")
+async def reindex_archives(
+    batch_size: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_session),
+):
+    """Re-extract ALL archives that have stored files, including those with partial data.
+
+    Unlike backfill-stored-archives (which skips already-extracted mentions),
+    this forces re-extraction of all archive mentions to fix partial
+    ExtractedFile rows (e.g. from the old text-only extraction path).
+    """
+    from darkdisco.pipeline.files import is_archive as _is_archive
+    from darkdisco.pipeline.worker import extract_stored_archive
+
+    # Find all mentions with archive files in S3
+    result = await db.execute(
+        select(RawMention.id, RawMention.metadata_)
+        .where(RawMention.metadata_.isnot(None))
+        .order_by(RawMention.collected_at.desc())
+        .limit(batch_size * 5)
+    )
+
+    dispatched = 0
+    for row in result.all():
+        meta = row[1] or {}
+        if not meta.get("s3_key"):
+            continue
+        if not _is_archive(meta.get("file_name", "")):
+            continue
+
+        extract_stored_archive.apply_async(
+            args=[row[0]],
+            kwargs={"force": True},
+            countdown=dispatched * 30,
+        )
+        dispatched += 1
+        if dispatched >= batch_size:
+            break
+
+    return {
+        "status": "dispatched",
+        "dispatched": dispatched,
+        "batch_size": batch_size,
     }
 
 

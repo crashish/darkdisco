@@ -433,6 +433,25 @@ def _process_file_mentions(mentions: list) -> list:
                 if per_file_texts:
                     mention.metadata["extracted_file_contents"] = per_file_texts
 
+                # Store full inventory of ALL extracted files (text + non-text)
+                # so _store_extracted_files can create ExtractedFile rows for every file
+                inventory = []
+                for ef in extracted:
+                    text_content = None
+                    if ef.is_text and ef.content:
+                        try:
+                            text_content = ef.content.decode("utf-8", errors="replace") if isinstance(ef.content, bytes) else ef.content
+                        except Exception:
+                            text_content = None
+                    inventory.append({
+                        "filename": ef.filename,
+                        "sha256": ef.sha256,
+                        "size": ef.size,
+                        "is_text": ef.is_text,
+                        "content": text_content or "",
+                    })
+                mention.metadata["extracted_files_inventory"] = inventory
+
                 # Append extracted text to mention content for matching (per-file separators)
                 if per_file_texts:
                     parts = [mention.content or ""]
@@ -536,18 +555,54 @@ def _attributed_raw_content(mention, matched_terms: list[dict]) -> str:
 def _store_extracted_files(session: Session, mention_id: str, metadata: dict) -> int:
     """Create ExtractedFile rows from mention metadata.
 
-    Reads extracted_file_contents and file hashes from metadata and
-    persists them as normalized ExtractedFile rows linked to the mention.
+    Uses extracted_files_inventory (all files) if available, falling back
+    to extracted_file_contents (text-only, legacy) for backwards compat.
 
     Returns the number of rows created.
     """
     from darkdisco.common.models import ExtractedFile
 
+    file_sha256 = metadata.get("file_sha256", "")
+
+    # Prefer full inventory (all files including non-text)
+    inventory = metadata.get("extracted_files_inventory")
+    if inventory and isinstance(inventory, list):
+        count = 0
+        for ef in inventory:
+            filename = ef.get("filename", "")
+            sha = ef.get("sha256", "")
+            is_text = ef.get("is_text", False)
+            content = ef.get("content", "") if is_text else ""
+
+            ext = ""
+            if "." in filename:
+                ext = filename.rsplit(".", 1)[-1].lower()
+
+            s3_key = None
+            if file_sha256 and filename and sha:
+                s3_key = f"files/{file_sha256[:8]}/extracted/{sha[:8]}/{filename}"
+            elif file_sha256 and filename:
+                s3_key = f"files/{file_sha256[:8]}/extracted/{filename}"
+
+            row = ExtractedFile(
+                mention_id=mention_id,
+                filename=filename,
+                s3_key=s3_key,
+                sha256=sha or None,
+                size=ef.get("size") or (len(content.encode("utf-8")) if content else 0),
+                extension=ext or None,
+                is_text=is_text,
+                text_content=content if content else None,
+            )
+            session.add(row)
+            count += 1
+        return count
+
+    # Legacy fallback: extracted_file_contents (text files only)
     extracted = metadata.get("extracted_file_contents")
     if not extracted or not isinstance(extracted, list):
         return 0
 
-    file_sha256 = metadata.get("file_sha256", "")
     count = 0
     for ef in extracted:
         filename = ef.get("filename", "")
@@ -559,7 +614,6 @@ def _store_extracted_files(session: Session, mention_id: str, metadata: dict) ->
         s3_key = None
         sha = ef.get("sha256")
         if file_sha256 and filename:
-            # Match the S3 key pattern from _process_file_mentions
             if sha:
                 s3_key = f"files/{file_sha256[:8]}/extracted/{sha[:8]}/{filename}"
             else:
@@ -1425,12 +1479,14 @@ def backfill_extracted_files(batch_size: int = 100):
     soft_time_limit=1800,
     time_limit=3600,
 )
-def extract_stored_archive(self, mention_id: str):
+def extract_stored_archive(self, mention_id: str, force: bool = False):
     """Stream-extract a single stored archive from S3 for a mention.
 
     Downloads the archive to temp disk, extracts files, uploads extracted
     files back to S3, creates ExtractedFile rows, and updates mention metadata
     with file_analysis results.
+
+    If force=True, deletes existing ExtractedFile rows and re-extracts.
     """
     from darkdisco.common.models import ExtractedFile
     from darkdisco.common.models import RawMention as RawMentionModel
@@ -1468,9 +1524,19 @@ def extract_stored_archive(self, mention_id: str):
                 ExtractedFile.mention_id == mention_id
             ).limit(1)
         ).scalar_one_or_none()
-        if existing:
+        if existing and not force:
             logger.info("Mention %s already has extracted files, skipping", mention_id)
             return {"skipped": True, "reason": "already_extracted"}
+
+        # If force re-extraction, delete old rows first
+        if existing and force:
+            from sqlalchemy import delete as sa_delete
+            session.execute(
+                sa_delete(ExtractedFile).where(
+                    ExtractedFile.mention_id == mention_id
+                )
+            )
+            logger.info("Deleted existing ExtractedFile rows for mention %s (force re-extract)", mention_id)
 
         # Extract passwords from the mention content
         passwords = extract_passwords(mention.content or "")
