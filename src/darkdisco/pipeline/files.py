@@ -418,7 +418,7 @@ def stream_extract_from_s3(
 
                 # Recurse into nested archives (reuse in-memory extraction
                 # since nested members are already bounded by _MAX_MEMBER_SIZE)
-                if is_archive(relpath):
+                if is_archive(fname):
                     try:
                         nested = extract_archive(
                             content, fname, passwords, _depth=1

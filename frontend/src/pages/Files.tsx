@@ -288,6 +288,8 @@ interface SearchResult {
   ocr_text?: string;
   ocr_confidence?: number;
   ocr_engine?: string;
+  channel_ref?: string;
+  content_snippet?: string;
 }
 
 function formatSize(bytes: number): string {
@@ -325,6 +327,10 @@ interface ArchiveSummary {
   source_name: string;
   collected_at: string;
   file_count: number;
+  channel_ref: string;
+  content_snippet: string;
+  download_url: string;
+  has_credentials: boolean;
 }
 
 function authedFetch(url: string): Promise<Response> {
@@ -380,6 +386,10 @@ export default function Files() {
         source_name: (a.source_name as string) || '',
         collected_at: (a.collected_at as string) || '',
         file_count: (a.file_count as number) || 0,
+        channel_ref: (a.channel_ref as string) || '',
+        content_snippet: (a.content_snippet as string) || '',
+        download_url: (a.download_url as string) || '',
+        has_credentials: (a.has_credentials as boolean) || false,
       }));
       setArchives(items);
       setTotalFiles(data.total || 0);
@@ -440,9 +450,10 @@ export default function Files() {
 
   // Fetch file content on demand from S3
   async function loadFileContent(file: SearchResult) {
+    // For search results with preview content, show it immediately
     if (file.preview && file.source === 'extracted_files') {
-      // Use preview from API (already has content snippet)
       setFileContent(prev => ({ ...prev, [file.id]: file.preview }));
+      return;
     }
     if (!file.s3_key) return;
     setContentLoading(file.id);
@@ -574,12 +585,19 @@ export default function Files() {
                       <FileCategoryIcon category={cat} size={12} />
                       {a.file_name}
                     </div>
-                    <div style={{ fontSize: 11, color: colors.textMuted, display: 'flex', gap: 8 }}>
+                    <div style={{ fontSize: 11, color: colors.textMuted, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <span>{formatSize(a.file_size)}</span>
                       {a.file_count > 0 && <span>{a.file_count} file{a.file_count !== 1 ? 's' : ''}</span>}
-                      <span>{a.source_name}</span>
-                      <span>{new Date(a.collected_at).toLocaleDateString()}</span>
+                      {a.channel_ref && <span title="Channel">{a.channel_ref}</span>}
+                      {!a.channel_ref && a.source_name && <span>{a.source_name}</span>}
+                      {a.has_credentials && <span style={{ color: '#f59e0b', fontWeight: 600 }}>creds</span>}
+                      <span>{a.collected_at ? new Date(a.collected_at).toLocaleDateString() : ''}</span>
                     </div>
+                    {a.content_snippet && (
+                      <div style={{ fontSize: 10, color: colors.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2, opacity: 0.7 }}>
+                        {a.content_snippet}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -656,9 +674,23 @@ export default function Files() {
               })()
             ) : (
               <div>
-                <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 8 }}>
-                  {archiveFiles.length} file{archiveFiles.length !== 1 ? 's' : ''}
-                </div>
+                {(() => {
+                  const arch = archives.find(a => a.mention_id === selectedArchive);
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <span style={{ fontSize: 13, color: colors.textDim }}>
+                        {archiveFiles.length} file{archiveFiles.length !== 1 ? 's' : ''}
+                      </span>
+                      {arch?.channel_ref && <span style={{ fontSize: 11, color: colors.textMuted }}>from {arch.channel_ref}</span>}
+                      {arch && (
+                        <a href={authMentionFileUrl(arch.mention_id)} download={arch.file_name}
+                          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', fontSize: 11, fontWeight: 600, background: colors.accent, color: '#fff', borderRadius: 4, textDecoration: 'none' }}>
+                          <Download size={11} /> Download Archive
+                        </a>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {archiveFiles.map(file => {
                     const fid = file.s3_key || file.filename;
@@ -782,14 +814,24 @@ export default function Files() {
               <div style={{
                 padding: '10px 16px', borderBottom: `1px solid ${colors.border}`,
                 display: 'flex', alignItems: 'center', gap: 8,
-                fontSize: 12, color: colors.textDim,
+                fontSize: 12, color: colors.textDim, flexWrap: 'wrap',
               }}>
                 <Archive size={13} />
                 <span style={{ fontFamily: font.mono, color: colors.text, fontWeight: 600 }}>
                   {group.archive}
                 </span>
                 <span>— {group.files.length} match{group.files.length !== 1 ? 'es' : ''}</span>
+                {group.files[0]?.channel_ref && <span style={{ fontSize: 11, color: colors.textMuted }}>from {group.files[0].channel_ref}</span>}
+                <a href={authMentionFileUrl(mentionId)} download={group.archive}
+                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: colors.accent, textDecoration: 'none' }}>
+                  <Download size={11} /> Archive
+                </a>
               </div>
+              {group.files[0]?.content_snippet && (
+                <div style={{ padding: '4px 16px', fontSize: 11, color: colors.textMuted, borderBottom: `1px solid ${colors.border}`, fontStyle: 'italic' }}>
+                  {group.files[0].content_snippet}
+                </div>
+              )}
 
               {/* Files in this archive */}
               <div style={{ padding: '4px 8px' }}>

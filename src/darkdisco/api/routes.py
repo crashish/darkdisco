@@ -1848,7 +1848,13 @@ async def mention_archive_contents(
             )
             ocr_map = {r.sha256: r for r in ocr_result.scalars().all()}
         files = []
+        # Deduplicate by (filename, sha256) to prevent duplicate sub-files
+        seen_files: set[tuple[str, str | None]] = set()
         for ef in extracted_rows:
+            dedup_key = (ef.filename, ef.sha256)
+            if dedup_key in seen_files:
+                continue
+            seen_files.add(dedup_key)
             ocr = ocr_map.get(ef.sha256) if ef.sha256 else None
             entry: dict = {
                 "filename": ef.filename,
@@ -1942,6 +1948,10 @@ async def list_archives(
             mention_id = row[0]
             mention = mention_map.get(mention_id)
             meta = (mention.metadata_ or {}) if mention else {}
+            content_snippet = ""
+            if mention and mention.content:
+                # First 120 chars of message content for context
+                content_snippet = mention.content[:120].replace("\n", " ").strip()
             archives.append({
                 "mention_id": mention_id,
                 "file_name": meta.get("file_name", "unknown"),
@@ -1951,6 +1961,9 @@ async def list_archives(
                 "collected_at": row[3].isoformat() if row[3] else None,
                 "has_credentials": meta.get("has_credentials", False),
                 "file_analysis": meta.get("file_analysis"),
+                "channel_ref": meta.get("channel_ref", ""),
+                "content_snippet": content_snippet,
+                "download_url": f"/api/mentions/{mention_id}/file" if meta.get("s3_key") else "",
             })
 
     return {"items": archives, "total": total, "page": page, "page_size": page_size}
@@ -2021,7 +2034,11 @@ async def search_extracted_files(
     content_match = ExtractedFile.content_tsvector.match(q)
     name_match = ExtractedFile.filename.ilike(f"%{q}%")
     stmt = (
-        select(ExtractedFile, RawMention.metadata_.label("mention_meta"))
+        select(
+            ExtractedFile,
+            RawMention.metadata_.label("mention_meta"),
+            RawMention.content.label("mention_content"),
+        )
         .join(RawMention, RawMention.id == ExtractedFile.mention_id)
         .where(or_(content_match, name_match))
         .order_by(ExtractedFile.created_at.desc())
@@ -2050,6 +2067,9 @@ async def search_extracted_files(
     for row in rows:
         ef = row[0]
         mention_meta = row[1] or {}
+        mention_content = row[2] or ""
+        # Extract context snippet from mention content (first 120 chars)
+        content_snippet = mention_content[:120].replace("\n", " ").strip() if mention_content else ""
         entry = {
             "id": ef.id,
             "mention_id": ef.mention_id,
@@ -2061,6 +2081,8 @@ async def search_extracted_files(
             "s3_key": ef.s3_key,
             "archive_name": mention_meta.get("file_name", ""),
             "source": "extracted_files",
+            "channel_ref": mention_meta.get("channel_ref", ""),
+            "content_snippet": content_snippet,
         }
         ocr = search_ocr_map.get(ef.sha256) if ef.sha256 else None
         if ocr:

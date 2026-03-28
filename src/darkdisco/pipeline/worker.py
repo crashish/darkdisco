@@ -1270,18 +1270,20 @@ def download_pending_files(batch_size: int = 50):
         _SKIP_MIMES = ("video/", "image/webp", "audio/")
         # Prioritize documents/archives/text over images — images are high-volume
         # and lower-value; documents often contain credentials and stealer logs.
-        from sqlalchemy import case
+        from sqlalchemy import case, or_
         mime_priority = case(
             (RawMentionModel.metadata_["file_mime"].astext.startswith("image/"), 1),
             else_=0,
         )
+        # Use or_ with NULL checks so mentions without file_mime still get downloaded
+        file_mime = RawMentionModel.metadata_["file_mime"].astext
         stmt = (
             select(RawMentionModel)
             .where(
                 RawMentionModel.metadata_["download_status"].astext == "pending",
-                ~RawMentionModel.metadata_["file_mime"].astext.startswith("video/"),
-                RawMentionModel.metadata_["file_mime"].astext != "image/webp",
-                ~RawMentionModel.metadata_["file_mime"].astext.startswith("audio/"),
+                or_(file_mime.is_(None), ~file_mime.startswith("video/")),
+                or_(file_mime.is_(None), file_mime != "image/webp"),
+                or_(file_mime.is_(None), ~file_mime.startswith("audio/")),
             )
             .order_by(mime_priority, RawMentionModel.collected_at.desc())
             .limit(batch_size)
@@ -1396,10 +1398,39 @@ def download_pending_files(batch_size: int = 50):
                                             # Append extracted text to mention content
                                             if analysis.text_content:
                                                 mention.content = (mention.content or "") + "\n\n" + analysis.text_content
-                                            # Upload extracted files to S3
+                                            # Upload extracted files to S3 and create ExtractedFile rows
+                                            from darkdisco.common.models import ExtractedFile as EFModel
+                                            per_file_texts = []
                                             for ef in extracted:
                                                 ef_key = f"files/{sha256[:8]}/extracted/{ef.sha256[:8]}/{ef.filename}"
                                                 s3.upload_fileobj(BytesIO(ef.content), settings.s3_bucket, ef_key)
+                                                # Create ExtractedFile row
+                                                text_content = None
+                                                if ef.is_text and ef.content:
+                                                    try:
+                                                        text_content = ef.content.decode("utf-8", errors="replace") if isinstance(ef.content, bytes) else ef.content
+                                                    except Exception:
+                                                        pass
+                                                ext = ""
+                                                if "." in ef.filename:
+                                                    ext = ef.filename.rsplit(".", 1)[-1].lower()
+                                                session.add(EFModel(
+                                                    mention_id=mention.id,
+                                                    filename=ef.filename,
+                                                    s3_key=ef_key,
+                                                    sha256=ef.sha256,
+                                                    size=ef.size,
+                                                    extension=ext or None,
+                                                    is_text=ef.is_text,
+                                                    text_content=text_content,
+                                                ))
+                                                if text_content and text_content.strip():
+                                                    per_file_texts.append({"filename": ef.filename, "content": text_content})
+                                            if per_file_texts:
+                                                meta["extracted_file_contents"] = per_file_texts
+                                            if analysis.credential_indicators:
+                                                meta["has_credentials"] = True
+                                                meta["credential_count"] = len(analysis.credential_indicators)
 
                                     mention.metadata_ = meta
                                     session.commit()
