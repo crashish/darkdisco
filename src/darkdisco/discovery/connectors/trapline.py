@@ -1,7 +1,7 @@
 """Trapline SaaS connector — sync institution watchlists and ingest phishing findings.
 
 Darkdisco acts as a trapline client:
-- Outbound: pushes institution domains, names, and BINs to trapline's watchlist API
+- Outbound: pushes institution domains and brands to trapline's watchlist API
 - Inbound: receives phishing findings via webhook (handled in routes, not here)
 
 The poll() method syncs the watchlist; it does not return RawMentions since
@@ -66,7 +66,7 @@ class TraplineConnector(BaseConnector):
             return {"healthy": False, "message": str(exc)}
 
     async def _sync_watchlist(self) -> None:
-        """Push all active institution domains, names, and BINs to trapline."""
+        """Push all active institution domains and brands to trapline."""
         from sqlalchemy import select
 
         from darkdisco.common.database import async_session
@@ -82,11 +82,9 @@ class TraplineConnector(BaseConnector):
             logger.info("No active institutions to sync to trapline")
             return
 
-        # Build watchlist payloads in trapline's expected format:
+        # Build watchlist payload in trapline's expected format:
         #   domains: {"entries": [{"type": "domain", "value": "..."}, {"type": "brand", "value": "..."}]}
-        #   bins:    {"bins": [{"bin_prefix": "...", "issuer": "..."}]}
         domain_entries = []
-        bin_entries = []
 
         for inst in institutions:
             # Add institution name as a brand entry
@@ -100,38 +98,25 @@ class TraplineConnector(BaseConnector):
                 for d in inst.additional_domains:
                     domain_entries.append({"type": "domain", "value": d})
 
-            # Collect BIN ranges
-            if inst.bin_ranges:
-                for bin_prefix in inst.bin_ranges:
-                    bin_entries.append({
-                        "bin_prefix": str(bin_prefix),
-                        "issuer": inst.name,
-                    })
-
         assert self._client is not None
 
         # Sync domains + brands
         if domain_entries:
-            resp = await self._client.post(
-                "/api/v1/watchlist/domains",
-                json={"entries": domain_entries},
-            )
-            resp.raise_for_status()
-            logger.info(
-                "Synced %d watchlist entries (%d domains, %d brands) to trapline",
-                len(domain_entries),
-                sum(1 for e in domain_entries if e["type"] == "domain"),
-                sum(1 for e in domain_entries if e["type"] == "brand"),
-            )
+            try:
+                resp = await self._client.post(
+                    "/api/v1/watchlist/domains",
+                    json={"entries": domain_entries},
+                )
+                resp.raise_for_status()
+                logger.info(
+                    "Synced %d watchlist entries (%d domains, %d brands) to trapline",
+                    len(domain_entries),
+                    sum(1 for e in domain_entries if e["type"] == "domain"),
+                    sum(1 for e in domain_entries if e["type"] == "brand"),
+                )
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "Trapline domain sync failed: %s", exc,
+                )
 
-        # Sync BINs
-        if bin_entries:
-            resp = await self._client.post(
-                "/api/v1/watchlist/bins",
-                json={"bins": bin_entries},
-            )
-            resp.raise_for_status()
-            logger.info(
-                "Synced %d BIN entries to trapline",
-                len(bin_entries),
-            )
+        # BIN ranges not synced — trapline scans domains/web content, not card data
