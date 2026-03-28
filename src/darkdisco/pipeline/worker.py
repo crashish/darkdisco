@@ -637,7 +637,8 @@ def _store_extracted_files(session: Session, mention_id: str, metadata: dict) ->
     return count
 
 
-@app.task(name="darkdisco.pipeline.worker.run_matching")
+@app.task(name="darkdisco.pipeline.worker.run_matching",
+          soft_time_limit=1800, time_limit=2400)
 def run_matching(source_id: str, raw_mentions: list[dict]):
     """Match raw mentions against all active watch terms, enrich, filter, create findings."""
     from darkdisco.common.models import Finding, Source, WatchTerm
@@ -745,6 +746,8 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
         findings_created = 0
         findings_suppressed = 0
         mentions_matched = 0
+
+        COMMIT_BATCH_SIZE = 50  # commit every N findings to survive timeouts
 
         for mention, content_hash, db_mention in mention_rows:
           try:
@@ -869,24 +872,27 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 if db_mention is not None:
                     db_mention.promoted_to_finding_id = finding.id
 
+                # Periodic commit so findings survive timeouts
+                if findings_created % COMMIT_BATCH_SIZE == 0:
+                    session.commit()
+                    logger.info("Committed batch: %d findings so far", findings_created)
+
           except Exception:
             logger.exception(
                 "Phase 2 failed for mention: source=%s hash=%s — "
-                "rolling back to savepoint, continuing with next mention",
+                "skipping mention, continuing with next",
                 mention.source_name, content_hash[:12],
             )
-            # Rollback to release any partial state from the failed mention
-            # without losing findings already created for previous mentions.
-            # After rollback, previous unflushed findings are lost too, so
-            # we commit successful work before each risky mention instead.
-            # For now, expunge any new objects added during this iteration
-            # and continue.
-            session.rollback()
-            # After rollback, previously-added findings are lost. Re-fetch
-            # watch_terms since the session was reset.
-            watch_terms = session.execute(
-                select(WatchTerm).where(WatchTerm.enabled.is_(True))
-            ).scalars().all()
+            # Commit what we have so far, then continue. This preserves
+            # all findings created before the failure.
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                # Re-fetch watch_terms since session was reset
+                watch_terms = session.execute(
+                    select(WatchTerm).where(WatchTerm.enabled.is_(True))
+                ).scalars().all()
 
         session.commit()
 
