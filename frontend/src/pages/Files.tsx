@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { colors, card, font } from '../theme';
-import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code, ScanLine, ChevronLeft, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code, ScanLine, ChevronLeft, ChevronsLeft, ChevronsRight, Filter, X, ArrowUpDown } from 'lucide-react';
+import MultiSelect from '../components/MultiSelect';
 
 const BASE = '/api';
 
@@ -299,6 +300,17 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+function parseSizeInput(input: string): number | null {
+  const trimmed = input.trim().toLowerCase();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|)?$/);
+  if (!match) return null;
+  const val = parseFloat(match[1]);
+  const unit = match[2] || 'b';
+  const multipliers: Record<string, number> = { b: 1, kb: 1024, mb: 1024 * 1024, gb: 1024 * 1024 * 1024 };
+  return val * (multipliers[unit] || 1);
+}
+
 function highlightText(text: string | null | undefined, needle: string) {
   if (!text) return text ?? '';
   if (!needle) return text;
@@ -371,7 +383,108 @@ export default function Files() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(50);
   const [totalFiles, setTotalFiles] = useState(0);
-  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'name-asc' | 'name-desc' | 'size-asc' | 'size-desc'>('newest');
+
+  // Filter state
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set());
+  const [filterSources, setFilterSources] = useState<Set<string>>(new Set());
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterSizeMin, setFilterSizeMin] = useState('');
+  const [filterSizeMax, setFilterSizeMax] = useState('');
+  const [filterCredentials, setFilterCredentials] = useState<'all' | 'yes' | 'no'>('all');
+  const [filterExtracted, setFilterExtracted] = useState<'all' | 'yes' | 'no'>('all');
+
+  const hasActiveFilters = filterTypes.size > 0 || filterSources.size > 0 ||
+    filterDateFrom || filterDateTo || filterSizeMin || filterSizeMax ||
+    filterCredentials !== 'all' || filterExtracted !== 'all';
+
+  const clearAllFilters = () => {
+    setFilterTypes(new Set());
+    setFilterSources(new Set());
+    setFilterDateFrom('');
+    setFilterDateTo('');
+    setFilterSizeMin('');
+    setFilterSizeMax('');
+    setFilterCredentials('all');
+    setFilterExtracted('all');
+  };
+
+  // Derive available filter options from loaded archives
+  const typeOptions = useMemo(() => {
+    const types = new Set<string>();
+    archives.forEach(a => {
+      const cat = getFileCategory(a.file_name, false, a.file_mime || undefined);
+      types.add(cat);
+    });
+    return Array.from(types).sort().map(t => ({ value: t, label: t.charAt(0).toUpperCase() + t.slice(1) }));
+  }, [archives]);
+
+  const sourceOptions = useMemo(() => {
+    const sources = new Set<string>();
+    archives.forEach(a => {
+      const src = a.channel_ref || a.source_name;
+      if (src) sources.add(src);
+    });
+    return Array.from(sources).sort().map(s => ({ value: s, label: s }));
+  }, [archives]);
+
+  // Apply client-side filters and sorting to archives
+  const filteredArchives = useMemo(() => {
+    let filtered = archives.filter(a => {
+      // Type filter
+      if (filterTypes.size > 0) {
+        const cat = getFileCategory(a.file_name, false, a.file_mime || undefined);
+        if (!filterTypes.has(cat)) return false;
+      }
+      // Source filter
+      if (filterSources.size > 0) {
+        const src = a.channel_ref || a.source_name;
+        if (!src || !filterSources.has(src)) return false;
+      }
+      // Date range filter
+      if (filterDateFrom) {
+        const d = a.collected_at ? new Date(a.collected_at) : null;
+        if (!d || d < new Date(filterDateFrom)) return false;
+      }
+      if (filterDateTo) {
+        const d = a.collected_at ? new Date(a.collected_at) : null;
+        const toEnd = new Date(filterDateTo);
+        toEnd.setHours(23, 59, 59, 999);
+        if (!d || d > toEnd) return false;
+      }
+      // Size filter (in bytes)
+      if (filterSizeMin) {
+        const min = parseSizeInput(filterSizeMin);
+        if (min !== null && a.file_size < min) return false;
+      }
+      if (filterSizeMax) {
+        const max = parseSizeInput(filterSizeMax);
+        if (max !== null && a.file_size > max) return false;
+      }
+      // Credentials filter
+      if (filterCredentials === 'yes' && !a.has_credentials) return false;
+      if (filterCredentials === 'no' && a.has_credentials) return false;
+      // Extracted filter
+      if (filterExtracted === 'yes' && !a.extracted) return false;
+      if (filterExtracted === 'no' && a.extracted) return false;
+      return true;
+    });
+
+    // Client-side sorting for non-date sorts (date sorts use server-side)
+    if (sortOrder === 'name-asc') {
+      filtered = [...filtered].sort((a, b) => a.file_name.localeCompare(b.file_name));
+    } else if (sortOrder === 'name-desc') {
+      filtered = [...filtered].sort((a, b) => b.file_name.localeCompare(a.file_name));
+    } else if (sortOrder === 'size-asc') {
+      filtered = [...filtered].sort((a, b) => a.file_size - b.file_size);
+    } else if (sortOrder === 'size-desc') {
+      filtered = [...filtered].sort((a, b) => b.file_size - a.file_size);
+    }
+
+    return filtered;
+  }, [archives, filterTypes, filterSources, filterDateFrom, filterDateTo, filterSizeMin, filterSizeMax, filterCredentials, filterExtracted, sortOrder]);
 
   const totalPages = Math.max(1, Math.ceil(totalFiles / pageSize));
 
@@ -405,11 +518,14 @@ export default function Files() {
     setArchivesLoading(false);
   }, [pageSize]);
 
+  // Map sortOrder to server-side sort param (only date sorts are server-side)
+  const serverSort = sortOrder === 'oldest' ? 'oldest' : 'newest';
+
   // Load extracted files list on mount and when page/sort changes
   useEffect(() => {
     setSelectedArchive(null);
-    loadArchives(currentPage, sortOrder);
-  }, [currentPage, sortOrder, loadArchives]);
+    loadArchives(currentPage, serverSort);
+  }, [currentPage, serverSort, loadArchives]);
 
   // Load files for selected archive
   useEffect(() => {
@@ -542,6 +658,222 @@ export default function Files() {
         )}
       </form>
 
+      {/* Filter bar - only shown in archive browser mode (not search results) */}
+      {!activeQuery && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setShowFilters(f => !f)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '7px 12px', fontSize: 13, fontWeight: 500,
+                background: hasActiveFilters ? 'rgba(99, 102, 241, 0.15)' : colors.bgSurface,
+                border: `1px solid ${hasActiveFilters ? colors.accent : colors.border}`,
+                borderRadius: 6, color: hasActiveFilters ? colors.accent : colors.text,
+                cursor: 'pointer',
+              }}
+            >
+              <Filter size={13} />
+              Filters
+              {hasActiveFilters && (
+                <span style={{
+                  background: colors.accent, color: '#fff', fontSize: 10, fontWeight: 700,
+                  borderRadius: 9999, minWidth: 18, height: 18, display: 'inline-flex',
+                  alignItems: 'center', justifyContent: 'center', padding: '0 5px',
+                }}>
+                  {(filterTypes.size > 0 ? 1 : 0) + (filterSources.size > 0 ? 1 : 0) +
+                   (filterDateFrom || filterDateTo ? 1 : 0) + (filterSizeMin || filterSizeMax ? 1 : 0) +
+                   (filterCredentials !== 'all' ? 1 : 0) + (filterExtracted !== 'all' ? 1 : 0)}
+                </span>
+              )}
+            </button>
+
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <ArrowUpDown size={13} color={colors.textMuted} />
+              <select
+                value={sortOrder}
+                onChange={e => { setSortOrder(e.target.value as typeof sortOrder); setCurrentPage(1); }}
+                style={{
+                  fontSize: 13, padding: '7px 10px', background: colors.bgSurface,
+                  border: `1px solid ${colors.border}`, borderRadius: 6,
+                  color: colors.text, cursor: 'pointer',
+                }}
+              >
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="name-asc">Name A-Z</option>
+                <option value="name-desc">Name Z-A</option>
+                <option value="size-desc">Largest first</option>
+                <option value="size-asc">Smallest first</option>
+              </select>
+            </div>
+
+            {hasActiveFilters && (
+              <>
+                <span style={{ fontSize: 12, color: colors.textDim }}>
+                  {filteredArchives.length} of {archives.length} shown
+                </span>
+                <button
+                  onClick={clearAllFilters}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    padding: '5px 10px', fontSize: 12,
+                    background: 'none', border: `1px solid ${colors.border}`,
+                    borderRadius: 6, color: colors.textDim, cursor: 'pointer',
+                  }}
+                >
+                  <X size={12} /> Clear filters
+                </button>
+              </>
+            )}
+          </div>
+
+          {showFilters && (
+            <div style={{
+              ...card, marginTop: 8, padding: 16,
+              display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end',
+            }}>
+              <MultiSelect
+                label="File Type"
+                options={typeOptions}
+                selected={filterTypes}
+                onChange={setFilterTypes}
+              />
+              <MultiSelect
+                label="Source"
+                options={sourceOptions}
+                selected={filterSources}
+                onChange={setFilterSources}
+              />
+
+              {/* Date range */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: colors.textMuted, fontWeight: 500 }}>Date from</label>
+                <input
+                  type="date"
+                  value={filterDateFrom}
+                  onChange={e => setFilterDateFrom(e.target.value)}
+                  style={{
+                    padding: '6px 8px', fontSize: 12, background: colors.bgSurface,
+                    border: `1px solid ${filterDateFrom ? colors.accent : colors.border}`,
+                    borderRadius: 6, color: colors.text,
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: colors.textMuted, fontWeight: 500 }}>Date to</label>
+                <input
+                  type="date"
+                  value={filterDateTo}
+                  onChange={e => setFilterDateTo(e.target.value)}
+                  style={{
+                    padding: '6px 8px', fontSize: 12, background: colors.bgSurface,
+                    border: `1px solid ${filterDateTo ? colors.accent : colors.border}`,
+                    borderRadius: 6, color: colors.text,
+                  }}
+                />
+              </div>
+
+              {/* Date shorthand buttons */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: colors.textMuted, fontWeight: 500 }}>Quick</label>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {[
+                    { label: '24h', days: 1 },
+                    { label: '7d', days: 7 },
+                    { label: '30d', days: 30 },
+                    { label: '90d', days: 90 },
+                  ].map(({ label, days }) => (
+                    <button
+                      key={label}
+                      onClick={() => {
+                        const d = new Date();
+                        d.setDate(d.getDate() - days);
+                        setFilterDateFrom(d.toISOString().split('T')[0]);
+                        setFilterDateTo('');
+                      }}
+                      style={{
+                        padding: '4px 8px', fontSize: 11,
+                        background: 'none', border: `1px solid ${colors.border}`,
+                        borderRadius: 4, color: colors.accent, cursor: 'pointer',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Size range */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: colors.textMuted, fontWeight: 500 }}>Min size</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 1MB"
+                  value={filterSizeMin}
+                  onChange={e => setFilterSizeMin(e.target.value)}
+                  style={{
+                    padding: '6px 8px', fontSize: 12, width: 80, background: colors.bgSurface,
+                    border: `1px solid ${filterSizeMin ? colors.accent : colors.border}`,
+                    borderRadius: 6, color: colors.text,
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: colors.textMuted, fontWeight: 500 }}>Max size</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 100MB"
+                  value={filterSizeMax}
+                  onChange={e => setFilterSizeMax(e.target.value)}
+                  style={{
+                    padding: '6px 8px', fontSize: 12, width: 80, background: colors.bgSurface,
+                    border: `1px solid ${filterSizeMax ? colors.accent : colors.border}`,
+                    borderRadius: 6, color: colors.text,
+                  }}
+                />
+              </div>
+
+              {/* Credentials filter */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: colors.textMuted, fontWeight: 500 }}>Credentials</label>
+                <select
+                  value={filterCredentials}
+                  onChange={e => setFilterCredentials(e.target.value as 'all' | 'yes' | 'no')}
+                  style={{
+                    padding: '6px 8px', fontSize: 12, background: colors.bgSurface,
+                    border: `1px solid ${filterCredentials !== 'all' ? colors.accent : colors.border}`,
+                    borderRadius: 6, color: colors.text, cursor: 'pointer',
+                  }}
+                >
+                  <option value="all">All</option>
+                  <option value="yes">With creds</option>
+                  <option value="no">Without creds</option>
+                </select>
+              </div>
+
+              {/* Extracted filter */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: colors.textMuted, fontWeight: 500 }}>Extracted</label>
+                <select
+                  value={filterExtracted}
+                  onChange={e => setFilterExtracted(e.target.value as 'all' | 'yes' | 'no')}
+                  style={{
+                    padding: '6px 8px', fontSize: 12, background: colors.bgSurface,
+                    border: `1px solid ${filterExtracted !== 'all' ? colors.accent : colors.border}`,
+                    borderRadius: 6, color: colors.text, cursor: 'pointer',
+                  }}
+                >
+                  <option value="all">All</option>
+                  <option value="yes">Extracted</option>
+                  <option value="no">Not extracted</option>
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Results */}
       {loading ? (
         <div style={{ ...card, padding: 40, textAlign: 'center', color: colors.textMuted }}>
@@ -557,25 +889,16 @@ export default function Files() {
               <div style={{ padding: '10px 14px', borderBottom: `1px solid ${colors.border}`, fontSize: 12, fontWeight: 600, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span>
                   <Archive size={12} style={{ marginRight: 6, verticalAlign: -1 }} />
-                  Archives ({totalFiles.toLocaleString()})
+                  Archives ({hasActiveFilters ? `${filteredArchives.length} / ` : ''}{totalFiles.toLocaleString()})
                 </span>
-                <select
-                  value={sortOrder}
-                  onChange={e => { setSortOrder(e.target.value as 'newest' | 'oldest'); setCurrentPage(1); }}
-                  style={{
-                    fontSize: 10, padding: '2px 4px', background: colors.bgSurface,
-                    border: `1px solid ${colors.border}`, borderRadius: 3,
-                    color: colors.textDim, cursor: 'pointer', textTransform: 'none',
-                    fontWeight: 400, letterSpacing: 'normal',
-                  }}
-                >
-                  <option value="newest">Newest first</option>
-                  <option value="oldest">Oldest first</option>
-                </select>
               </div>
               {archivesLoading ? (
                 <div style={{ padding: 20, textAlign: 'center', color: colors.textMuted }}>Loading...</div>
-              ) : archives.map(a => {
+              ) : filteredArchives.length === 0 && hasActiveFilters ? (
+                <div style={{ padding: 20, textAlign: 'center', color: colors.textMuted, fontSize: 12 }}>
+                  No archives match current filters
+                </div>
+              ) : filteredArchives.map(a => {
                 const cat = getFileCategory(a.file_name);
                 return (
                   <div
