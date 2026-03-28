@@ -599,6 +599,71 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
             logger.error("Source %s not found for matching", source_id)
             return {"error": "source_not_found"}
 
+        # ------------------------------------------------------------------
+        # Phase 1: Persist ALL raw mentions unconditionally.
+        # This must happen before watch-term checks or finding-dedup so that
+        # polled data is never silently lost.
+        # ------------------------------------------------------------------
+        mention_rows: list[tuple[RawMention, str, RawMentionModel | None]] = []
+        mentions_persisted = 0
+
+        for raw in raw_mentions:
+            mention = RawMention(
+                source_name=raw["source_name"],
+                source_url=raw.get("source_url"),
+                title=raw.get("title", ""),
+                content=raw.get("content", ""),
+                author=raw.get("author"),
+                discovered_at=datetime.fromisoformat(raw["discovered_at"]) if raw.get("discovered_at") else datetime.now(timezone.utc),
+                metadata=raw.get("metadata", {}),
+            )
+
+            content_hash = hashlib.sha256(
+                f"{mention.source_name}:{mention.content}".encode()
+            ).hexdigest()
+
+            # Dedup raw_mentions by content_hash (avoid re-inserting on re-poll)
+            existing_mention = session.execute(
+                select(RawMentionModel.id).where(
+                    RawMentionModel.content_hash == content_hash
+                ).limit(1)
+            ).scalar_one_or_none()
+
+            if existing_mention:
+                mention_rows.append((mention, content_hash, None))
+                continue
+
+            db_mention = RawMentionModel(
+                source_id=source_id,
+                content=mention.content or "",
+                content_hash=content_hash,
+                source_url=mention.source_url,
+                metadata_=mention.metadata,
+                collected_at=mention.discovered_at,
+            )
+            session.add(db_mention)
+            session.flush()  # assign ID before creating ExtractedFile rows
+
+            # Create ExtractedFile rows from metadata
+            ef_count = _store_extracted_files(session, db_mention.id, mention.metadata)
+            if ef_count:
+                logger.debug("Created %d extracted_files for mention %s", ef_count, db_mention.id)
+
+            mentions_persisted += 1
+            mention_rows.append((mention, content_hash, db_mention))
+
+        # Commit raw mentions so they survive even if matching fails below
+        session.commit()
+        logger.info(
+            "Persisted %d/%d raw mentions for source %s",
+            mentions_persisted, len(raw_mentions),
+            source.name if source else source_id,
+        )
+
+        # ------------------------------------------------------------------
+        # Phase 2: Match against watch terms and create findings.
+        # ------------------------------------------------------------------
+
         # Load all active watch terms
         watch_terms = session.execute(
             select(WatchTerm).where(WatchTerm.enabled.is_(True))
@@ -607,7 +672,10 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
         if not watch_terms:
             logger.warning("No active watch terms configured — matching skipped. "
                            "Add watch terms via the API to start producing findings.")
-            return {"findings_created": 0}
+            return {
+                "findings_created": 0,
+                "mentions_persisted": mentions_persisted,
+            }
 
         # Log watch term coverage for debugging
         term_types = {}
@@ -624,47 +692,15 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
         findings_suppressed = 0
         mentions_matched = 0
 
-        for raw in raw_mentions:
-            mention = RawMention(
-                source_name=raw["source_name"],
-                source_url=raw.get("source_url"),
-                title=raw.get("title", ""),
-                content=raw.get("content", ""),
-                author=raw.get("author"),
-                discovered_at=datetime.fromisoformat(raw["discovered_at"]) if raw.get("discovered_at") else datetime.now(timezone.utc),
-                metadata=raw.get("metadata", {}),
-            )
-
-            # Content hash for exact dedup
-            content_hash = hashlib.sha256(
-                f"{mention.source_name}:{mention.content}".encode()
-            ).hexdigest()
-
-            # Check for exact duplicate (use first() — multiple findings can share a hash)
-            existing = session.execute(
+        for mention, content_hash, db_mention in mention_rows:
+            # Check for exact duplicate finding
+            existing_finding = session.execute(
                 select(Finding.id).where(Finding.content_hash == content_hash).limit(1)
             ).scalar_one_or_none()
 
-            if existing:
+            if existing_finding:
                 logger.debug("Duplicate finding (hash=%s), skipping", content_hash[:12])
                 continue
-
-            # Persist as a raw_mentions row for browsing and ExtractedFile linkage
-            db_mention = RawMentionModel(
-                source_id=source_id,
-                content=mention.content or "",
-                content_hash=content_hash,
-                source_url=mention.source_url,
-                metadata_=mention.metadata,
-                collected_at=mention.discovered_at,
-            )
-            session.add(db_mention)
-            session.flush()  # assign ID before creating ExtractedFile rows
-
-            # Create ExtractedFile rows from metadata
-            ef_count = _store_extracted_files(session, db_mention.id, mention.metadata)
-            if ef_count:
-                logger.debug("Created %d extracted_files for mention %s", ef_count, db_mention.id)
 
             # Match against watch terms
             match_results = match_mention(mention, watch_terms)
@@ -767,7 +803,8 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 findings_created += 1
 
                 # Link the raw mention to this finding
-                db_mention.promoted_to_finding_id = finding.id
+                if db_mention is not None:
+                    db_mention.promoted_to_finding_id = finding.id
 
         session.commit()
 
@@ -788,6 +825,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
             "findings_created": findings_created,
             "findings_suppressed": findings_suppressed,
             "mentions_processed": len(raw_mentions),
+            "mentions_persisted": mentions_persisted,
         }
     finally:
         session.close()
