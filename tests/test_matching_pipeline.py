@@ -15,6 +15,7 @@ from darkdisco.common.models import WatchTerm, WatchTermType
 from darkdisco.discovery.connectors.base import RawMention
 from darkdisco.discovery.matcher import (
     MatchingFilters,
+    WatchTermIndex,
     _find_all_spans,
     _find_all_substring,
     _severity_hint,
@@ -411,3 +412,86 @@ class TestAllTermTypes:
         with patch("darkdisco.discovery.matcher._get_filters", return_value=FILTERS_WITH_INDICATORS):
             results = match_mention(mention, terms)
         assert len(results) == 1
+
+
+# ---------------------------------------------------------------------------
+# WatchTermIndex (pre-compiled batch matching)
+# ---------------------------------------------------------------------------
+
+class TestWatchTermIndex:
+    """WatchTermIndex should produce identical results to match_mention."""
+
+    def test_index_matches_same_as_match_mention(self):
+        """Index-based matching must agree with the original function."""
+        terms = [
+            _make_watch_term(institution_id="inst-1", term_type=WatchTermType.domain, value="bankone.com"),
+            _make_watch_term(institution_id="inst-2", term_type=WatchTermType.bin_range, value="412345"),
+            _make_watch_term(institution_id="inst-3", term_type=WatchTermType.keyword, value="fnb"),
+        ]
+        mention = _make_mention("bankone.com phishing kit and card 41234567890123 plus fnb fullz")
+
+        with patch("darkdisco.discovery.matcher._get_filters", return_value=FILTERS_WITH_INDICATORS):
+            original = match_mention(mention, terms)
+            index = WatchTermIndex(terms)
+            indexed = index.match(mention)
+
+        original_insts = {r.institution_id for r in original}
+        indexed_insts = {r.institution_id for r in indexed}
+        assert original_insts == indexed_insts
+
+    def test_index_empty_terms(self):
+        index = WatchTermIndex([])
+        mention = _make_mention("anything here")
+        assert index.match(mention) == []
+        assert index.term_count == 0
+
+    def test_index_disabled_terms_excluded(self):
+        terms = [
+            _make_watch_term(term_type=WatchTermType.domain, value="bank.com", enabled=False),
+        ]
+        index = WatchTermIndex(terms)
+        assert index.term_count == 0
+
+    def test_index_all_term_types(self):
+        """Verify the index handles every WatchTermType."""
+        terms = [
+            _make_watch_term(institution_id="i1", term_type=WatchTermType.domain, value="example.com"),
+            _make_watch_term(institution_id="i2", term_type=WatchTermType.bin_range, value="412345"),
+            _make_watch_term(institution_id="i3", term_type=WatchTermType.regex, value=r"fnb[\-_]leak"),
+            _make_watch_term(institution_id="i4", term_type=WatchTermType.institution_name, value="Acme Bank"),
+            _make_watch_term(institution_id="i5", term_type=WatchTermType.keyword, value="acmebank"),
+            _make_watch_term(institution_id="i6", term_type=WatchTermType.executive_name, value="john smith"),
+            _make_watch_term(institution_id="i7", term_type=WatchTermType.routing_number, value="021000021"),
+        ]
+        index = WatchTermIndex(terms)
+        assert index.term_count == 7
+        assert index.institution_count == 7
+
+        mention = _make_mention(
+            "visit example.com, card 41234567890123, fnb_leak archive, "
+            "Acme Bank acmebank john smith 021000021 credential dump"
+        )
+        with patch("darkdisco.discovery.matcher._get_filters", return_value=FILTERS_WITH_INDICATORS):
+            results = index.match(mention)
+
+        matched_insts = {r.institution_id for r in results}
+        # All institutions should match
+        assert matched_insts == {"i1", "i2", "i3", "i4", "i5", "i6", "i7"}
+
+    def test_index_noise_filtering_applied(self):
+        """Weak signals without fraud indicators should be filtered by the index too."""
+        terms = [_make_watch_term(term_type=WatchTermType.institution_name, value="First National Bank")]
+        mention = _make_mention("First National Bank has great rates")
+        with patch("darkdisco.discovery.matcher._get_filters", return_value=FILTERS_WITH_INDICATORS):
+            index = WatchTermIndex(terms)
+            results = index.match(mention)
+        assert len(results) == 0
+
+    def test_index_invalid_regex_skipped(self):
+        """Invalid regex terms should be skipped without crashing."""
+        terms = [
+            _make_watch_term(term_type=WatchTermType.regex, value="[invalid"),
+            _make_watch_term(term_type=WatchTermType.domain, value="good.com"),
+        ]
+        index = WatchTermIndex(terms)
+        assert index.term_count == 1  # only the valid domain term

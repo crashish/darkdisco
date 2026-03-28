@@ -644,7 +644,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
     from darkdisco.common.models import Finding, Source, WatchTerm
     from darkdisco.common.models import RawMention as RawMentionModel
     from darkdisco.discovery.connectors.base import RawMention
-    from darkdisco.discovery.matcher import match_mention, recompute_highlights
+    from darkdisco.discovery.matcher import WatchTermIndex, recompute_highlights
     from darkdisco.enrichment import enrich_and_filter
 
     session = _get_sync_session()
@@ -659,9 +659,11 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
         # This must happen before watch-term checks or finding-dedup so that
         # polled data is never silently lost.
         # ------------------------------------------------------------------
-        mention_rows: list[tuple[RawMention, str, RawMentionModel | None]] = []
-        mentions_persisted = 0
+        import time as _time
+        phase1_start = _time.monotonic()
 
+        # Deserialize all mentions and compute hashes up-front
+        mentions_with_hashes: list[tuple[RawMention, str]] = []
         for raw in raw_mentions:
             mention = RawMention(
                 source_name=raw["source_name"],
@@ -672,19 +674,29 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 discovered_at=datetime.fromisoformat(raw["discovered_at"]) if raw.get("discovered_at") else datetime.now(timezone.utc),
                 metadata=raw.get("metadata") or {},
             )
-
             content_hash = hashlib.sha256(
                 f"{mention.source_name}:{mention.content}".encode()
             ).hexdigest()
+            mentions_with_hashes.append((mention, content_hash))
 
-            # Dedup raw_mentions by content_hash (avoid re-inserting on re-poll)
-            existing_mention = session.execute(
-                select(RawMentionModel.id).where(
-                    RawMentionModel.content_hash == content_hash
-                ).limit(1)
-            ).scalar_one_or_none()
+        # Batch dedup: fetch all existing raw mention hashes in one query
+        all_hashes = [h for _, h in mentions_with_hashes]
+        existing_mention_hashes: set[str] = set()
+        BATCH_SIZE = 500
+        for i in range(0, len(all_hashes), BATCH_SIZE):
+            batch = all_hashes[i:i + BATCH_SIZE]
+            rows = session.execute(
+                select(RawMentionModel.content_hash).where(
+                    RawMentionModel.content_hash.in_(batch)
+                )
+            ).scalars().all()
+            existing_mention_hashes.update(rows)
 
-            if existing_mention:
+        mention_rows: list[tuple[RawMention, str, RawMentionModel | None]] = []
+        mentions_persisted = 0
+
+        for mention, content_hash in mentions_with_hashes:
+            if content_hash in existing_mention_hashes:
                 mention_rows.append((mention, content_hash, None))
                 continue
 
@@ -709,17 +721,20 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
 
         # Commit raw mentions so they survive even if matching fails below
         session.commit()
+        phase1_elapsed = _time.monotonic() - phase1_start
         logger.info(
-            "Persisted %d/%d raw mentions for source %s",
+            "Phase 1 complete: persisted %d/%d raw mentions for source %s in %.1fs",
             mentions_persisted, len(raw_mentions),
             source.name if source else source_id,
+            phase1_elapsed,
         )
 
         # ------------------------------------------------------------------
         # Phase 2: Match against watch terms and create findings.
         # ------------------------------------------------------------------
+        phase2_start = _time.monotonic()
 
-        # Load all active watch terms
+        # Load all active watch terms and build pre-compiled index
         watch_terms = session.execute(
             select(WatchTerm).where(WatchTerm.enabled.is_(True))
         ).scalars().all()
@@ -732,6 +747,9 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 "mentions_persisted": mentions_persisted,
             }
 
+        # Build pre-compiled index (patterns compiled once, not per-mention)
+        term_index = WatchTermIndex(watch_terms)
+
         # Log watch term coverage for debugging
         term_types = {}
         for wt in watch_terms:
@@ -739,24 +757,48 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
             term_types[ttype] = term_types.get(ttype, 0) + 1
         logger.info(
             "Matching %d mentions against %d watch terms (%s)",
-            len(raw_mentions), len(watch_terms),
+            len(raw_mentions), term_index.term_count,
             ", ".join(f"{k}:{v}" for k, v in sorted(term_types.items())),
         )
+
+        # Batch dedup: fetch all existing finding hashes in one query
+        existing_finding_hashes: set[str] = set()
+        for i in range(0, len(all_hashes), BATCH_SIZE):
+            batch = all_hashes[i:i + BATCH_SIZE]
+            rows = session.execute(
+                select(Finding.content_hash).where(
+                    Finding.content_hash.in_(batch)
+                )
+            ).scalars().all()
+            existing_finding_hashes.update(rows)
 
         findings_created = 0
         findings_suppressed = 0
         mentions_matched = 0
+        mentions_processed = 0
+        total_mentions = len(mention_rows)
 
         COMMIT_BATCH_SIZE = 50  # commit every N findings to survive timeouts
+        PROGRESS_LOG_INTERVAL = 100  # log progress every N mentions
 
         for mention, content_hash, db_mention in mention_rows:
           try:
-            # Check for exact duplicate finding
-            existing_finding = session.execute(
-                select(Finding.id).where(Finding.content_hash == content_hash).limit(1)
-            ).scalar_one_or_none()
+            mentions_processed += 1
 
-            if existing_finding:
+            # Progress logging every PROGRESS_LOG_INTERVAL mentions
+            if mentions_processed % PROGRESS_LOG_INTERVAL == 0:
+                elapsed = _time.monotonic() - phase2_start
+                rate = mentions_processed / elapsed if elapsed > 0 else 0
+                logger.info(
+                    "Matching progress: %d/%d mentions (%.0f%%) — "
+                    "%d findings, %d suppressed — %.0f mentions/sec",
+                    mentions_processed, total_mentions,
+                    100 * mentions_processed / total_mentions,
+                    findings_created, findings_suppressed, rate,
+                )
+
+            # Check for exact duplicate finding (from pre-fetched set)
+            if content_hash in existing_finding_hashes:
                 logger.debug("Duplicate finding (hash=%s), skipping", content_hash[:12])
                 continue
 
@@ -768,8 +810,8 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 )
                 continue
 
-            # Match against watch terms
-            match_results = match_mention(mention, watch_terms)
+            # Match against pre-compiled watch term index
+            match_results = term_index.match(mention)
 
             if match_results:
                 mentions_matched += 1
@@ -889,20 +931,27 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 session.commit()
             except Exception:
                 session.rollback()
-                # Re-fetch watch_terms since session was reset
+                # Rebuild index since session was reset
                 watch_terms = session.execute(
                     select(WatchTerm).where(WatchTerm.enabled.is_(True))
                 ).scalars().all()
+                term_index = WatchTermIndex(watch_terms)
 
         session.commit()
 
+        phase2_elapsed = _time.monotonic() - phase2_start
+        total_elapsed = _time.monotonic() - phase1_start
         logger.info(
-            "Matching complete for source %s: %d mentions → %d matched → %d findings (%d suppressed)",
+            "Matching complete for source %s: %d mentions → %d matched → "
+            "%d findings (%d suppressed) in %.1fs (phase1=%.1fs, phase2=%.1fs)",
             source.name if source else source_id,
             len(raw_mentions),
             mentions_matched,
             findings_created,
             findings_suppressed,
+            total_elapsed,
+            phase1_elapsed,
+            phase2_elapsed,
         )
 
         # Trigger alert evaluation for new findings
@@ -914,6 +963,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
             "findings_suppressed": findings_suppressed,
             "mentions_processed": len(raw_mentions),
             "mentions_persisted": mentions_persisted,
+            "elapsed_seconds": round(total_elapsed, 1),
         }
     finally:
         session.close()
@@ -1969,7 +2019,7 @@ def retroactive_hunt(institution_name: str, batch_size: int = 200, days: int | N
     from darkdisco.common.models import RawMention as RawMentionModel
     from darkdisco.common.models import WatchTerm as WatchTermModel
     from darkdisco.discovery.connectors.base import RawMention
-    from darkdisco.discovery.matcher import match_mention
+    from darkdisco.discovery.matcher import WatchTermIndex
 
     session = _get_sync_session()
     try:
@@ -1993,9 +2043,11 @@ def retroactive_hunt(institution_name: str, batch_size: int = 200, days: int | N
             logger.warning("No watch terms for %s — hunt skipped", institution_name)
             return {"error": "no_watch_terms"}
 
+        # Build pre-compiled index for fast matching
+        term_index = WatchTermIndex(watch_terms)
         logger.info(
             "Retroactive hunt for %s: %d watch terms",
-            institution_name, len(watch_terms),
+            institution_name, term_index.term_count,
         )
 
         # Query mentions in batches
@@ -2030,7 +2082,7 @@ def retroactive_hunt(institution_name: str, batch_size: int = 200, days: int | N
                     metadata=m.metadata_ or {},
                 )
 
-                results = match_mention(mention, watch_terms)
+                results = term_index.match(mention)
                 if results:
                     total_matched += 1
                     source_id = m.source_id

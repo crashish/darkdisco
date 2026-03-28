@@ -3,6 +3,10 @@
 Includes noise-reduction filters (fraud indicator co-occurrence and negative
 pattern suppression) loaded from data/matching_filters.yaml.  Edit that file
 and restart the worker to tune.
+
+Performance note: Use WatchTermIndex for batch matching.  It pre-compiles all
+regex patterns once and groups terms by institution so each mention is matched
+in a single pass rather than re-compiling patterns per-mention.
 """
 
 from __future__ import annotations
@@ -10,6 +14,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -133,7 +139,155 @@ class MatchResult:
 
 
 # ---------------------------------------------------------------------------
-# Core matching
+# Pre-compiled watch term index (for batch matching)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _CompiledTerm:
+    """A watch term with its matching strategy pre-resolved."""
+
+    term: WatchTerm
+    # Pre-compiled regex pattern (for regex, bin_range, domain, institution_name)
+    pattern: re.Pattern | None = None
+    # Lowered value for substring search (keyword, executive_name, routing_number)
+    value_lower: str | None = None
+    # Which matching strategy to use
+    strategy: str = "substring"  # "regex" | "substring"
+    # Regex group to capture (for domain patterns that use a capture group)
+    group: int = 0
+
+
+class WatchTermIndex:
+    """Pre-compiled index of watch terms for fast batch matching.
+
+    Build once per matching cycle, then call ``match()`` for each mention.
+    This avoids re-compiling regex patterns and re-grouping terms per-mention,
+    cutting matching time from O(n*m * compile_cost) to O(n*m) with much lower
+    constant factors.
+    """
+
+    def __init__(self, watch_terms: list[WatchTerm]) -> None:
+        self._by_institution: dict[str, list[_CompiledTerm]] = defaultdict(list)
+        self._term_count = 0
+        self._institution_count = 0
+        build_start = time.monotonic()
+        self._build(watch_terms)
+        elapsed = time.monotonic() - build_start
+        logger.info(
+            "WatchTermIndex built: %d terms across %d institutions in %.1fms",
+            self._term_count, self._institution_count, elapsed * 1000,
+        )
+
+    def _build(self, watch_terms: list[WatchTerm]) -> None:
+        for wt in watch_terms:
+            if not wt.enabled:
+                continue
+
+            ct = self._compile_term(wt)
+            if ct is not None:
+                self._by_institution[wt.institution_id].append(ct)
+                self._term_count += 1
+
+        self._institution_count = len(self._by_institution)
+
+    @staticmethod
+    def _compile_term(wt: WatchTerm) -> _CompiledTerm | None:
+        """Pre-compile a single watch term into its matching strategy."""
+        value = wt.value
+
+        if wt.term_type == WatchTermType.regex:
+            try:
+                flags = 0 if wt.case_sensitive else re.IGNORECASE
+                pattern = re.compile(value, flags)
+                return _CompiledTerm(term=wt, pattern=pattern, strategy="regex")
+            except re.error:
+                logger.warning("Invalid regex in watch term %s: %s", wt.id, value)
+                return None
+
+        elif wt.term_type == WatchTermType.bin_range:
+            pat = rf"\b{re.escape(value)}\d{{2,10}}\b"
+            pattern = re.compile(pat, re.IGNORECASE)
+            return _CompiledTerm(term=wt, pattern=pattern, strategy="regex")
+
+        elif wt.term_type == WatchTermType.domain:
+            escaped = re.escape(value)
+            pat = rf"(?:^|[\s//@.:])({escaped})(?:$|[\s/,;:)\]>]|/)"
+            pattern = re.compile(pat, re.IGNORECASE)
+            return _CompiledTerm(term=wt, pattern=pattern, strategy="regex", group=1)
+
+        elif wt.term_type == WatchTermType.institution_name:
+            escaped = re.escape(value)
+            pat = rf"\b{escaped}\b"
+            pattern = re.compile(pat, re.IGNORECASE)
+            return _CompiledTerm(term=wt, pattern=pattern, strategy="regex")
+
+        else:
+            # keyword, executive_name, routing_number — substring search
+            return _CompiledTerm(
+                term=wt,
+                value_lower=value.lower(),
+                strategy="substring",
+            )
+
+    @property
+    def term_count(self) -> int:
+        return self._term_count
+
+    @property
+    def institution_count(self) -> int:
+        return self._institution_count
+
+    def match(self, mention: RawMention) -> list[MatchResult]:
+        """Match a single mention against the pre-compiled index.
+
+        Semantically identical to ``match_mention()`` but uses pre-compiled
+        patterns for significantly better throughput on large term sets.
+        """
+        raw_text = f"{mention.title}\n{mention.content}"
+        searchable = raw_text.lower()
+
+        results: list[MatchResult] = []
+
+        for inst_id, compiled_terms in self._by_institution.items():
+            matched: list[dict] = []
+
+            for ct in compiled_terms:
+                highlights: list[dict] = []
+
+                if ct.strategy == "regex":
+                    assert ct.pattern is not None
+                    for m in ct.pattern.finditer(raw_text):
+                        start, end = m.span(ct.group)
+                        highlights.append({"start": start, "end": end})
+                    if highlights:
+                        matched.append(_term_dict(ct.term, highlights))
+
+                else:  # substring
+                    assert ct.value_lower is not None
+                    highlights = _find_all_substring(ct.value_lower, searchable)
+                    if highlights:
+                        matched.append(_term_dict(ct.term, highlights))
+
+            if matched:
+                if _should_filter_as_noise(matched, searchable):
+                    logger.debug(
+                        "Noise-filtered: institution=%s matched_terms=%s",
+                        inst_id,
+                        ", ".join(f"{t['term_type']}:{t['value']}" for t in matched),
+                    )
+                    continue
+
+                results.append(MatchResult(
+                    institution_id=inst_id,
+                    matched_terms=matched,
+                    severity_hint=_severity_hint(matched),
+                ))
+
+        return results
+
+
+# ---------------------------------------------------------------------------
+# Core matching (original — kept for backward compatibility and tests)
 # ---------------------------------------------------------------------------
 
 def match_mention(mention: RawMention, watch_terms: list[WatchTerm]) -> list[MatchResult]:
