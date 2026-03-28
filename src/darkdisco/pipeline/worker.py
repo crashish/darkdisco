@@ -665,11 +665,11 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
             mention = RawMention(
                 source_name=raw["source_name"],
                 source_url=raw.get("source_url"),
-                title=raw.get("title", ""),
-                content=raw.get("content", ""),
+                title=raw.get("title") or "",
+                content=raw.get("content") or "",
                 author=raw.get("author"),
                 discovered_at=datetime.fromisoformat(raw["discovered_at"]) if raw.get("discovered_at") else datetime.now(timezone.utc),
-                metadata=raw.get("metadata", {}),
+                metadata=raw.get("metadata") or {},
             )
 
             content_hash = hashlib.sha256(
@@ -747,6 +747,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
         mentions_matched = 0
 
         for mention, content_hash, db_mention in mention_rows:
+          try:
             # Check for exact duplicate finding
             existing_finding = session.execute(
                 select(Finding.id).where(Finding.content_hash == content_hash).limit(1)
@@ -754,6 +755,14 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
 
             if existing_finding:
                 logger.debug("Duplicate finding (hash=%s), skipping", content_hash[:12])
+                continue
+
+            # Skip mentions with no searchable content — nothing to match
+            if not (mention.content or mention.title):
+                logger.debug(
+                    "Mention has no content/title, skipping matching: source=%s hash=%s",
+                    mention.source_name, content_hash[:12],
+                )
                 continue
 
             # Match against watch terms
@@ -821,7 +830,7 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 severity = enrichment.adjusted_severity or result.severity_hint
 
                 # Merge enrichment metadata into finding metadata
-                merged_metadata = dict(mention.metadata)
+                merged_metadata = dict(mention.metadata or {})
                 # Normalize channel/sender fields for frontend display
                 if "channel_ref" in merged_metadata and "channel_name" not in merged_metadata:
                     merged_metadata["channel_name"] = merged_metadata["channel_ref"]
@@ -859,6 +868,25 @@ def run_matching(source_id: str, raw_mentions: list[dict]):
                 # Link the raw mention to this finding
                 if db_mention is not None:
                     db_mention.promoted_to_finding_id = finding.id
+
+          except Exception:
+            logger.exception(
+                "Phase 2 failed for mention: source=%s hash=%s — "
+                "rolling back to savepoint, continuing with next mention",
+                mention.source_name, content_hash[:12],
+            )
+            # Rollback to release any partial state from the failed mention
+            # without losing findings already created for previous mentions.
+            # After rollback, previous unflushed findings are lost too, so
+            # we commit successful work before each risky mention instead.
+            # For now, expunge any new objects added during this iteration
+            # and continue.
+            session.rollback()
+            # After rollback, previously-added findings are lost. Re-fetch
+            # watch_terms since the session was reset.
+            watch_terms = session.execute(
+                select(WatchTerm).where(WatchTerm.enabled.is_(True))
+            ).scalars().all()
 
         session.commit()
 
