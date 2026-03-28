@@ -459,7 +459,7 @@ export default function Files() {
   // Fetch file content on demand from S3
   async function loadFileContent(file: SearchResult) {
     // For search results with preview content, show it immediately
-    if (file.preview && file.source === 'extracted_files') {
+    if (file.preview) {
       setFileContent(prev => ({ ...prev, [file.id]: file.preview }));
       return;
     }
