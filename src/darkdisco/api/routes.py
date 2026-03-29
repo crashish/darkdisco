@@ -1965,23 +1965,32 @@ async def list_archives(
         extracted_count, extracted_size = file_counts.get(mention.id, (0, 0))
         file_size = meta.get("file_size", 0) or 0
 
+        # Fall back to metadata for extraction status when no ExtractedFile rows
+        # exist yet (pre-migration mentions or inline-extracted archives)
+        file_analysis = meta.get("file_analysis")
+        is_extracted = extracted_count > 0
+        display_file_count = extracted_count
+        if not is_extracted and file_analysis:
+            is_extracted = True
+            display_file_count = file_analysis.get("total_files", 0)
+
         archives.append({
             "mention_id": mention.id,
             "file_name": meta.get("file_name", "unknown"),
-            "file_count": extracted_count,
+            "file_count": display_file_count,
             "total_size": file_size,
             "file_mime": meta.get("file_mime", ""),
             "source_name": mention.source_url or "",
             "source_url": mention.source_url or "",
             "collected_at": mention.collected_at.isoformat() if mention.collected_at else None,
             "has_credentials": meta.get("has_credentials", False),
-            "file_analysis": meta.get("file_analysis"),
+            "file_analysis": file_analysis,
             "channel_ref": meta.get("channel_ref", ""),
             "content_snippet": content_snippet,
             "download_url": f"/api/mentions/{mention.id}/file" if meta.get("s3_key") else "",
             "download_status": meta.get("download_status", ""),
             "s3_key": meta.get("s3_key", ""),
-            "extracted": extracted_count > 0,
+            "extracted": is_extracted,
         })
 
     return {"items": archives, "total": total, "page": page, "page_size": page_size}

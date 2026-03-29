@@ -1767,6 +1767,7 @@ def backfill_stored_archives(batch_size: int = 10):
 
         dispatched = 0
         skipped = 0
+        backfilled_from_metadata = 0
         for mention in mentions:
             meta = mention.metadata_ or {}
 
@@ -1779,13 +1780,23 @@ def backfill_stored_archives(batch_size: int = 10):
             if not is_archive(filename):
                 continue
 
-            # Skip if already has file_analysis (already extracted)
-            if meta.get("file_analysis"):
-                skipped += 1
+            # If metadata already has extraction data, create ExtractedFile rows
+            # from it instead of re-downloading from S3
+            if meta.get("extracted_files_inventory") or meta.get("extracted_file_contents"):
+                ef_count = _store_extracted_files(session, mention.id, meta)
+                if ef_count > 0:
+                    session.commit()
+                    backfilled_from_metadata += 1
+                    logger.info(
+                        "Backfilled %d ExtractedFile rows from metadata for mention %s",
+                        ef_count, mention.id,
+                    )
+                else:
+                    skipped += 1
                 continue
 
-            # Skip if already has extracted_file_contents
-            if meta.get("extracted_file_contents"):
+            # Skip if already has file_analysis but no inventory to backfill from
+            if meta.get("file_analysis"):
                 skipped += 1
                 continue
 
@@ -1801,8 +1812,10 @@ def backfill_stored_archives(batch_size: int = 10):
                 break
 
         logger.info(
-            "Backfill stored archives: dispatched %d extraction tasks (%d skipped)",
+            "Backfill stored archives: dispatched %d extraction tasks, "
+            "%d backfilled from metadata, %d skipped",
             dispatched,
+            backfilled_from_metadata,
             skipped,
         )
 
@@ -1813,7 +1826,7 @@ def backfill_stored_archives(batch_size: int = 10):
                 countdown=dispatched * 30 + 60,  # Wait for current batch + buffer
             )
 
-        return {"dispatched": dispatched, "skipped": skipped}
+        return {"dispatched": dispatched, "backfilled_from_metadata": backfilled_from_metadata, "skipped": skipped}
     finally:
         session.close()
 
