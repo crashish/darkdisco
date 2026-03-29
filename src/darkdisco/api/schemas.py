@@ -693,12 +693,14 @@ class ReportRequest(BaseModel):
 class ReportTemplateConfig(BaseModel):
     """Saved report configuration (everything except date range)."""
     title: str = "DarkDisco Threat Intelligence Report"
+    subtitle: str = "Dark Web Threat Intelligence Report"
     client_id: str | None = None
     institution_id: str | None = None
     severities: list[str] | None = None
     statuses: list[str] | None = None
     sections: ReportSections = Field(default_factory=ReportSections)
     charts: ReportChartOptions = Field(default_factory=ReportChartOptions)
+    truncate_content: bool = True
 
 
 class ReportTemplateCreate(BaseModel):
