@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { colors, card, font } from '../theme';
-import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code, ScanLine, ChevronLeft, ChevronsLeft, ChevronsRight, MessageSquare, Filter, X, ArrowUpDown } from 'lucide-react';
+import { Archive, FileText, Search, ChevronDown, ChevronRight, Download, Loader, Image, Film, FileArchive, File, Binary, Code, ScanLine, ChevronLeft, ChevronsLeft, ChevronsRight, MessageSquare, Filter, X, ArrowUpDown, Zap } from 'lucide-react';
 import MultiSelect from '../components/MultiSelect';
+import { processOcr, type OcrProcessResult } from '../api';
 
 const BASE = '/api';
 
@@ -160,6 +161,100 @@ function HexDumpViewer({ s3Key, filename }: { s3Key: string; filename: string })
   );
 }
 
+// ---- On-demand OCR button ----
+
+function OcrButton({ s3Key, sha256, onResult }: {
+  s3Key: string;
+  sha256?: string;
+  onResult?: (result: OcrProcessResult) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<OcrProcessResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (loading || result) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await processOcr(s3Key, sha256);
+      setResult(res);
+      onResult?.(res);
+    } catch {
+      setError('OCR failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (result) {
+    if (result.error || !result.text) {
+      return (
+        <span style={{
+          fontSize: 10, padding: '2px 8px', borderRadius: 4,
+          color: colors.textMuted, background: colors.bgSurface,
+          display: 'inline-flex', alignItems: 'center', gap: 3,
+        }}>
+          <ScanLine size={10} /> No text found
+        </span>
+      );
+    }
+    return (
+      <div style={{ marginTop: 8 }}>
+        <div style={{
+          padding: 10, background: 'rgba(167, 139, 250, 0.06)',
+          borderRadius: 6, border: '1px solid rgba(167, 139, 250, 0.2)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <ScanLine size={12} color="#a78bfa" />
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#a78bfa' }}>OCR Result</span>
+            <span style={{
+              fontSize: 10, fontWeight: 600,
+              color: result.confidence > 0.8 ? colors.healthy
+                : result.confidence > 0.5 ? colors.medium : colors.critical,
+            }}>
+              {(result.confidence * 100).toFixed(0)}%
+            </span>
+            <span style={{ fontSize: 9, color: colors.textMuted }}>{result.engine}{result.cached ? ' (cached)' : ''}</span>
+          </div>
+          <pre style={{
+            fontFamily: font.mono, fontSize: 11, lineHeight: 1.5,
+            color: colors.textDim, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            background: colors.bg, padding: 8, borderRadius: 4,
+            border: `1px solid ${colors.border}`, margin: 0,
+            maxHeight: 200, overflow: 'auto',
+          }}>{result.text}</pre>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={loading}
+      title="Run OCR to extract text from this image"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        padding: '3px 10px', borderRadius: 4, border: '1px solid rgba(167, 139, 250, 0.3)',
+        background: loading ? 'rgba(167, 139, 250, 0.08)' : 'rgba(167, 139, 250, 0.12)',
+        color: '#a78bfa', fontSize: 11, fontWeight: 600, cursor: loading ? 'wait' : 'pointer',
+        transition: 'background 0.15s',
+      }}
+      onMouseEnter={e => { if (!loading) (e.currentTarget as HTMLElement).style.background = 'rgba(167, 139, 250, 0.22)'; }}
+      onMouseLeave={e => { if (!loading) (e.currentTarget as HTMLElement).style.background = 'rgba(167, 139, 250, 0.12)'; }}
+    >
+      {loading ? (
+        <><Loader size={11} style={{ animation: 'spin 1s linear infinite' }} /> Processing...</>
+      ) : (
+        <><Zap size={11} /> Run OCR</>
+      )}
+      {error && <span style={{ color: colors.critical, marginLeft: 4 }}>{error}</span>}
+    </button>
+  );
+}
+
 // ---- Auth download helper ----
 
 function authDownloadUrl(s3Key: string): string {
@@ -238,14 +333,19 @@ function StandaloneFileViewer({ archive }: { archive: ArchiveSummary }) {
       </div>
 
       {isImage && (
-        <AuthImage
-          src={fileUrl}
-          alt={archive.file_name}
-          style={{
-            maxWidth: '100%', maxHeight: 600, borderRadius: 4,
-            border: `1px solid ${colors.border}`,
-          }}
-        />
+        <div>
+          <AuthImage
+            src={fileUrl}
+            alt={archive.file_name}
+            style={{
+              maxWidth: '100%', maxHeight: 600, borderRadius: 4,
+              border: `1px solid ${colors.border}`,
+            }}
+          />
+          <div style={{ marginTop: 8 }}>
+            <OcrButton s3Key={archive.s3_key} />
+          </div>
+        </div>
       )}
 
       {isText && (
@@ -284,6 +384,7 @@ interface SearchResult {
   is_text: boolean;
   preview: string;
   s3_key: string;
+  sha256?: string;
   archive_name: string;
   source: string;
   mime_type?: string;
@@ -1181,14 +1282,21 @@ export default function Files() {
                         {isExpanded && (
                           <div style={{ marginLeft: 32, marginTop: 4, marginBottom: 8 }}>
                             {isImage && file.s3_key ? (
-                              <AuthImage
-                                src={`${BASE}/files/${file.s3_key}`}
-                                alt={file.filename}
-                                style={{
-                                  maxWidth: '100%', maxHeight: 500, borderRadius: 4,
-                                  border: `1px solid ${colors.border}`,
-                                }}
-                              />
+                              <div>
+                                <AuthImage
+                                  src={`${BASE}/files/${file.s3_key}`}
+                                  alt={file.filename}
+                                  style={{
+                                    maxWidth: '100%', maxHeight: 500, borderRadius: 4,
+                                    border: `1px solid ${colors.border}`,
+                                  }}
+                                />
+                                {!file.ocr_text && (
+                                  <div style={{ marginTop: 8 }}>
+                                    <OcrButton s3Key={file.s3_key} sha256={file.sha256} />
+                                  </div>
+                                )}
+                              </div>
                             ) : isLoadingContent ? (
                               <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>Loading...</div>
                             ) : isText && content ? (
@@ -1355,14 +1463,21 @@ export default function Files() {
                       {isExpanded && (
                         <div style={{ marginLeft: 32, marginTop: 4, marginBottom: 8 }}>
                           {isImage && file.s3_key ? (
-                            <AuthImage
-                              src={`${BASE}/files/${file.s3_key}`}
-                              alt={file.filename}
-                              style={{
-                                maxWidth: '100%', maxHeight: 500, borderRadius: 4,
-                                border: `1px solid ${colors.border}`,
-                              }}
-                            />
+                            <div>
+                              <AuthImage
+                                src={`${BASE}/files/${file.s3_key}`}
+                                alt={file.filename}
+                                style={{
+                                  maxWidth: '100%', maxHeight: 500, borderRadius: 4,
+                                  border: `1px solid ${colors.border}`,
+                                }}
+                              />
+                              {!file.ocr_text && (
+                                <div style={{ marginTop: 8 }}>
+                                  <OcrButton s3Key={file.s3_key} sha256={file.sha256} />
+                                </div>
+                              )}
+                            </div>
                           ) : isLoadingContent ? (
                             <div style={{ padding: 12, color: colors.textMuted, fontSize: 12 }}>Loading content...</div>
                           ) : isText && content ? (

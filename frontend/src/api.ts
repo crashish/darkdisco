@@ -399,6 +399,23 @@ export async function fetchOcrStats(): Promise<OcrStats> {
   return apiFetch('/ocr-stats', { total_cached: 0, mentions_with_ocr: 0, avg_confidence: 0, recent: [] });
 }
 
+export interface OcrProcessResult {
+  text: string;
+  confidence: number;
+  engine: string;
+  cached: boolean;
+  error?: string;
+}
+
+export async function processOcr(s3Key: string, sha256?: string): Promise<OcrProcessResult> {
+  const body: Record<string, string> = { s3_key: s3Key };
+  if (sha256) body.sha256 = sha256;
+  return apiFetch('/ocr/process', { text: '', confidence: 0, engine: 'none', cached: false }, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
 export async function promoteMention(mentionId: string, body: {
   institution_id: string;
   title: string;

@@ -3732,6 +3732,112 @@ async def delete_discovered_channel(
 
 
 # ---------------------------------------------------------------------------
+# On-demand OCR
+# ---------------------------------------------------------------------------
+
+
+@protected.post("/ocr/process")
+async def process_ocr(
+    request: Request,
+    db: AsyncSession = Depends(get_session),
+):
+    """Run OCR on an image identified by s3_key. Returns cached result if available.
+
+    Request body: { "s3_key": "...", "sha256": "..." (optional) }
+    The sha256 is used for cache lookup; if not provided, the image is downloaded
+    and hashed. Results are cached in ImageOCRCache for dedup.
+    """
+    import boto3
+    import hashlib as _hashlib
+    from botocore.config import Config
+    from darkdisco.config import settings
+    from darkdisco.pipeline.ocr import extract_text_from_image, is_image
+
+    body = await request.json()
+    s3_key = body.get("s3_key")
+    if not s3_key:
+        raise HTTPException(400, "s3_key is required")
+
+    filename = s3_key.rsplit("/", 1)[-1]
+    if not is_image(filename):
+        raise HTTPException(400, "File does not appear to be an image")
+
+    # Check cache by sha256 if provided
+    provided_sha = body.get("sha256")
+    if provided_sha:
+        cached = (await db.execute(
+            select(ImageOCRCache).where(ImageOCRCache.sha256 == provided_sha)
+        )).scalar_one_or_none()
+        if cached:
+            return {
+                "text": cached.ocr_text or "",
+                "confidence": round(cached.confidence, 3),
+                "engine": cached.engine,
+                "cached": True,
+            }
+
+    # Download image from S3
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=settings.s3_endpoint,
+        aws_access_key_id=settings.s3_access_key,
+        aws_secret_access_key=settings.s3_secret_key,
+        config=Config(signature_version="s3v4"),
+    )
+    try:
+        obj = s3.get_object(Bucket=settings.s3_bucket, Key=s3_key)
+        image_data = obj["Body"].read()
+    except Exception:
+        raise HTTPException(404, "File not found in storage")
+
+    # Compute SHA-256 for cache
+    sha256 = _hashlib.sha256(image_data).hexdigest()
+
+    # Check cache by computed hash
+    cached = (await db.execute(
+        select(ImageOCRCache).where(ImageOCRCache.sha256 == sha256)
+    )).scalar_one_or_none()
+    if cached:
+        return {
+            "text": cached.ocr_text or "",
+            "confidence": round(cached.confidence, 3),
+            "engine": cached.engine,
+            "cached": True,
+        }
+
+    # Run OCR
+    result = extract_text_from_image(image_data, filename)
+    if result is None:
+        return {
+            "text": "",
+            "confidence": 0.0,
+            "engine": "none",
+            "cached": False,
+            "error": "OCR processing failed or is disabled",
+        }
+
+    # Cache the result
+    cache_entry = ImageOCRCache(
+        sha256=sha256,
+        ocr_text=result.text,
+        confidence=result.confidence,
+        engine=result.engine,
+    )
+    db.add(cache_entry)
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()  # Duplicate key race — ignore
+
+    return {
+        "text": result.text,
+        "confidence": round(result.confidence, 3),
+        "engine": result.engine,
+        "cached": False,
+    }
+
+
+# ---------------------------------------------------------------------------
 # OCR Stats
 # ---------------------------------------------------------------------------
 

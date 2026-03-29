@@ -1,14 +1,88 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { fetchMentions, fetchSources, fetchInstitutions, promoteMention, fetchArchiveContents, fetchMentionChannels, fetchMentionFiles, getMentionFileUrl } from '../api';
-import type { MentionFilesResponse } from '../api';
+import { fetchMentions, fetchSources, fetchInstitutions, promoteMention, fetchArchiveContents, fetchMentionChannels, fetchMentionFiles, getMentionFileUrl, processOcr } from '../api';
+import type { MentionFilesResponse, OcrProcessResult } from '../api';
 import { colors, card, font } from '../theme';
 import type { RawMention, Source, Institution, Severity } from '../types';
 import ArchiveContents from '../components/ArchiveContents';
 import type { ArchiveFile } from '../components/ArchiveContents';
-import { MessageSquare, Filter, Search, ChevronDown, ChevronUp, ExternalLink, ArrowRight, X, Check, Download, Eye, Calendar, ScanLine } from 'lucide-react';
+import { MessageSquare, Filter, Search, ChevronDown, ChevronUp, ExternalLink, ArrowRight, X, Check, Download, Eye, Calendar, ScanLine, Zap, Loader } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import MultiSelect from '../components/MultiSelect';
+
+function MentionOcrButton({ s3Key, mentionId }: { s3Key: string; mentionId: string }) {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<OcrProcessResult | null>(null);
+
+  const handleClick = async () => {
+    if (loading || result) return;
+    setLoading(true);
+    try {
+      const res = await processOcr(s3Key);
+      setResult(res);
+    } catch {
+      setResult({ text: '', confidence: 0, engine: 'none', cached: false, error: 'OCR failed' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (result) {
+    if (result.error || !result.text) {
+      return (
+        <div style={{ marginTop: 8, fontSize: 11, color: colors.textMuted }}>
+          <ScanLine size={11} style={{ verticalAlign: -2 }} /> No text extracted
+        </div>
+      );
+    }
+    return (
+      <div style={{
+        marginTop: 8, padding: 10, background: 'rgba(167, 139, 250, 0.06)',
+        borderRadius: 6, border: '1px solid rgba(167, 139, 250, 0.2)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+          <ScanLine size={12} color="#a78bfa" />
+          <span style={{ fontSize: 11, fontWeight: 600, color: '#a78bfa' }}>OCR Result</span>
+          <span style={{
+            fontSize: 10, fontWeight: 600,
+            color: result.confidence > 0.8 ? colors.healthy
+              : result.confidence > 0.5 ? colors.medium : colors.critical,
+          }}>
+            {(result.confidence * 100).toFixed(0)}%
+          </span>
+          <span style={{ fontSize: 9, color: colors.textMuted }}>{result.engine}{result.cached ? ' (cached)' : ''}</span>
+        </div>
+        <pre style={{
+          fontFamily: font.mono, fontSize: 11, lineHeight: 1.5,
+          color: colors.textDim, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          background: colors.bg, padding: 8, borderRadius: 4,
+          border: `1px solid ${colors.border}`, margin: 0,
+          maxHeight: 200, overflow: 'auto',
+        }}>{result.text}</pre>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={loading}
+      title="Run OCR to extract text from this image"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 8,
+        padding: '4px 12px', borderRadius: 4, border: '1px solid rgba(167, 139, 250, 0.3)',
+        background: loading ? 'rgba(167, 139, 250, 0.08)' : 'rgba(167, 139, 250, 0.12)',
+        color: '#a78bfa', fontSize: 11, fontWeight: 600, cursor: loading ? 'wait' : 'pointer',
+      }}
+    >
+      {loading ? (
+        <><Loader size={11} style={{ animation: 'spin 1s linear infinite' }} /> Processing...</>
+      ) : (
+        <><Zap size={11} /> Run OCR</>
+      )}
+    </button>
+  );
+}
 
 const sourceTypeBadge = (type: string): CSSProperties => ({
   fontSize: 10,
@@ -593,14 +667,19 @@ export default function Mentions() {
                           </div>
 
                           {isImage && (
-                            <img
-                              src={`/api/mentions/${mention.id}/file`}
-                              alt={fileName}
-                              style={{
-                                maxWidth: '100%', maxHeight: 400, borderRadius: 4,
-                                border: `1px solid ${colors.border}`,
-                              }}
-                            />
+                            <div>
+                              <img
+                                src={`/api/mentions/${mention.id}/file`}
+                                alt={fileName}
+                                style={{
+                                  maxWidth: '100%', maxHeight: 400, borderRadius: 4,
+                                  border: `1px solid ${colors.border}`,
+                                }}
+                              />
+                              {!meta?.ocr_text && (
+                                <MentionOcrButton s3Key={String(meta.s3_key)} mentionId={mention.id} />
+                              )}
+                            </div>
                           )}
 
                           {isText && fileInfo?.files?.length > 0 && (() => {
@@ -802,6 +881,7 @@ export default function Mentions() {
           </button>
         </div>
       )}
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
