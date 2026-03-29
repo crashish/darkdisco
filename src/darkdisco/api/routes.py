@@ -1965,6 +1965,17 @@ async def list_archives(
         extracted_count, extracted_size = file_counts.get(mention.id, (0, 0))
         file_size = meta.get("file_size", 0) or 0
 
+        # Fall back to legacy metadata for extraction status when no
+        # ExtractedFile rows exist (archives extracted before migration 003).
+        if extracted_count == 0:
+            legacy_contents = meta.get("extracted_file_contents")
+            if legacy_contents and isinstance(legacy_contents, list):
+                extracted_count = len(legacy_contents)
+            else:
+                analysis_files = (meta.get("file_analysis") or {}).get("files")
+                if analysis_files and isinstance(analysis_files, list):
+                    extracted_count = len(analysis_files)
+
         archives.append({
             "mention_id": mention.id,
             "file_name": meta.get("file_name", "unknown"),
