@@ -23,8 +23,8 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE INDEX IF NOT EXISTS ix_raw_mentions_download_status
-        ON raw_mentions ((metadata_ ->> 'download_status'))
-        WHERE metadata_ ->> 'download_status' IS NOT NULL
+        ON raw_mentions ((metadata ->> 'download_status'))
+        WHERE metadata ->> 'download_status' IS NOT NULL
         """
     )
 
@@ -32,14 +32,14 @@ def upgrade() -> None:
     op.execute(
         """
         UPDATE raw_mentions
-        SET metadata_ = jsonb_set(
-            COALESCE(metadata_, '{}'::jsonb),
+        SET metadata = jsonb_set(
+            COALESCE(metadata, '{}'::jsonb),
             '{download_status}',
             '"pending"'
         )
-        WHERE metadata_ ->> 'file_name' IS NOT NULL
-          AND metadata_ ->> 'download_status' IS NULL
-          AND metadata_ ->> 's3_key' IS NULL
+        WHERE metadata ->> 'file_name' IS NOT NULL
+          AND metadata ->> 'download_status' IS NULL
+          AND metadata ->> 's3_key' IS NULL
         """
     )
 
