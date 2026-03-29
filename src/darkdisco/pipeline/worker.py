@@ -141,11 +141,12 @@ def _load_connector(source):
     return cls(config=source.config or {})
 
 
-def _load_connector_for_download(source):
-    """Load a Telegram connector with a separate session file for downloads.
+def _create_session_copy(source, suffix: str) -> dict:
+    """Create a copy of the primary Telegram session file with the given suffix.
 
-    Copies the primary session file to a _download variant so the download task
-    doesn't contend with the polling task over SQLite locks.
+    Returns a config dict with session_name pointing to the copy.
+    This allows multiple Telethon clients to run concurrently without
+    SQLite lock contention on the shared session file.
     """
     import shutil
     from pathlib import Path
@@ -153,28 +154,30 @@ def _load_connector_for_download(source):
 
     config = dict(source.config or {})
 
-    # Determine the primary session path and create a download-specific copy
     primary_session = config.get("session_name", settings.telegram_session_name)
     primary_path = Path(primary_session).expanduser()
-    download_session = str(primary_path) + "_download"
-    download_path = Path(download_session + ".session")
+    copy_session = str(primary_path) + f"_{suffix}"
+    copy_path = Path(copy_session + ".session")
     primary_session_file = Path(str(primary_path) + ".session")
 
-    # Refresh download session from primary if primary is newer.
-    # The download session needs updated entity cache to resolve channels
-    # that were joined after it was first copied.
+    # Refresh copy from primary if primary is newer.
+    # The copy needs updated entity cache to resolve channels
+    # that were joined after it was first created.
     if primary_session_file.exists():
-        if not download_path.exists():
-            shutil.copy2(str(primary_session_file), str(download_path))
-            logger.info("Initialized download session from %s", download_path)
-        elif primary_session_file.stat().st_mtime > download_path.stat().st_mtime + 3600:
-            # Primary is >1 hour newer — refresh the download session
-            shutil.copy2(str(primary_session_file), str(download_path))
-            logger.info("Refreshed download session from primary (entity cache update)")
+        if not copy_path.exists():
+            shutil.copy2(str(primary_session_file), str(copy_path))
+            logger.info("Initialized %s session from %s", suffix, copy_path)
+        elif primary_session_file.stat().st_mtime > copy_path.stat().st_mtime + 3600:
+            # Primary is >1 hour newer — refresh the session copy
+            shutil.copy2(str(primary_session_file), str(copy_path))
+            logger.info("Refreshed %s session from primary (entity cache update)", suffix)
 
-    config["session_name"] = download_session
+    config["session_name"] = copy_session
+    return config
 
-    # Instantiate connector with overridden config
+
+def _load_connector_with_config(source, config: dict):
+    """Instantiate the connector for a Source row with overridden config."""
     class_path = source.connector_class or _CONNECTOR_MAP.get(source.source_type.value)
     if not class_path:
         raise ValueError(f"No connector for source type {source.source_type}")
@@ -182,6 +185,27 @@ def _load_connector_for_download(source):
     module = importlib.import_module(module_path)
     cls = getattr(module, class_name)
     return cls(config=config)
+
+
+def _load_connector_for_poll(source):
+    """Load a Telegram connector with a per-source session file for polling.
+
+    Each source gets its own session copy (e.g., data/darkdisco_monitor_poll_<id>)
+    so multiple Telegram sources can poll concurrently without SQLite lock contention.
+    """
+    source_suffix = f"poll_{source.id[:8]}"
+    config = _create_session_copy(source, source_suffix)
+    return _load_connector_with_config(source, config)
+
+
+def _load_connector_for_download(source):
+    """Load a Telegram connector with a separate session file for downloads.
+
+    Copies the primary session file to a _download variant so the download task
+    doesn't contend with the polling task over SQLite locks.
+    """
+    config = _create_session_copy(source, "download")
+    return _load_connector_with_config(source, config)
 
 
 # ---------------------------------------------------------------------------
@@ -235,20 +259,25 @@ def poll_source(self, source_id: str):
             logger.info("Source %s is disabled, skipping", source.name)
             return {"skipped": True}
 
-        connector = _load_connector(source)
         since = source.last_polled_at
 
-        # Acquire session lock — only one Telegram task at a time (SQLite limitation)
+        # For Telegram sources, use a per-source session copy and per-source
+        # lock so multiple sources can poll concurrently.
         telegram_lock = None
         if source.source_type.value in ("telegram", "telegram_intel"):
+            connector = _load_connector_for_poll(source)
             import redis as _redis
             from darkdisco.config import settings as _settings
             _r = _redis.from_url(_settings.celery_broker_url)
-            telegram_lock = _r.lock("darkdisco:telegram_session_lock", timeout=300)
+            telegram_lock = _r.lock(
+                f"darkdisco:telegram_poll_lock:{source_id}", timeout=300,
+            )
             acquired = telegram_lock.acquire(blocking=True, blocking_timeout=180)
             if not acquired:
-                logger.warning("Could not acquire Telegram session lock for %s, retrying later", source.name)
+                logger.warning("Could not acquire Telegram poll lock for %s, retrying later", source.name)
                 raise self.retry(countdown=30, max_retries=5)
+        else:
+            connector = _load_connector(source)
 
         try:
             # Bridge async connector to sync Celery task
@@ -1245,17 +1274,20 @@ async def _join_channel_async(connector, channel_ref: str) -> bool:
 def download_pending_files(batch_size: int = 50):
     """Download large files from mentions marked as download_status=pending.
 
-    Uses a Redis lock to prevent concurrent download tasks from contending
-    over the Telethon SQLite session file.
+    Uses per-source Redis locks and per-source session copies so downloads
+    from different Telegram sources can run concurrently, and downloads
+    don't block polling (separate session files avoid SQLite contention).
     """
     import redis as _redis
     from darkdisco.config import settings
     from darkdisco.common.models import RawMention as RawMentionModel, Source
 
-    # Acquire exclusive download lock
     r = _redis.from_url(settings.celery_broker_url)
-    lock = r.lock("darkdisco:download_files_lock", timeout=300, blocking=False)
-    if not lock.acquire(blocking=False):
+
+    # Global download coordination lock — prevents multiple beat-triggered
+    # download tasks from running simultaneously.
+    coord_lock = r.lock("darkdisco:download_coordinator_lock", timeout=300)
+    if not coord_lock.acquire(blocking=False):
         logger.info("Another download task is already running, skipping")
         return {"skipped": True}
 
@@ -1298,39 +1330,48 @@ def download_pending_files(batch_size: int = 50):
         failed = 0
         deduped = 0
 
+        # Build dedup cache once (shared across all sources)
+        _dedup_cache: dict[tuple, dict] = {}
+        dedup_stmt = (
+            select(RawMentionModel)
+            .where(RawMentionModel.metadata_["download_status"].astext == "stored")
+            .where(RawMentionModel.metadata_["s3_key"].astext != "")
+            .limit(5000)
+        )
+        for stored in session.execute(dedup_stmt).scalars():
+            sm = stored.metadata_ or {}
+            key = (sm.get("file_name"), str(sm.get("file_size", "")))
+            if key[0] and key not in _dedup_cache:
+                _dedup_cache[key] = {
+                    "s3_key": sm.get("s3_key"),
+                    "file_sha256": sm.get("file_sha256"),
+                    "file_size": sm.get("file_size"),
+                }
+        logger.info("Download dedup cache: %d stored file signatures", len(_dedup_cache))
+
         for source_id, source_mentions in by_source.items():
             source = session.get(Source, source_id)
-            if not source or source.source_type.value != "telegram":
+            if not source or source.source_type.value not in ("telegram", "telegram_intel"):
+                continue
+
+            # Per-source download lock — allows concurrent downloads from
+            # different sources while preventing duplicate work on same source.
+            source_lock = r.lock(
+                f"darkdisco:telegram_download_lock:{source_id}", timeout=300,
+            )
+            if not source_lock.acquire(blocking=False):
+                logger.info("Download lock held for source %s, skipping", source.name)
                 continue
 
             try:
                 connector = _load_connector_for_download(source)
 
-                async def _do_downloads():
+                async def _do_downloads(_connector, _mentions, _dedup):
                     try:
-                        await connector.setup()
+                        await _connector.setup()
                         results = {"downloaded": 0, "failed": 0, "deduped": 0}
 
-                        # Build dedup cache: (file_name, file_size) -> stored mention metadata
-                        _dedup_cache: dict[tuple, dict] = {}
-                        dedup_stmt = (
-                            select(RawMentionModel)
-                            .where(RawMentionModel.metadata_["download_status"].astext == "stored")
-                            .where(RawMentionModel.metadata_["s3_key"].astext != "")
-                            .limit(5000)
-                        )
-                        for stored in session.execute(dedup_stmt).scalars():
-                            sm = stored.metadata_ or {}
-                            key = (sm.get("file_name"), str(sm.get("file_size", "")))
-                            if key[0] and key not in _dedup_cache:
-                                _dedup_cache[key] = {
-                                    "s3_key": sm.get("s3_key"),
-                                    "file_sha256": sm.get("file_sha256"),
-                                    "file_size": sm.get("file_size"),
-                                }
-                        logger.info("Download dedup cache: %d stored file signatures", len(_dedup_cache))
-
-                        for mention in source_mentions:
+                        for mention in _mentions:
                             try:
                                 meta = mention.metadata_ or {}
                                 msg_id = meta.get("message_id")
@@ -1339,7 +1380,7 @@ def download_pending_files(batch_size: int = 50):
 
                                 # Check dedup cache before downloading
                                 dedup_key = (meta.get("file_name"), str(meta.get("file_size", "")))
-                                cached = _dedup_cache.get(dedup_key)
+                                cached = _dedup.get(dedup_key)
                                 if cached and cached.get("s3_key"):
                                     meta["s3_key"] = cached["s3_key"]
                                     meta["file_sha256"] = cached.get("file_sha256")
@@ -1352,7 +1393,7 @@ def download_pending_files(batch_size: int = 50):
                                     continue
 
                                 chat_id = meta.get("chat_id")
-                                file_data = await connector.download_media(
+                                file_data = await _connector.download_media(
                                     int(msg_id),
                                     channel_id=int(chat_id) if chat_id else None,
                                 )
@@ -1431,7 +1472,7 @@ def download_pending_files(batch_size: int = 50):
                                     session.commit()
                                     results["downloaded"] += 1
                                     # Add to dedup cache for rest of batch
-                                    _dedup_cache[dedup_key] = {
+                                    _dedup[dedup_key] = {
                                         "s3_key": s3_key,
                                         "file_sha256": sha256,
                                         "file_size": len(file_data),
@@ -1453,20 +1494,27 @@ def download_pending_files(batch_size: int = 50):
                                 results["failed"] += 1
                         return results
                     finally:
-                        await connector.teardown()
+                        await _connector.teardown()
 
-                results = _get_or_create_loop().run_until_complete(_do_downloads())
+                results = _get_or_create_loop().run_until_complete(
+                    _do_downloads(connector, source_mentions, _dedup_cache)
+                )
                 downloaded += results["downloaded"]
                 failed += results["failed"]
                 deduped += results.get("deduped", 0)
             except Exception:
                 logger.exception("Failed to download files for source %s", source_id)
                 failed += len(source_mentions)
+            finally:
+                try:
+                    source_lock.release()
+                except Exception:
+                    pass
 
         return {"downloaded": downloaded, "failed": failed, "deduped": deduped}
     finally:
         try:
-            lock.release()
+            coord_lock.release()
         except Exception:
             pass
         session.close()
