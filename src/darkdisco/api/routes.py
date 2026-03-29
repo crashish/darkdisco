@@ -1965,6 +1965,13 @@ async def list_archives(
         extracted_count, extracted_size = file_counts.get(mention.id, (0, 0))
         file_size = meta.get("file_size", 0) or 0
 
+        # Check extraction status via DB rows OR metadata extraction markers
+        is_extracted = (
+            extracted_count > 0
+            or bool(meta.get("extracted_files_inventory"))
+            or bool(meta.get("extracted_file_contents"))
+        )
+
         archives.append({
             "mention_id": mention.id,
             "file_name": meta.get("file_name", "unknown"),
@@ -1981,7 +1988,7 @@ async def list_archives(
             "download_url": f"/api/mentions/{mention.id}/file" if meta.get("s3_key") else "",
             "download_status": meta.get("download_status", ""),
             "s3_key": meta.get("s3_key", ""),
-            "extracted": extracted_count > 0,
+            "extracted": is_extracted,
         })
 
     return {"items": archives, "total": total, "page": page, "page_size": page_size}
