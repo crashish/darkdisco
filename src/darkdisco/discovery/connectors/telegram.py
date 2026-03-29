@@ -52,9 +52,10 @@ class TelegramConnector(BaseConnector):
     name = "telegram"
     source_type = "telegram"
 
-    def __init__(self, config: dict | None = None):
+    def __init__(self, config: dict | None = None, session_role: str | None = None):
         super().__init__(config)
         self._client: TelegramClient | None = None
+        self._session_role = session_role  # e.g. "poll", "download_1"
 
     @property
     def _channels(self) -> list[str]:
@@ -176,6 +177,16 @@ class TelegramConnector(BaseConnector):
                     "Telegram flood wait %ds for %s, stopping poll",
                     e.seconds, channel_ref,
                 )
+                # Record flood wait for session-level tracking
+                if self._session_role:
+                    try:
+                        from darkdisco.pipeline.telegram_sessions import (
+                            SessionRole, record_flood_wait,
+                        )
+                        role = SessionRole(self._session_role)
+                        record_flood_wait(role, e.seconds)
+                    except Exception:
+                        logger.debug("Could not record flood wait metric", exc_info=True)
                 break
             except ChannelPrivateError:
                 logger.warning(

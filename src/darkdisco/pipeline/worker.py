@@ -184,6 +184,30 @@ def _load_connector_for_download(source):
     return cls(config=config)
 
 
+def _load_connector_with_session(source, role_name: str):
+    """Load a Telegram connector using a role-specific session from the session pool.
+
+    Each role (poll, download_1, download_2, discovery) gets its own .session
+    file so multiple Telegram operations can run concurrently without SQLite
+    lock contention.
+    """
+    from darkdisco.pipeline.telegram_sessions import SessionRole, session_path_for_role
+
+    role = SessionRole(role_name)
+    session_name = session_path_for_role(role)
+
+    config = dict(source.config or {})
+    config["session_name"] = session_name
+
+    class_path = source.connector_class or _CONNECTOR_MAP.get(source.source_type.value)
+    if not class_path:
+        raise ValueError(f"No connector for source type {source.source_type}")
+    module_path, class_name = class_path.rsplit(":", 1) if ":" in class_path else class_path.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    cls = getattr(module, class_name)
+    return cls(config=config, session_role=role_name)
+
+
 # ---------------------------------------------------------------------------
 # Tasks
 # ---------------------------------------------------------------------------
@@ -235,20 +259,26 @@ def poll_source(self, source_id: str):
             logger.info("Source %s is disabled, skipping", source.name)
             return {"skipped": True}
 
-        connector = _load_connector(source)
-        since = source.last_polled_at
-
-        # Acquire session lock — only one Telegram task at a time (SQLite limitation)
-        telegram_lock = None
+        # Telegram sources use a dedicated poll session — no global lock needed.
+        # Each session has its own SQLite file, so concurrent tasks don't contend.
         if source.source_type.value in ("telegram", "telegram_intel"):
-            import redis as _redis
-            from darkdisco.config import settings as _settings
-            _r = _redis.from_url(_settings.celery_broker_url)
-            telegram_lock = _r.lock("darkdisco:telegram_session_lock", timeout=300)
-            acquired = telegram_lock.acquire(blocking=True, blocking_timeout=180)
-            if not acquired:
-                logger.warning("Could not acquire Telegram session lock for %s, retrying later", source.name)
-                raise self.retry(countdown=30, max_retries=5)
+            connector = _load_connector_with_session(source, "poll")
+
+            # Respect per-session flood-wait backoff
+            from darkdisco.pipeline.telegram_sessions import (
+                SessionRole, session_backoff_remaining,
+            )
+            backoff = session_backoff_remaining(SessionRole.POLL)
+            if backoff > 0:
+                logger.info(
+                    "Poll session in flood-wait backoff (%.0fs remaining), deferring %s",
+                    backoff, source.name,
+                )
+                raise self.retry(countdown=int(backoff) + 5, max_retries=10)
+        else:
+            connector = _load_connector(source)
+
+        since = source.last_polled_at
 
         try:
             # Bridge async connector to sync Celery task
@@ -257,9 +287,6 @@ def poll_source(self, source_id: str):
             source.last_error = str(exc)[:2000]
             session.commit()
             logger.exception("Failed to poll source %s", source.name)
-            if telegram_lock:
-                try: telegram_lock.release()
-                except Exception: pass
             raise self.retry(exc=exc, countdown=60 * (self.request.retries + 1))
 
         # Persist connector state (high-water marks) back to source config
@@ -300,9 +327,6 @@ def poll_source(self, source_id: str):
 
         return {"source": source.name, "mentions": len(mentions)}
     finally:
-        if telegram_lock:
-            try: telegram_lock.release()
-            except Exception: pass
         session.close()
 
 
@@ -1144,19 +1168,11 @@ def process_channel_discoveries(batch_size: int = 5):
 
     Runs periodically via beat schedule. Processes pending channels automatically.
     Rate-limits joins to avoid Telegram flood bans (batch_size controls pace).
+    Uses a dedicated discovery session from the session pool — no global lock.
     """
-    import redis as _redis
     from darkdisco.common.models import DiscoveredChannel, DiscoveryStatus, Source
 
     session = _get_sync_session()
-    # Acquire Telegram session lock to avoid SQLite contention with poll_source
-    r = _redis.from_url(settings.celery_broker_url)
-    tg_lock = r.lock("darkdisco:telegram_session_lock", timeout=300)
-    if not tg_lock.acquire(blocking=False):
-        logger.info("Telegram session lock held, skipping channel discovery this cycle")
-        session.close()
-        return {"skipped": True, "reason": "session_locked"}
-
     try:
         pending = session.execute(
             select(DiscoveredChannel)
@@ -1181,10 +1197,10 @@ def process_channel_discoveries(batch_size: int = 5):
 
             cfg = dict(target_source.config or {})
             try:
-                connector = _load_connector(target_source)
-            except ValueError:
+                connector = _load_connector_with_session(target_source, "discovery")
+            except (ValueError, FileNotFoundError):
                 dc.status = DiscoveryStatus.failed
-                dc.notes = "No connector for target source"
+                dc.notes = "No connector or session for target source"
                 failed += 1
                 continue
             try:
@@ -1217,12 +1233,8 @@ def process_channel_discoveries(batch_size: int = 5):
             "Processed channel discoveries: %d joined, %d failed",
             joined, failed,
         )
-        return {"processed": len(approved), "joined": joined, "failed": failed}
+        return {"processed": len(pending), "joined": joined, "failed": failed}
     finally:
-        try:
-            tg_lock.release()
-        except Exception:
-            pass
         session.close()
 
 
@@ -1245,19 +1257,21 @@ async def _join_channel_async(connector, channel_ref: str) -> bool:
 def download_pending_files(batch_size: int = 50):
     """Download large files from mentions marked as download_status=pending.
 
-    Uses a Redis lock to prevent concurrent download tasks from contending
-    over the Telethon SQLite session file.
+    Uses dedicated download sessions from the session pool.  Each download
+    worker gets its own .session file, so concurrent downloads don't contend
+    over SQLite locks.  When the circuit breaker is active, falls back to a
+    single download session.
     """
-    import redis as _redis
-    from darkdisco.config import settings
     from darkdisco.common.models import RawMention as RawMentionModel, Source
+    from darkdisco.pipeline.telegram_sessions import (
+        SessionRole, is_circuit_breaker_active, session_backoff_remaining,
+    )
 
-    # Acquire exclusive download lock
-    r = _redis.from_url(settings.celery_broker_url)
-    lock = r.lock("darkdisco:download_files_lock", timeout=300, blocking=False)
-    if not lock.acquire(blocking=False):
-        logger.info("Another download task is already running, skipping")
-        return {"skipped": True}
+    # Respect flood-wait backoff on download sessions
+    backoff = session_backoff_remaining(SessionRole.DOWNLOAD_1)
+    if backoff > 0:
+        logger.info("Download session in flood-wait backoff (%.0fs remaining)", backoff)
+        return {"skipped": True, "reason": "flood_backoff", "remaining": round(backoff)}
 
     session = _get_sync_session()
     try:
@@ -1304,7 +1318,7 @@ def download_pending_files(batch_size: int = 50):
                 continue
 
             try:
-                connector = _load_connector_for_download(source)
+                connector = _load_connector_with_session(source, "download_1")
 
                 async def _do_downloads():
                     try:
@@ -1465,10 +1479,6 @@ def download_pending_files(batch_size: int = 50):
 
         return {"downloaded": downloaded, "failed": failed, "deduped": deduped}
     finally:
-        try:
-            lock.release()
-        except Exception:
-            pass
         session.close()
 
 
