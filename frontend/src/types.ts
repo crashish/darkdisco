@@ -41,6 +41,7 @@ export interface Finding {
   discovered_at: string;
   updated_at: string;
   metadata?: Record<string, unknown> | null;
+  mention_id?: string | null;
 }
 
 export interface PaginatedFindings {

@@ -2525,9 +2525,14 @@ async def list_findings(
         stmt = stmt.where(f)
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
+    findings = result.scalars().all()
+
+    # Batch-resolve mention_ids for all findings on this page
+    finding_ids = [f.id for f in findings]
+    mention_map = await _resolve_mention_ids(db, finding_ids)
 
     return PaginatedFindingsOut(
-        items=result.scalars().all(),
+        items=[_inject_mention_id(f, mention_map.get(f.id)) for f in findings],
         total=total,
         page=page,
         page_size=page_size,
@@ -2582,9 +2587,12 @@ async def search_findings(
         .limit(page_size)
     )
     result = await db.execute(stmt)
+    findings = result.scalars().all()
+    finding_ids = [f.id for f in findings]
+    mention_map = await _resolve_mention_ids(db, finding_ids)
 
     return PaginatedFindingsOut(
-        items=result.scalars().all(),
+        items=[_inject_mention_id(f, mention_map.get(f.id)) for f in findings],
         total=total,
         page=page,
         page_size=page_size,
@@ -2673,6 +2681,26 @@ async def finding_archive_contents(
     return {"finding_id": finding_id, "files": files, "total": len(files)}
 
 
+async def _resolve_mention_ids(
+    db: AsyncSession, finding_ids: list[str]
+) -> dict[str, str]:
+    """Batch-resolve mention_id for findings via RawMention.promoted_to_finding_id."""
+    if not finding_ids:
+        return {}
+    stmt = select(RawMention.promoted_to_finding_id, RawMention.id).where(
+        RawMention.promoted_to_finding_id.in_(finding_ids)
+    )
+    rows = (await db.execute(stmt)).all()
+    return {r[0]: r[1] for r in rows}
+
+
+def _inject_mention_id(finding: Finding, mention_id: str | None) -> FindingOut:
+    """Serialize a Finding ORM object to FindingOut with mention_id injected."""
+    out = FindingOut.model_validate(finding)
+    out.mention_id = mention_id
+    return out
+
+
 @protected.get("/findings/{finding_id}", response_model=FindingOut)
 async def get_finding(
     finding_id: str,
@@ -2686,7 +2714,8 @@ async def get_finding(
     finding = result.scalar_one_or_none()
     if not finding:
         raise HTTPException(404, "Finding not found")
-    return finding
+    mention_map = await _resolve_mention_ids(db, [finding_id])
+    return _inject_mention_id(finding, mention_map.get(finding_id))
 
 
 @protected.put("/findings/{finding_id}", response_model=FindingOut)
