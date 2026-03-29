@@ -415,6 +415,7 @@ export default function Files() {
     setFilterSizeMax('');
     setFilterCredentials('all');
     setFilterExtracted('all');
+    setCurrentPage(1);
   };
 
   // Derive available filter options from loaded archives
@@ -526,6 +527,11 @@ export default function Files() {
 
   // Map sortOrder to server-side sort param (only date sorts are server-side)
   const serverSort = sortOrder === 'oldest' ? 'oldest' : 'newest';
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterTypes, filterSources, filterDateFrom, filterDateTo, filterSizeMin, filterSizeMax, filterCredentials, filterExtracted]);
 
   // Load extracted files list on mount and when page/sort changes
   useEffect(() => {
