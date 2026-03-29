@@ -5,7 +5,7 @@ import { colors, card, font, statusLabel } from '../theme';
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import type { Finding, Institution, Severity, FindingStatus } from '../types';
-import { Search, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, Calendar, Hash, User } from 'lucide-react';
+import { Search, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, Calendar, Hash, User, MessageSquare } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import MultiSelect from '../components/MultiSelect';
 
@@ -298,18 +298,32 @@ export default function Findings() {
                       <div style={{ fontSize: 13, lineHeight: 1.6, color: colors.textDim, maxWidth: 800 }}>
                         {f.summary}
                       </div>
-                      {f.source_url && (
-                        <div style={{ marginTop: 10 }}>
+                      <div style={{ marginTop: 10, display: 'flex', gap: 12, alignItems: 'center' }}>
+                        {f.mention_id && (
+                          <button
+                            onClick={e => { e.stopPropagation(); navigate(`/mentions?mention=${f.mention_id}`); }}
+                            style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 4,
+                              padding: '3px 8px', fontSize: 11, fontWeight: 600,
+                              background: 'none', border: `1px solid ${colors.border}`,
+                              borderRadius: 4, color: colors.accent, cursor: 'pointer',
+                            }}
+                            title="View the source message that generated this finding"
+                          >
+                            <MessageSquare size={11} /> View source message
+                          </button>
+                        )}
+                        {f.source_url && (
                           <a
                             href={f.source_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ color: colors.accent, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', fontSize: 11, background: 'none', border: `1px solid ${colors.border}`, borderRadius: 4, color: colors.textDim, textDecoration: 'none' }}
                           >
-                            <ExternalLink size={12} /> Source link
+                            <ExternalLink size={12} /> Original source
                           </a>
-                        </div>
-                      )}
+                        )}
+                      </div>
                       <div style={{ marginTop: 8, fontSize: 11, color: colors.textMuted }}>
                         ID: {f.id} &middot; Updated: {new Date(f.updated_at).toLocaleString()}
                       </div>

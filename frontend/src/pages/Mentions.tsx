@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { fetchMentions, fetchSources, fetchInstitutions, promoteMention, fetchArchiveContents, fetchMentionChannels, fetchMentionFiles, getMentionFileUrl } from '../api';
 import type { MentionFilesResponse } from '../api';
 import { colors, card, font } from '../theme';
@@ -89,16 +90,19 @@ function TextFilePreview({ s3Key }: { s3Key: string }) {
 }
 
 export default function Mentions() {
+  const [searchParams] = useSearchParams();
+  const targetMentionId = searchParams.get('mention');
   const [mentions, setMentions] = useState<RawMention[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(targetMentionId);
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilters, setSourceFilters] = useState<Set<string>>(new Set());
   const [channelFilters, setChannelFilters] = useState<Set<string>>(new Set());
   const [mediaFilters, setMediaFilters] = useState<Set<string>>(new Set());
-  const [promotedFilters, setPromotedFilters] = useState<Set<string>>(new Set(['unmatched']));
+  const [promotedFilters, setPromotedFilters] = useState<Set<string>>(new Set(targetMentionId ? [] : ['unmatched']));
+  const mentionRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [sortBy, setSortBy] = useState<string | null>(null);
@@ -183,6 +187,39 @@ export default function Mentions() {
       .then(r => setMentionFilesMap(prev => ({ ...prev, [expandedId]: r })))
       .catch(() => {});
   }, [expandedId]);
+
+  // Deep-link: if ?mention=<id> is set, fetch that mention directly if not in current page
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    if (!targetMentionId || deepLinkHandled.current || loading) return;
+    const found = mentions.find(m => m.id === targetMentionId);
+    if (found) {
+      // Mention is in current page — expand and scroll
+      deepLinkHandled.current = true;
+      setExpandedId(targetMentionId);
+      setTimeout(() => {
+        mentionRowRefs.current[targetMentionId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    } else if (mentions.length > 0) {
+      // Mention not found in current page — fetch it directly and prepend
+      deepLinkHandled.current = true;
+      const token = localStorage.getItem('dd_token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      fetch(`/api/mentions/${targetMentionId}`, { headers })
+        .then(r => r.ok ? r.json() : null)
+        .then((m: RawMention | null) => {
+          if (m) {
+            setMentions(prev => [m, ...prev.filter(x => x.id !== m.id)]);
+            setExpandedId(targetMentionId);
+            setTimeout(() => {
+              mentionRowRefs.current[targetMentionId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 200);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [targetMentionId, mentions, loading]);
 
   const handlePromote = async (mentionId: string) => {
     if (!promoteForm.institution_id || !promoteForm.title) return;
@@ -347,7 +384,7 @@ export default function Mentions() {
             const meta = mention.metadata as Record<string, string | number | boolean | null> | undefined;
 
             return (
-              <div key={mention.id} style={{ ...card, padding: 0, overflow: 'hidden' }}>
+              <div key={mention.id} ref={el => { mentionRowRefs.current[mention.id] = el; }} style={{ ...card, padding: 0, overflow: 'hidden', ...(mention.id === targetMentionId ? { border: `1px solid ${colors.accent}`, boxShadow: `0 0 8px ${colors.accent}33` } : {}) }}>
                 {/* Row header */}
                 <div
                   style={{

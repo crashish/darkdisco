@@ -240,6 +240,8 @@ class FindingOut(BaseModel):
     institution_name: str | None = None
     source_type: str | None = None
     source_name: str | None = None
+    # Linked source mention (resolved via RawMention.promoted_to_finding_id)
+    mention_id: str | None = None
 
 
 class PaginatedFindingsOut(BaseModel):

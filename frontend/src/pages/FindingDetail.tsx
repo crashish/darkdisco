@@ -8,7 +8,7 @@ import StatusBadge from '../components/StatusBadge';
 import ArchiveContents from '../components/ArchiveContents';
 import type { ArchiveFile } from '../components/ArchiveContents';
 import type { FindingDetail as FindingDetailType, FindingStatus, Severity, AuditLogEntry, HighlightSpan } from '../types';
-import { ArrowLeft, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash, Globe, Lock, Activity, BarChart3, Camera, Network, Edit3, Send, History, ScanLine, CreditCard } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ExternalLink, Tag, Clock, User, FileText, Shield, Search, ChevronDown, MessageSquare, Forward, Paperclip, Reply, Hash, Globe, Lock, Activity, BarChart3, Camera, Network, Edit3, Send, History, ScanLine, CreditCard } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 const allStatuses: FindingStatus[] = ['new', 'reviewing', 'escalated', 'confirmed', 'dismissed', 'false_positive', 'resolved'];
@@ -285,14 +285,27 @@ export default function FindingDetail() {
               </div>
               <span style={{ fontSize: 12, color: colors.textMuted }}>{finding.institution_name}</span>
               <span style={{ fontSize: 11, color: colors.textMuted, fontFamily: font.mono }}>{finding.source_type}</span>
+              {finding.mention_id && (
+                <button
+                  onClick={() => navigate(`/mentions?mention=${finding.mention_id}`)}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    background: 'none', border: 'none', padding: 0,
+                    color: colors.accent, cursor: 'pointer', fontSize: 12,
+                  }}
+                  title="View the full source message in Mentions"
+                >
+                  <MessageSquare size={12} /> View source message
+                </button>
+              )}
               {finding.source_url && (
                 <a
                   href={finding.source_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: colors.accent, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  style={{ color: colors.textDim, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, textDecoration: 'none' }}
                 >
-                  <ExternalLink size={12} /> Source
+                  <ExternalLink size={12} /> Original source
                 </a>
               )}
             </div>
@@ -312,7 +325,24 @@ export default function FindingDetail() {
             const meta = finding.metadata as Record<string, string | number | boolean | null | Record<string, string>>;
             return (
             <div style={sectionStyle}>
-              <div style={sectionTitle}><MessageSquare size={14} /> Message Context</div>
+              <div style={{ ...sectionTitle, justifyContent: 'space-between' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><MessageSquare size={14} /> Message Context</span>
+                {finding.mention_id && (
+                  <button
+                    onClick={() => navigate(`/mentions?mention=${finding.mention_id}`)}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '3px 10px', fontSize: 11, fontWeight: 600,
+                      background: 'none', border: `1px solid ${colors.border}`,
+                      borderRadius: 4, color: colors.accent, cursor: 'pointer',
+                      textTransform: 'none', letterSpacing: 'normal',
+                    }}
+                    title="View the full source message in Mentions"
+                  >
+                    <ArrowRight size={11} /> View source message
+                  </button>
+                )}
+              </div>
               <div style={{
                 background: colors.bgSurface, borderRadius: 6,
                 border: `1px solid ${colors.border}`, overflow: 'hidden',

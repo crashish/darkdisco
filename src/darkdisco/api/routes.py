@@ -2056,8 +2056,12 @@ async def search_extracted_files(
             ExtractedFile,
             RawMention.metadata_.label("mention_meta"),
             RawMention.content.label("mention_content"),
+            RawMention.collected_at.label("mention_collected_at"),
+            RawMention.source_url.label("mention_source_url"),
+            Source.name.label("source_name"),
         )
         .join(RawMention, RawMention.id == ExtractedFile.mention_id)
+        .join(Source, Source.id == RawMention.source_id, isouter=True)
         .where(or_(content_match, name_match))
         .order_by(ExtractedFile.created_at.desc())
         .offset(offset)
@@ -2086,6 +2090,9 @@ async def search_extracted_files(
         ef = row[0]
         mention_meta = row[1] or {}
         mention_content = row[2] or ""
+        mention_collected_at = row[3]
+        mention_source_url = row[4]
+        source_name = row[5]
         # Extract context snippet from mention content (first 120 chars)
         content_snippet = mention_content[:120].replace("\n", " ").strip() if mention_content else ""
         entry = {
@@ -2101,6 +2108,10 @@ async def search_extracted_files(
             "source": "extracted_files",
             "channel_ref": mention_meta.get("channel_ref", ""),
             "content_snippet": content_snippet,
+            "collected_at": mention_collected_at.isoformat() if mention_collected_at else None,
+            "source_url": mention_source_url or mention_meta.get("source_url", ""),
+            "source_name": source_name or "",
+            "sender_name": mention_meta.get("sender_name", "") or mention_meta.get("forwarded_from", ""),
         }
         ocr = search_ocr_map.get(ef.sha256) if ef.sha256 else None
         if ocr:
@@ -2514,9 +2525,14 @@ async def list_findings(
         stmt = stmt.where(f)
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
+    findings = result.scalars().all()
+
+    # Batch-resolve mention_ids for all findings on this page
+    finding_ids = [f.id for f in findings]
+    mention_map = await _resolve_mention_ids(db, finding_ids)
 
     return PaginatedFindingsOut(
-        items=result.scalars().all(),
+        items=[_inject_mention_id(f, mention_map.get(f.id)) for f in findings],
         total=total,
         page=page,
         page_size=page_size,
@@ -2571,9 +2587,12 @@ async def search_findings(
         .limit(page_size)
     )
     result = await db.execute(stmt)
+    findings = result.scalars().all()
+    finding_ids = [f.id for f in findings]
+    mention_map = await _resolve_mention_ids(db, finding_ids)
 
     return PaginatedFindingsOut(
-        items=result.scalars().all(),
+        items=[_inject_mention_id(f, mention_map.get(f.id)) for f in findings],
         total=total,
         page=page,
         page_size=page_size,
@@ -2662,6 +2681,26 @@ async def finding_archive_contents(
     return {"finding_id": finding_id, "files": files, "total": len(files)}
 
 
+async def _resolve_mention_ids(
+    db: AsyncSession, finding_ids: list[str]
+) -> dict[str, str]:
+    """Batch-resolve mention_id for findings via RawMention.promoted_to_finding_id."""
+    if not finding_ids:
+        return {}
+    stmt = select(RawMention.promoted_to_finding_id, RawMention.id).where(
+        RawMention.promoted_to_finding_id.in_(finding_ids)
+    )
+    rows = (await db.execute(stmt)).all()
+    return {r[0]: r[1] for r in rows}
+
+
+def _inject_mention_id(finding: Finding, mention_id: str | None) -> FindingOut:
+    """Serialize a Finding ORM object to FindingOut with mention_id injected."""
+    out = FindingOut.model_validate(finding)
+    out.mention_id = mention_id
+    return out
+
+
 @protected.get("/findings/{finding_id}", response_model=FindingOut)
 async def get_finding(
     finding_id: str,
@@ -2675,7 +2714,8 @@ async def get_finding(
     finding = result.scalar_one_or_none()
     if not finding:
         raise HTTPException(404, "Finding not found")
-    return finding
+    mention_map = await _resolve_mention_ids(db, [finding_id])
+    return _inject_mention_id(finding, mention_map.get(finding_id))
 
 
 @protected.put("/findings/{finding_id}", response_model=FindingOut)
